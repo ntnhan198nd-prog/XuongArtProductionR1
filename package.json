@@ -6,21 +6,21 @@
     "check-env": "node check-env.js",
     "debug-projects": "node debug-projects.js",
     "dev": "next dev",
-    "dev:all": "concurrently \"npm run dev\" \"npm run dev:strapi\"",
-    "dev:strapi": "cd xuongart-new && npm run develop",
-    "dev:safe": "npm run check-env && npm run dev:all",
+    "dev:all": "npm run dev",
+    "dev:strapi": "echo \"Strapi has been replaced by the custom admin (/admin).\"",
+    "dev:safe": "npm run check-env && npm run dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
   },
   "dependencies": {
-    "@strapi/provider-upload-cloudinary": "^5.27.0",
+    "@aws-sdk/client-s3": "^3.922.0",
+    "@aws-sdk/s3-request-presigner": "^3.922.0",
     "autoprefixer": "10.4.15",
     "clsx": "^2.0.0",
     "eslint": "8.47.0",
     "eslint-config-next": "13.4.18",
     "framer-motion": "^10.16.0",
-    "knex": "^3.1.0",
     "next": "^14.0.0",
     "node-fetch": "^3.3.2",
     "postcss": "8.4.28",
@@ -33,6 +33,6 @@
     "tailwindcss": "3.3.3"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1"
   }
+  
 }

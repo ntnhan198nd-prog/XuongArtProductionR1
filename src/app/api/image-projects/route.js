@@ -1,34 +1,28 @@
-import { NextResponse } from 'next/server';
+import { NextResponse } from "next/server";
+import { readStore, serializeImageProject, sortByOrderThenId } from "@/lib/contentStore";
 
-const STRAPI_URL = process.env.NEXT_PUBLIC_STRAPI_API_URL || 'http://localhost:1337';
-
-// Force revalidate on every request
 export const revalidate = 0;
 
 export async function GET() {
   try {
-    console.log('🔍 Image Projects API: Fetching image projects...');
-    
-    const response = await fetch(`${STRAPI_URL}/api/image-projects?populate=*`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
+    const store = await readStore();
+    const imageProjects = sortByOrderThenId(store.imageProjects || []);
+
+    return NextResponse.json({
+      data: imageProjects.map((project) => serializeImageProject(project)),
+      meta: {
+        pagination: {
+          page: 1,
+          pageSize: imageProjects.length,
+          pageCount: 1,
+          total: imageProjects.length,
+        },
       },
-      cache: 'no-store', // Disable caching for development
     });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    console.log('📊 Image Projects API response:', data);
-    
-    return NextResponse.json(data);
   } catch (error) {
-    console.error('❌ Error fetching image projects:', error);
+    console.error("Error fetching image projects:", error);
     return NextResponse.json(
-      { error: 'Failed to fetch image projects' },
+      { error: "Failed to fetch image projects" },
       { status: 500 }
     );
   }

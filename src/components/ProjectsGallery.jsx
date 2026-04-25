@@ -7,12 +7,19 @@ import Image from "next/image";
 import AuthorAvatar from "@/components/AuthorAvatar";
 import TimeAgo from "@/components/TimeAgo";
 import RichTextRenderer from "@/components/RichTextRenderer";
-import { MdPause, MdPlayArrow, MdVolumeOff, MdVolumeUp, MdChevronLeft, MdChevronRight } from "react-icons/md";
+import { MdChevronLeft, MdChevronRight } from "react-icons/md";
 import { getFeaturedProjects } from "@/lib/strapi";
+
+const AUTOPLAY_INTERVAL_MS = 7000;
+const DESKTOP_BREAKPOINT_QUERY = "(min-width: 1024px)";
 
 // --- Helpers ---
 const isVideoUrl = (url) => /(mp4|webm|ogg|mov|avi)$/i.test(url || "");
-const isImageUrl = (url) => /(jpg|jpeg|png|webp|gif|svg)$/i.test(url || "");
+
+const toAbsoluteAssetUrl = (url, appBaseUrl) => {
+  if (!url) return "";
+  return url.startsWith("http") ? url : `${appBaseUrl}${url}`;
+};
 
 // Normalize Strapi orientation values (handle casing/whitespace/localization)
 const normalizeOrientation = (val) => {
@@ -47,12 +54,6 @@ const blocksToPlainText = (value) => {
   } catch (e) {
     return '';
   }
-};
-
-// Tính toán scale để video hiển thị tự nhiên (không cần scale phức tạp)
-const calculateVideoScale = (videoWidth, videoHeight, containerWidth, containerHeight) => {
-  // Trả về scale 1 để video hiển thị tự nhiên
-  return 1;
 };
 
 // Grid pattern cố định theo layout trong ảnh
@@ -116,10 +117,10 @@ const assignToPattern = (items, pattern, orientationMap = {}) => {
 const FeaturedCard = ({ areaName, slotShape, item, onOpen, index = 0, fillHeight = false, forceAspectRatio }) => {
   const ref = useRef(null);
   const videoRef = useRef(null);
-  const inView = useInView(ref, { once: true, margin: "-10%" });
-  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
-  const [videoScale, setVideoScale] = useState(1); // Scale tự nhiên
+  const inView = useInView(ref, { amount: 0.35, margin: "-5% 0px -5% 0px" });
   const [videoAspectRatio, setVideoAspectRatio] = useState(16/9); // Aspect ratio của video
+  const cardMediaUrl = item?.previewMedia || item?.media || "";
+  const isVideoCard = isVideoUrl(cardMediaUrl);
   
   // Ép các media vuông thành hình chữ nhật (ưu tiên 16:9)
   const normalizeRectRatio = (ratio) => {
@@ -129,60 +130,91 @@ const FeaturedCard = ({ areaName, slotShape, item, onOpen, index = 0, fillHeight
     return ratio;
   };
 
-  // Control video playback based on viewport visibility (tối ưu performance)
+  // Keep thumbnail autoplay stable: resume when tab returns, when stream stalls, or when browser pauses unexpectedly.
   useEffect(() => {
-    if (!videoRef.current || !isVideoUrl(item.media)) return;
-    
+    if (!videoRef.current || !isVideoCard) return;
+
     const video = videoRef.current;
-    
-    // Debounce để tránh play/pause liên tục
-    const timeoutId = setTimeout(() => {
-      if (inView) {
-        video.play().then(() => {
-          setIsVideoPlaying(true);
-        }).catch((error) => {
-          console.warn('Video play failed:', error);
-          setIsVideoPlaying(false);
+    let retryTimeoutId = null;
+    let heartbeatId = null;
+
+    const canAutoplay = () => inView && !document.hidden;
+
+    const tryPlay = () => {
+      if (!canAutoplay()) return;
+      const promise = video.play();
+      if (promise && typeof promise.catch === "function") {
+        promise.catch((error) => {
+          console.warn("Thumbnail video play failed:", error);
         });
-      } else {
+      }
+    };
+
+    const scheduleRetry = (delay = 180) => {
+      if (!canAutoplay()) return;
+      if (retryTimeoutId) window.clearTimeout(retryTimeoutId);
+      retryTimeoutId = window.setTimeout(() => {
+        tryPlay();
+      }, delay);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
         video.pause();
-        setIsVideoPlaying(false);
+        return;
       }
-    }, 150); // Debounce 150ms
-    
-    return () => clearTimeout(timeoutId);
-  }, [inView, item.media]);
+      scheduleRetry(120);
+    };
 
-  // Ensure video loops properly (tối ưu event listeners)
-  useEffect(() => {
-    if (!videoRef.current || !isVideoUrl(item.media)) return;
-    
-    const video = videoRef.current;
-    
-    const handleEnded = () => {
+    const onPause = () => {
+      if (canAutoplay() && !video.ended) {
+        scheduleRetry(120);
+      }
+    };
+
+    const onBuffering = () => {
+      scheduleRetry(300);
+    };
+
+    const onEnded = () => {
+      if (!canAutoplay()) return;
       video.currentTime = 0;
-      // Chỉ play lại nếu video vẫn trong viewport
-      if (inView) {
-        video.play().catch((error) => {
-          console.warn('Video loop play failed:', error);
-          setIsVideoPlaying(false);
-        });
+      tryPlay();
+    };
+
+    if (canAutoplay()) {
+      scheduleRetry(0);
+    } else {
+      video.pause();
+    }
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    video.addEventListener("pause", onPause);
+    video.addEventListener("canplay", tryPlay);
+    video.addEventListener("stalled", onBuffering);
+    video.addEventListener("waiting", onBuffering);
+    video.addEventListener("suspend", onBuffering);
+    video.addEventListener("ended", onEnded);
+
+    // Safety net: some browsers pause muted background videos silently.
+    heartbeatId = window.setInterval(() => {
+      if (canAutoplay() && video.paused && !video.ended) {
+        tryPlay();
       }
-    };
-
-    const handleError = () => {
-      setIsVideoPlaying(false);
-    };
-
-    // Thêm event listeners một lần
-    video.addEventListener('ended', handleEnded);
-    video.addEventListener('error', handleError);
+    }, 2500);
 
     return () => {
-      video.removeEventListener('ended', handleEnded);
-      video.removeEventListener('error', handleError);
+      if (retryTimeoutId) window.clearTimeout(retryTimeoutId);
+      if (heartbeatId) window.clearInterval(heartbeatId);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      video.removeEventListener("pause", onPause);
+      video.removeEventListener("canplay", tryPlay);
+      video.removeEventListener("stalled", onBuffering);
+      video.removeEventListener("waiting", onBuffering);
+      video.removeEventListener("suspend", onBuffering);
+      video.removeEventListener("ended", onEnded);
     };
-  }, [item.media, inView]); // Thêm inView dependency
+  }, [inView, isVideoCard, cardMediaUrl]);
 
   const handleImageLoad = (img) => {
     // Không cần orientation detection nữa vì đã cố định trong pattern
@@ -196,9 +228,6 @@ const FeaturedCard = ({ areaName, slotShape, item, onOpen, index = 0, fillHeight
     
     // Chỉ lưu aspect ratio, không thay đổi orientation (nhưng ép vuông -> chữ nhật)
     setVideoAspectRatio(normalizeRectRatio(ratio));
-    setVideoScale(1);
-    
-    console.log(`Video ${item.title}: ${v.videoWidth}x${v.videoHeight}, ratio: ${ratio.toFixed(2)}`);
   };
 
   return (
@@ -235,11 +264,11 @@ const FeaturedCard = ({ areaName, slotShape, item, onOpen, index = 0, fillHeight
       onClick={() => onOpen && onOpen(item)}
     >
       <div className="relative h-full w-full">
-        {isVideoUrl(item.media) ? (
+        {isVideoCard ? (
           <div className="relative h-full w-full overflow-hidden">
             <video
               ref={videoRef}
-              src={item.media}
+              src={cardMediaUrl}
               className="h-full w-full"
               style={{
                 objectFit: 'cover',
@@ -260,17 +289,14 @@ const FeaturedCard = ({ areaName, slotShape, item, onOpen, index = 0, fillHeight
               controlsList="nodownload nofullscreen noremoteplayback"
               onContextMenu={(e) => e.preventDefault()}
               onLoadedMetadata={handleVideoLoadedMetadata}
-              onPlay={() => setIsVideoPlaying(true)}
-              onPause={() => setIsVideoPlaying(false)}
               onError={(e) => {
                 console.error('Video playback error:', e);
-                setIsVideoPlaying(false);
               }}
             />
           </div>
-        ) : item.media ? (
+        ) : cardMediaUrl ? (
           <Image
-            src={item.media}
+            src={cardMediaUrl}
             alt={item.title}
             fill
             sizes="(max-width: 640px) 90vw, (max-width: 1024px) 50vw, 33vw"
@@ -324,7 +350,6 @@ const FeaturedCard = ({ areaName, slotShape, item, onOpen, index = 0, fillHeight
 
 // Main ProjectsGallery component
 const ProjectsGallery = () => {
-  const [active, setActive] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
 
@@ -379,23 +404,39 @@ const ProjectsGallery = () => {
   const [mobileSlide, setMobileSlide] = useState(0); // Separate state for mobile
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isDesktopViewport, setIsDesktopViewport] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    const mediaQuery = window.matchMedia(DESKTOP_BREAKPOINT_QUERY);
+    const updateViewport = () => setIsDesktopViewport(mediaQuery.matches);
+
+    updateViewport();
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", updateViewport);
+      return () => mediaQuery.removeEventListener("change", updateViewport);
+    }
+
+    mediaQuery.addListener(updateViewport);
+    return () => mediaQuery.removeListener(updateViewport);
+  }, []);
 
   // Fetch featured projects from Strapi
   useEffect(() => {
     const fetchProjects = async () => {
       try {
-        console.log('🔍 Fetching featured projects...');
         const response = await getFeaturedProjects();
-        
-        console.log('📊 Strapi response:', response);
-        console.log('📊 Response data:', response?.data);
-        console.log('📊 Data length:', response?.data?.length);
-        
+
         if (response && response.data && Array.isArray(response.data)) {
           const formattedProjects = response.data.map(project => {
-            const mediaUrl = project.attributes?.media?.data?.attributes?.url || '';
-            const STRAPI_URL = process.env.NEXT_PUBLIC_STRAPI_API_URL || 'http://localhost:1337';
-            const fullMediaUrl = mediaUrl.startsWith('http') ? mediaUrl : `${STRAPI_URL}${mediaUrl}`;
+            const mediaAttributes = project.attributes?.media?.data?.attributes;
+            const mediaUrl = mediaAttributes?.url || "";
+            const mediaPreviewUrl = mediaAttributes?.previewUrl || mediaUrl;
+            const apiBaseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+            const fullMediaUrl = toAbsoluteAssetUrl(mediaUrl, apiBaseUrl);
+            const fullMediaPreviewUrl = toAbsoluteAssetUrl(mediaPreviewUrl, apiBaseUrl);
             
             // Prefer new fields if available, fallback to legacy 'description'
             const rawFull = project.attributes?.fullDescription || project.attributes?.description || '';
@@ -407,9 +448,8 @@ const ProjectsGallery = () => {
               : '';
             
             // Orientation: prefer Strapi field, fallback to media dimensions
-            const mediaAttr = project.attributes?.media?.data?.attributes;
-            const mediaW = mediaAttr?.width;
-            const mediaH = mediaAttr?.height;
+            const mediaW = mediaAttributes?.width;
+            const mediaH = mediaAttributes?.height;
             const orientation = normalizeOrientation(project.attributes?.orientation)
               || (mediaW && mediaH ? (mediaH > mediaW ? 'portrait' : 'landscape') : undefined);
             
@@ -427,6 +467,7 @@ const ProjectsGallery = () => {
               slug: project.attributes?.slug || '',
               order: project.attributes?.order || project.id,
               media: fullMediaUrl,
+              previewMedia: fullMediaPreviewUrl || fullMediaUrl,
               completionDate: project.attributes?.completionDate,
               orientation,
               medias: project.attributes?.media?.data ? [{
@@ -436,16 +477,12 @@ const ProjectsGallery = () => {
               }] : []
             };
           });
-          console.log('✅ Formatted projects:', formattedProjects.length);
           setProjects(formattedProjects);
         } else {
-          console.warn('⚠️ No valid data received from Strapi');
-          console.log('Response structure:', response);
           setProjects([]);
         }
       } catch (error) {
-        console.error('❌ Error fetching projects from Strapi:', error);
-        console.error('Error details:', error.message);
+        console.error("Error fetching featured projects:", error);
         setProjects([]);
       } finally {
         setLoading(false);
@@ -460,30 +497,13 @@ const ProjectsGallery = () => {
     [projects]
   );
 
-  // Helper to check orientation reliably
-  const isPortraitItem = (it) => {
-    if (!it) return false;
-    if (it.orientation) return it.orientation === 'portrait';
-    const w = it?.medias?.[0]?.width;
-    const h = it?.medias?.[0]?.height;
-    return (w && h) ? h > w : false;
-  };
-
   // Build slides based on available items
-  // Mobile: 4 items per page, Desktop: 6 items per page
   const itemsPerSlide = 6; // Desktop/Tablet
-  const itemsPerSlideMobile = 5; // Mobile only (pages: 1P+4L) or last page 2P
   
   const slides = useMemo(() => {
     const totalItems = allItems.length;
     const numSlides = Math.ceil(totalItems / itemsPerSlide);
-    
-    console.log('📊 Building slides:', {
-      allItems: totalItems,
-      itemsPerSlide,
-      numSlides
-    });
-    
+
     return Array.from({ length: numSlides }, (_, i) => {
       return allItems.slice(i * itemsPerSlide, (i + 1) * itemsPerSlide);
     }).filter(slide => slide.length > 0);
@@ -524,19 +544,66 @@ const ProjectsGallery = () => {
     return slidesArr;
   }, [allItems]);
 
-  // Auto play every 7s with smooth transition (desktop)
+  // Keep slide indexes in bounds when data changes.
   useEffect(() => {
-    if (!slides.length) return; // avoid modulo by zero
-    const id = setInterval(() => setSlide((s) => (s + 1) % slides.length), 7000);
-    return () => clearInterval(id);
+    setSlide((current) => (slides.length > 0 ? current % slides.length : 0));
   }, [slides.length]);
 
-  // Auto play every 7s on mobile (rotate mobileSlide)
   useEffect(() => {
-    if (!mobileSlides.length) return;
-    const id = setInterval(() => setMobileSlide((s) => (s + 1) % mobileSlides.length), 7000);
-    return () => clearInterval(id);
+    setMobileSlide((current) => (mobileSlides.length > 0 ? current % mobileSlides.length : 0));
   }, [mobileSlides.length]);
+
+  // Autoplay only for the active viewport to avoid timer contention.
+  useEffect(() => {
+    const activeLength = isDesktopViewport ? slides.length : mobileSlides.length;
+    if (activeLength <= 1) return undefined;
+
+    let intervalId;
+    const tick = () => {
+      if (document.hidden) return;
+      if (isDesktopViewport) {
+        setSlide((current) => (current + 1) % slides.length);
+      } else {
+        setMobileSlide((current) => (current + 1) % mobileSlides.length);
+      }
+    };
+
+    const start = () => {
+      if (intervalId) window.clearInterval(intervalId);
+      intervalId = window.setInterval(tick, AUTOPLAY_INTERVAL_MS);
+    };
+
+    start();
+
+    const onVisibilityChange = () => {
+      if (!document.hidden) start();
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      if (intervalId) window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [isDesktopViewport, slides.length, mobileSlides.length]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onFocus = () => {
+      if (isDesktopViewport) {
+        setSlide((current) => (slides.length > 0 ? current % slides.length : 0));
+      } else {
+        setMobileSlide((current) => (mobileSlides.length > 0 ? current % mobileSlides.length : 0));
+      }
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [isDesktopViewport, slides.length, mobileSlides.length]);
+
+  const desktopAssignedSlots = useMemo(() => {
+    const currentSlideItems = slides[slide] || [];
+    const pattern = SLIDE_PATTERNS[slide % SLIDE_PATTERNS.length];
+    return assignToPattern(currentSlideItems, pattern);
+  }, [slides, slide]);
 
 
   // Show loading state
@@ -560,8 +627,6 @@ const ProjectsGallery = () => {
   }
 
   // Show empty state
-  console.log('📊 Current state:', { projects: projects.length, loading, slides: slides.length });
-  
   if (projects.length === 0) {
     return (
       <section className="relative py-0">
@@ -580,15 +645,10 @@ const ProjectsGallery = () => {
               <div className="text-left bg-neutral-50 rounded-lg p-4 mb-4">
                 <p className="text-sm font-medium text-neutral-700 mb-2">Để thêm dự án:</p>
                 <ul className="text-sm text-neutral-600 space-y-1">
-                  <li>• Thêm dự án trong Strapi Admin Panel</li>
-                  <li>• Cấu hình permissions cho Public role</li>
+                  <li>• Mở trang quản trị custom tại /admin</li>
+                  <li>• Đăng nhập bằng ADMIN_PASSWORD</li>
                   <li>• Đặt featured = true cho dự án</li>
                 </ul>
-              </div>
-              <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
-                <p className="text-xs text-blue-700 font-mono">
-                  💡 Debug: Kiểm tra console để xem lỗi API
-                </p>
               </div>
             </div>
           </div>
@@ -596,13 +656,6 @@ const ProjectsGallery = () => {
       </section>
     );
   }
-
-  console.log('🎨 Rendering ProjectsGallery:', { 
-    projects: projects.length, 
-    slides: slides.length, 
-    currentSlide: slide,
-    loading 
-  });
 
   return (
     <>
@@ -622,17 +675,16 @@ const ProjectsGallery = () => {
           justifyContent: "center"
         }}
       >
-        <div className="w-full" style={{ 
+        <div className="w-[92vw] lg:w-[80vw]" style={{ 
           paddingTop: "0px", 
           marginTop: "0px",
-          maxWidth: "1200px",
           margin: "0 auto"
         }}>
           {/* Slider */}
           <div className="relative pb-12 sm:pb-16 md:pb-20 sm:mt-24">
             <AnimatePresence initial={false} mode="wait">
               <motion.div
-                key={slide}
+                key={isDesktopViewport ? slide : mobileSlide}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
@@ -656,31 +708,20 @@ const ProjectsGallery = () => {
                     willChange: 'transform',
                     alignItems: 'stretch',
                     justifyItems: 'stretch',
-                    maxWidth: '1400px',
+                    maxWidth: '100%',
                     margin: '0 auto'
                   }}
                 >
-                  {console.log('🔧 Grid debug:', {
-                    slide,
-                    slideLength: slides[slide]?.length,
-                    gridAreas: generateGridTemplateAreas(slide, slides[slide]?.length || 0)
-                  })}
-                  {assignToPattern(slides[slide], SLIDE_PATTERNS[slide % SLIDE_PATTERNS.length]).map(
-                    (slot, idx) => {
-                      console.log('🎯 Rendering card:', { slide, idx, item: slot.item.title, area: slot.area });
-                      return (
-                        <FeaturedCard
-                          key={`${slide}-${slot.item.id}-${idx}`}
-                          areaName={slot.area}
-                          slotShape={slot.shape}
-                          item={slot.item}
-                          onOpen={openProject}
-                          index={idx}
-                        />
-                      );
-                    }
-                  )}
-                  {console.log('🔧 After assignToPattern:', assignToPattern(slides[slide], SLIDE_PATTERNS[slide % SLIDE_PATTERNS.length]))}
+                  {desktopAssignedSlots.map((slot, idx) => (
+                    <FeaturedCard
+                      key={`${slide}-${slot.item.id}-${idx}`}
+                      areaName={slot.area}
+                      slotShape={slot.shape}
+                      item={slot.item}
+                      onOpen={openProject}
+                      index={idx}
+                    />
+                  ))}
                 </div>
 
                 {/* Mobile grids: pages 0-1 use 1P+4L, last page shows 2P */}

@@ -1,17 +1,17 @@
-const STRAPI_URL = process.env.NEXT_PUBLIC_STRAPI_API_URL || 'http://localhost:1337';
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
 // Helper function to get Strapi image URL
 export const getStrapiImageUrl = (url) => {
   if (!url) return '';
   if (url.startsWith('http')) return url;
-  return `${STRAPI_URL}${url}`;
+  return `${APP_URL}${url}`;
 };
 
 // Helper function to get Strapi video URL
 export const getStrapiVideoUrl = (url) => {
   if (!url) return '';
   if (url.startsWith('http')) return url;
-  return `${STRAPI_URL}${url}`;
+  return `${APP_URL}${url}`;
 };
 
 // Fetch image projects from our API

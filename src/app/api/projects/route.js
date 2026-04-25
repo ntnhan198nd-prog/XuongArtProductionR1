@@ -1,39 +1,35 @@
-import { NextResponse } from 'next/server';
+import { NextResponse } from "next/server";
+import { readStore, serializeProject, sortByOrderThenId } from "@/lib/contentStore";
 
-const STRAPI_API_URL = process.env.NEXT_PUBLIC_STRAPI_API_URL || 'http://localhost:1337';
+export const revalidate = 0;
 
 export async function GET(request) {
   try {
     const requestUrl = new URL(request.url);
-    const projectType = requestUrl.searchParams.get('type'); // 'featured' or 'general'
-    
-    let strapiUrl = `${STRAPI_API_URL}/api/projects?populate=*`;
-    
-    // Filter by project type if specified
-    if (projectType) {
-      strapiUrl += `&filters[projectType][$eq]=${projectType}`;
-    }
-    
-    // Sort by order field
-    strapiUrl += '&sort=order:asc';
+    const projectType = requestUrl.searchParams.get("type");
+    const store = await readStore();
 
-    const response = await fetch(strapiUrl, {
-      headers: {
-        'Content-Type': 'application/json',
+    let projects = sortByOrderThenId(store.projects || []);
+
+    if (projectType === "featured") {
+      projects = projects.filter((project) => Boolean(project.featured));
+    } else if (projectType === "general") {
+      projects = projects.filter((project) => !project.featured);
+    }
+
+    return NextResponse.json({
+      data: projects.map((project) => serializeProject(project)),
+      meta: {
+        pagination: {
+          page: 1,
+          pageSize: projects.length,
+          pageCount: 1,
+          total: projects.length,
+        },
       },
     });
-
-    if (!response.ok) {
-      throw new Error('Failed to fetch projects from Strapi');
-    }
-
-    const data = await response.json();
-    return NextResponse.json(data);
   } catch (error) {
-    console.error('Error fetching projects:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch projects' },
-      { status: 500 }
-    );
+    console.error("Error fetching projects:", error);
+    return NextResponse.json({ error: "Failed to fetch projects" }, { status: 500 });
   }
 }

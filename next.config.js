@@ -1,49 +1,53 @@
+const extraImagePatterns = [];
+
+if (process.env.R2_PUBLIC_URL) {
+  try {
+    const parsed = new URL(process.env.R2_PUBLIC_URL);
+    extraImagePatterns.push({
+      protocol: parsed.protocol.replace(":", ""),
+      hostname: parsed.hostname,
+      pathname: "/**",
+      ...(parsed.port ? { port: parsed.port } : {}),
+    });
+  } catch {
+    // Keep build working even if env value is malformed.
+  }
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   images: {
     remotePatterns: [
       {
-        protocol: 'https',
-        hostname: 'res.cloudinary.com',
-        pathname: '/**',
+        protocol: "https",
+        hostname: "**.r2.dev",
+        pathname: "/**",
       },
       {
-        protocol: 'http',
-        hostname: 'res.cloudinary.com',
-        pathname: '/**',
+        protocol: "https",
+        hostname: "**.cloudflarestorage.com",
+        pathname: "/**",
       },
       {
-        protocol: 'https',
-        hostname: '**.cloudinary.com', // Allow all Cloudinary subdomains
+        protocol: "http",
+        hostname: "localhost",
+        port: "3000",
+        pathname: "/**",
       },
-      // Allow Strapi local media during development
-      {
-        protocol: 'http',
-        hostname: 'localhost',
-        port: '1337',
-      },
+      ...extraImagePatterns,
     ],
     unoptimized: false,
-    formats: ['image/avif', 'image/webp'],
+    formats: ["image/avif", "image/webp"],
     deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048, 3840],
     imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
     minimumCacheTTL: 60,
   },
-  // Compress responses
   compress: true,
-  // Optimize production builds
   swcMinify: true,
-  // Power generation
   poweredByHeader: false,
-  // Environment variables are now loaded from .env.local automatically
-  // No need to hardcode them here for security reasons
   env: {
-    CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME,
-    CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY,
-    CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET,
-    CLOUDINARY_URL: process.env.CLOUDINARY_URL,
-    NEXT_PUBLIC_STRAPI_API_URL: process.env.NEXT_PUBLIC_STRAPI_API_URL,
+    NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
   },
-}
+};
 
-module.exports = nextConfig
+module.exports = nextConfig;
