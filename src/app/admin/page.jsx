@@ -97,26 +97,69 @@ async function getFileMetadata(file) {
   return { width: null, height: null, duration: null };
 }
 
-async function uploadAsset(file, folder) {
+async function uploadAsset(file, folder, onProgress) {
+  // Browser uploads directly to R2 via a short-lived presigned URL — bypassing
+  // the Next.js server entirely. This avoids the double-bandwidth round trip
+  // and Vercel function size/timeout limits.
   const metadata = await getFileMetadata(file);
-  const formData = new FormData();
-  formData.set("file", file);
-  formData.set("folder", folder);
-  if (metadata.width) formData.set("width", String(metadata.width));
-  if (metadata.height) formData.set("height", String(metadata.height));
-  if (metadata.duration) formData.set("duration", String(metadata.duration));
+  const contentType = file.type || "application/octet-stream";
 
-  const response = await fetch("/api/admin/r2/upload", {
+  // Step 1: ask the server for a presigned PUT URL.
+  const presignRes = await fetch("/api/admin/r2/upload-url", {
     method: "POST",
-    body: formData,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      filename: file.name,
+      contentType,
+      folder,
+    }),
   });
-
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload?.error || "Failed to upload file to R2.");
+  const presignPayload = await presignRes.json();
+  if (!presignRes.ok) {
+    throw new Error(presignPayload?.error || "Failed to obtain upload URL.");
+  }
+  const { key, uploadUrl, publicUrl } = presignPayload.data || {};
+  if (!uploadUrl) {
+    throw new Error("Server did not return an upload URL.");
   }
 
-  return payload.data;
+  // Step 2: PUT the file straight to R2 (with progress events).
+  await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", uploadUrl);
+    xhr.setRequestHeader("Content-Type", contentType);
+    if (typeof onProgress === "function") {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          onProgress(event.loaded / event.total);
+        }
+      };
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        reject(new Error(`R2 upload failed (${xhr.status}).`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Network error during upload."));
+    xhr.onabort = () => reject(new Error("Upload was aborted."));
+    xhr.send(file);
+  });
+
+  // Step 3: return the same asset shape the rest of the admin expects.
+  return {
+    key,
+    url: publicUrl,
+    previewUrl: null,
+    name: file.name,
+    mime: contentType,
+    size: file.size,
+    previewSize: null,
+    width: metadata.width || null,
+    height: metadata.height || null,
+    duration: metadata.duration || null,
+  };
 }
 
 function toForm(item, tab) {
