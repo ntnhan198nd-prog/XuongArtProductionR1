@@ -1,10 +1,14 @@
 import "server-only";
-import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { getR2Client, getR2Config, validateR2Config } from "@/lib/r2";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const DATA_FILE = path.join(DATA_DIR, "content.json");
+// Single JSON object on R2 acts as the content store. Writing to the
+// repository filesystem is not viable on Vercel (read-only at runtime),
+// and R2 is already provisioned for media so it doubles as cheap durable
+// state for the admin.
+const STORE_KEY = "_admin/content.json";
 
 const EMPTY_STORE = {
   projects: [],
@@ -31,30 +35,65 @@ function normalizeStore(store = {}) {
   };
 }
 
-async function ensureStoreFile() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  try {
-    await fs.access(DATA_FILE);
-  } catch {
-    await fs.writeFile(DATA_FILE, JSON.stringify(EMPTY_STORE, null, 2), "utf8");
+function isMissingObjectError(error) {
+  if (!error) return false;
+  if (error.name === "NoSuchKey" || error.Code === "NoSuchKey") return true;
+  const status = error?.$metadata?.httpStatusCode;
+  return status === 404;
+}
+
+function assertR2Configured() {
+  const validation = validateR2Config();
+  if (!validation.valid) {
+    throw new Error(
+      `R2 is not configured for the content store. Missing: ${validation.missing.join(", ")}`
+    );
   }
 }
 
 async function readStoreInternal() {
-  await ensureStoreFile();
-  const raw = await fs.readFile(DATA_FILE, "utf8");
+  assertR2Configured();
+  const { bucket } = getR2Config();
+  const r2 = getR2Client();
 
   try {
-    return normalizeStore(JSON.parse(raw));
-  } catch {
-    await fs.writeFile(DATA_FILE, JSON.stringify(EMPTY_STORE, null, 2), "utf8");
-    return { ...EMPTY_STORE };
+    const result = await r2.send(
+      new GetObjectCommand({ Bucket: bucket, Key: STORE_KEY })
+    );
+    const raw = await result.Body.transformToString("utf-8");
+    try {
+      return normalizeStore(JSON.parse(raw));
+    } catch {
+      // Corrupt JSON — reset to an empty store rather than poisoning future reads.
+      const empty = { ...EMPTY_STORE };
+      await writeStoreInternal(empty);
+      return empty;
+    }
+  } catch (error) {
+    if (isMissingObjectError(error)) {
+      // First boot in an environment that has never written the store.
+      return { ...EMPTY_STORE };
+    }
+    throw error;
   }
 }
 
 async function writeStoreInternal(store) {
+  assertR2Configured();
   const normalized = normalizeStore(store);
-  await fs.writeFile(DATA_FILE, JSON.stringify(normalized, null, 2), "utf8");
+  const { bucket } = getR2Config();
+  const r2 = getR2Client();
+
+  await r2.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: STORE_KEY,
+      Body: JSON.stringify(normalized, null, 2),
+      ContentType: "application/json; charset=utf-8",
+      CacheControl: "no-store",
+    })
+  );
+
   return normalized;
 }
 
@@ -77,7 +116,7 @@ export async function updateStore(mutator) {
 export function slugify(value = "") {
   return String(value)
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9\s-]/g, "")
