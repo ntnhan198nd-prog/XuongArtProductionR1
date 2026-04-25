@@ -1,7 +1,6 @@
 "use client";
 
 import React from "react";
-import SectionIntro from "./SectionIntro";
 import Container from "./Container";
 import FadeIn from "./FadeIn";
 import StylizedImage from "./StylizedImage";
@@ -30,16 +29,23 @@ const Services = () => {
 
   return (
     <>
-      <SectionIntro
-        eyebrow="Dịch vụ"
-        title="Chúng tôi giúp bạn kể câu chuyện thương hiệu bằng hình ảnh chuyển động"
-        className="mt-20 sm:mt-24 md:mt-32 lg:mt-40"
-      >
-        <p>
-        Every frame tells a story.
-          
-        </p>
-      </SectionIntro>
+      <div className="mx-auto mt-20 w-[92vw] sm:mt-24 md:mt-32 lg:mt-40 lg:w-[80vw]">
+        <FadeIn className="max-w-3xl">
+          <div className="flex items-center gap-4">
+            <span className="font-display text-sm font-semibold uppercase tracking-[0.25em] text-accent-500">
+              Dịch vụ
+            </span>
+            <span className="h-px flex-1 bg-neutral-200" />
+          </div>
+          <h2 className="mt-4 font-display text-3xl font-medium tracking-tight text-neutral-950 sm:text-4xl md:text-5xl [text-wrap:balance]">
+            Chúng tôi giúp bạn kể câu chuyện thương hiệu bằng{" "}
+            <span className="text-accent-500">hình ảnh chuyển động</span>
+          </h2>
+          <p className="mt-6 text-base text-neutral-600 sm:text-lg">
+            Every frame tells a story.
+          </p>
+        </FadeIn>
+      </div>
       <Container className="mt-10 sm:mt-16">
         <div className="lg:flex lg:items-center lg:justify-end">
           <div className="flex justify-center lg:w-1/2 lg:justify-end lg:pr-12">

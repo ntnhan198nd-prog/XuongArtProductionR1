@@ -179,17 +179,52 @@ const Header = ({ invert = false }) => {
   );
 };
 
-const RootLayoutInner = ({ children }) => {
+const RootLayoutInner = ({ children, isHome }) => {
   const shouldReduceMotion = useReducedMotion();
-  
+  const [pastHero, setPastHero] = useState(!isHome);
+
+  useEffect(() => {
+    // On non-home pages the header is always solid.
+    if (!isHome) {
+      setPastHero(true);
+      return;
+    }
+    // Switch when user has scrolled past ~85% of the hero (viewport height).
+    const onScroll = () => {
+      setPastHero(window.scrollY > window.innerHeight * 0.85);
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [isHome]);
+
+  const overHero = isHome && !pastHero;
+
   return (
     <MotionConfig transition={shouldReduceMotion ? { duration: 0 } : undefined}>
       <header>
         {/* Noise overlay */}
         <div className="noise-overlay" />
-        <div className="absolute left-0 right-0 top-0 z-50 header-interactive">
+        <div
+          className={clsx(
+            "fixed left-0 right-0 top-0 z-50 header-interactive transition-colors duration-300",
+            overHero
+              ? "bg-transparent"
+              : "bg-white/90 backdrop-blur-md shadow-[0_1px_0_rgba(0,0,0,0.06)]"
+          )}
+        >
+          {overHero && (
+            <div
+              className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/55 via-black/20 to-transparent"
+              aria-hidden="true"
+            />
+          )}
           {/* Header */}
-          <Header />
+          <Header invert={overHero} />
         </div>
       </header>
       <motion.div
@@ -215,7 +250,12 @@ const RootLayoutInner = ({ children }) => {
 
 const RootLayout = ({ children }) => {
   const pathName = usePathname();
-  return <RootLayoutInner key={pathName}>{children}</RootLayoutInner>;
+  const isHome = pathName === "/";
+  return (
+    <RootLayoutInner key={pathName} isHome={isHome}>
+      {children}
+    </RootLayoutInner>
+  );
 };
 
 export default RootLayout;

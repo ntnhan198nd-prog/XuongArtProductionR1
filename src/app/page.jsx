@@ -2,29 +2,51 @@ import Clients from "@/components/Clients";
 import ContactSection from "@/components/ContactSection";
 import Container from "@/components/Container";
 import FadeIn from "@/components/FadeIn";
+import HeroShowreel from "@/components/HeroShowreel";
 import Services from "@/components/Services";
 import ProjectsGallery from "@/components/ProjectsGallery";
+import Stats from "@/components/Stats";
 import Testimonials from "@/components/Testimonials";
 import logoPhobiaDark from "@/images/clients/phobia/logo-dark.svg";
 
 export default function Home() {
   return (
     <main className="text-black">
-      {/* Featured projects first */}
-      <ProjectsGallery />
-      {/* Intro section below featured, with tighter spacing on mobile */}
-      <Container className="mt-6 sm:mt-16">
-        <FadeIn className="max-w-3xl">
-          <h1 className="font-display text-5xl font-bold tracking-tight text-neutral-950 [text-wrap:balance] sm:text-7xl">
-            Xưởng Art – Biến ý tưởng thành trải nghiệm số
-          </h1>
-          <p className="mt-6 text-xl text-neutral-600">
-          Nơi nghệ thuật gặp công nghệ.
-Xưởng Art Production là studio sáng tạo chuyên về sản xuất video và nội dung hình ảnh.
-Chúng tôi tin rằng mỗi khung hình đều mang sức mạnh kể chuyện – khơi gợi cảm xúc và truyền tải thông điệp thương hiệu một cách tinh tế..
+      {/* Hero banner with showreel video loop */}
+      <HeroShowreel videoSrc="/showreel.mp4" />
+      {/* Intro — centered manifesto */}
+      <Container className="mt-20 sm:mt-28">
+        <FadeIn className="mx-auto max-w-3xl text-center">
+          <h2 className="font-display text-4xl font-medium tracking-tight text-neutral-950 [text-wrap:balance] sm:text-5xl md:text-6xl">
+            Biến ý tưởng thành{" "}
+            <span className="text-accent-500">trải nghiệm số</span>
+          </h2>
+          <p className="mx-auto mt-6 max-w-2xl text-base text-neutral-600 sm:text-lg">
+            Studio sáng tạo nơi nghệ thuật gặp công nghệ. Chúng tôi sản xuất
+            video và nội dung hình ảnh đậm chất điện ảnh — kể câu chuyện
+            thương hiệu bằng ngôn ngữ thị giác tinh tế và cảm xúc thật.
           </p>
         </FadeIn>
       </Container>
+      {/* Featured projects below the intro */}
+      <div id="projects-section" className="scroll-mt-20">
+        <div className="mx-auto mt-20 w-[92vw] sm:mt-28 lg:w-[80vw]">
+          <FadeIn className="max-w-3xl">
+            <div className="flex items-center gap-4">
+              <span className="font-display text-sm font-semibold uppercase tracking-[0.25em] text-accent-500">
+                Dự án nổi bật
+              </span>
+              <span className="h-px flex-1 bg-neutral-200" />
+            </div>
+            <h2 className="mt-4 font-display text-3xl font-medium tracking-tight text-neutral-950 sm:text-4xl md:text-5xl [text-wrap:balance]">
+              Những thước phim làm nên{" "}
+              <span className="text-accent-500">dấu ấn Xưởng Art</span>
+            </h2>
+          </FadeIn>
+        </div>
+        <ProjectsGallery />
+      </div>
+      <Stats />
       <Clients />
       {/* Testimonials section removed by request */}
       <Services />

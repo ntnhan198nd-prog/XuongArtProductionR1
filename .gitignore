@@ -25,6 +25,14 @@ xuongart-new/build/
 xuongart-new/public/uploads/*
 !xuongart-new/public/uploads/.gitkeep
 
+# Large media (kept locally, do not commit)
+public/showreel.mp4
+public/*.mp4
+public/*.mov
+
+# Claude Code local state
+.claude/
+
 # Logs
 *.log
 npm-debug.log*
