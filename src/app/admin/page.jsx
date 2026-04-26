@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Container from "@/components/Container";
+import FeaturedLayoutPanel from "@/components/admin/FeaturedLayoutPanel";
 
 const TABS = [
   { key: "projects", label: "Video Projects" },
@@ -506,6 +507,12 @@ export default function AdminPage() {
         {error ? (
           <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
+          </div>
+        ) : null}
+
+        {tab === "projects" && !loadingItems ? (
+          <div className="mt-8">
+            <FeaturedLayoutPanel items={items} onSaved={() => loadItems(tab)} />
           </div>
         ) : null}
 

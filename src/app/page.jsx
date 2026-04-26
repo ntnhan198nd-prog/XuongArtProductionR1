@@ -28,6 +28,7 @@ export default function Home() {
           </p>
         </FadeIn>
       </Container>
+      <Clients />
       {/* Featured projects below the intro */}
       <div id="projects-section" className="scroll-mt-20">
         <div className="mx-auto mt-20 w-[92vw] sm:mt-28 lg:w-[80vw]">
@@ -47,7 +48,6 @@ export default function Home() {
         <ProjectsGallery />
       </div>
       <Stats />
-      <Clients />
       {/* Testimonials section removed by request */}
       <Services />
       <ContactSection />

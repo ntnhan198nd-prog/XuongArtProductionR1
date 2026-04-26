@@ -254,7 +254,19 @@ const FeaturedCard = ({ areaName, slotShape, item, onOpen, index = 0, fillHeight
         ...(areaName ? { gridArea: areaName } : {}),
         width: '100%',
         height: fillHeight ? '100%' : 'auto',
-        ...(fillHeight ? {} : { aspectRatio: forceAspectRatio || videoAspectRatio || 16/9 })
+        // Aspect ratio bám theo shape của ô (slot), không lấy từ media gốc —
+        // media với tỉ lệ khác sẽ tự crop bằng object-cover để giữ layout cố định.
+        ...(fillHeight
+          ? {}
+          : {
+              aspectRatio:
+                forceAspectRatio ||
+                (slotShape === 'portrait'
+                  ? 9 / 16
+                  : slotShape === 'landscape'
+                  ? 16 / 9
+                  : videoAspectRatio || 16 / 9),
+            })
       }}
       whileHover={{ 
         scale: 1.03,
@@ -550,6 +562,9 @@ const ProjectsGallery = () => {
 
   // Autoplay only for the active viewport to avoid timer contention.
   useEffect(() => {
+    // Auto-slide tạm thời tắt theo yêu cầu — chuyển slide bằng arrow/dot thủ công.
+    return undefined;
+    // eslint-disable-next-line no-unreachable
     const activeLength = isDesktopViewport ? slides.length : mobileSlides.length;
     if (activeLength <= 1) return undefined;
 

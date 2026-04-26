@@ -36,26 +36,26 @@ const Header = ({ invert = false }) => {
             <Link 
               href="/portfolio" 
               className={clsx(
-                "text-sm font-medium transition-colors duration-200 flex items-center h-full px-2",
+                "text-base font-medium transition-colors duration-200 flex items-center h-full px-2.5",
                 invert ? "text-white hover:text-accent-400" : "text-neutral-950 hover:text-accent-400"
               )}
             >
-              Dự án
+              -động
             </Link>
             <Link 
               href="/portfolio/images" 
               className={clsx(
-                "text-sm font-medium transition-colors duration-200 flex items-center h-full px-2",
+                "text-base font-medium transition-colors duration-200 flex items-center h-full px-2.5",
                 invert ? "text-white hover:text-accent-400" : "text-neutral-950 hover:text-accent-400"
               )}
             >
-              Dự án hình ảnh
+              -tĩnh
             </Link>
           </nav>
           <div className="flex items-center h-full gap-x-4">
             <div className="hidden md:block">
-              <Button href={"/contact"} invert={invert} className="text-xs sm:text-sm px-3 sm:px-4 py-1.5">
-                Who We Are ?
+              <Button href={"/contact"} invert={invert} className="text-sm sm:text-base px-4 sm:px-5 py-2">
+                -whoweare
               </Button>
             </div>
             
@@ -122,20 +122,20 @@ const Header = ({ invert = false }) => {
                     onClick={() => setMobileMenuOpen(false)}
                     className="text-lg font-medium text-neutral-950 hover:text-accent-400 transition-colors py-2 border-b border-neutral-100"
                   >
-                    Dự án
+                    -động
                   </Link>
                   <Link 
                     href="/portfolio/images"
                     onClick={() => setMobileMenuOpen(false)}
                     className="text-lg font-medium text-neutral-950 hover:text-accent-400 transition-colors py-2 border-b border-neutral-100"
                   >
-                    Dự án hình ảnh
+                    -tĩnh
                   </Link>
                 </nav>
                 
                 <div className="mt-4 pt-4 border-t border-neutral-200">
                   <Button href={"/contact"} className="w-full text-center">
-                    Who We Are ?
+                    -whoweare
                   </Button>
                 </div>
               </div>
