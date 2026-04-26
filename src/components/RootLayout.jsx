@@ -55,7 +55,7 @@ const Header = ({ invert = false }) => {
           <div className="flex items-center h-full gap-x-4">
             <div className="hidden md:block">
               <Button href={"/contact"} invert={invert} className="text-xs sm:text-sm px-3 sm:px-4 py-1.5">
-                Liên Hệ Ngay
+                Who We Are ?
               </Button>
             </div>
             
@@ -135,7 +135,7 @@ const Header = ({ invert = false }) => {
                 
                 <div className="mt-4 pt-4 border-t border-neutral-200">
                   <Button href={"/contact"} className="w-full text-center">
-                    Liên Hệ Ngay
+                    Who We Are ?
                   </Button>
                 </div>
               </div>
