@@ -5,7 +5,8 @@ const Logo = ({ invert, href, className, children, ...props }) => {
   className = clsx(
     className,
     "black",
-    invert ? "text-white hover:text-blue-600" : "text-black hover:text-blue-600"
+    "transition-colors duration-200",
+    invert ? "text-white hover:text-accent-400" : "text-black hover:text-accent-400"
   );
   const inner = <span className="relative">{children}</span>;
   if (href) {
