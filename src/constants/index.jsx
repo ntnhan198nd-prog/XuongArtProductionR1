@@ -13,8 +13,6 @@ export const navigation = [
   {
     title: "Công ty",
     links: [
-      { title: "Về chúng tôi", href: "/about" },
-      { title: "Quy trình", href: "/process" },
       { title: "Liên hệ", href: "/contact" },
     ],
   },

@@ -51,24 +51,6 @@ const Header = ({ invert = false }) => {
             >
               Dự án hình ảnh
             </Link>
-            <Link 
-              href="/about" 
-              className={clsx(
-                "text-sm font-medium transition-colors duration-200 flex items-center h-full px-2",
-                invert ? "text-white hover:text-accent-400" : "text-neutral-950 hover:text-accent-400"
-              )}
-            >
-              Về chúng tôi
-            </Link>
-            <Link 
-              href="/process" 
-              className={clsx(
-                "text-sm font-medium transition-colors duration-200 flex items-center h-full px-2",
-                invert ? "text-white hover:text-accent-400" : "text-neutral-950 hover:text-accent-400"
-              )}
-            >
-              Quy trình
-            </Link>
           </nav>
           <div className="flex items-center h-full gap-x-4">
             <div className="hidden md:block">
@@ -148,20 +130,6 @@ const Header = ({ invert = false }) => {
                     className="text-lg font-medium text-neutral-950 hover:text-accent-400 transition-colors py-2 border-b border-neutral-100"
                   >
                     Dự án hình ảnh
-                  </Link>
-                  <Link 
-                    href="/about"
-                    onClick={() => setMobileMenuOpen(false)}
-                    className="text-lg font-medium text-neutral-950 hover:text-accent-400 transition-colors py-2 border-b border-neutral-100"
-                  >
-                    Về chúng tôi
-                  </Link>
-                  <Link 
-                    href="/process"
-                    onClick={() => setMobileMenuOpen(false)}
-                    className="text-lg font-medium text-neutral-950 hover:text-accent-400 transition-colors py-2 border-b border-neutral-100"
-                  >
-                    Quy trình
                   </Link>
                 </nav>
                 
