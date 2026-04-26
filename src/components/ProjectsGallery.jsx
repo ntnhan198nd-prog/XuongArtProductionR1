@@ -373,31 +373,26 @@ const ProjectsGallery = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, [isModalOpen]);
 
-  // Lock body scroll when modal open (mobile + desktop), but allow scrolling inside modal
+  // Lock body scroll when modal open. Use overflow:hidden on <html> + scrollbar
+  // compensation — avoids the scroll-jump that the previous position:fixed approach
+  // caused when applying multiple style properties non-atomically.
   useEffect(() => {
     if (!isModalOpen) return;
+    const docEl = document.documentElement;
     const prev = {
-      overflow: document.body.style.overflow,
-      position: document.body.style.position,
-      top: document.body.style.top,
-      width: document.body.style.width,
-      overscrollBehaviorY: document.body.style.overscrollBehaviorY,
+      overflow: docEl.style.overflow,
+      paddingRight: docEl.style.paddingRight,
     };
-    const scrollY = window.scrollY || window.pageYOffset || 0;
-    document.body.style.overflow = 'hidden';
-    document.body.style.position = 'fixed';
-    document.body.style.top = `-${scrollY}px`;
-    document.body.style.width = '100%';
-    document.body.style.overscrollBehaviorY = 'contain';
-    document.documentElement.classList.add('modal-open');
+    const scrollbarWidth = window.innerWidth - docEl.clientWidth;
+    docEl.style.overflow = 'hidden';
+    if (scrollbarWidth > 0) {
+      docEl.style.paddingRight = `${scrollbarWidth}px`;
+    }
+    docEl.classList.add('modal-open');
     return () => {
-      document.body.style.overflow = prev.overflow;
-      document.body.style.position = prev.position;
-      document.body.style.top = prev.top;
-      document.body.style.width = prev.width;
-      document.body.style.overscrollBehaviorY = prev.overscrollBehaviorY;
-      document.documentElement.classList.remove('modal-open');
-      window.scrollTo(0, scrollY);
+      docEl.style.overflow = prev.overflow;
+      docEl.style.paddingRight = prev.paddingRight;
+      docEl.classList.remove('modal-open');
     };
   }, [isModalOpen]);
   const [slide, setSlide] = useState(0);

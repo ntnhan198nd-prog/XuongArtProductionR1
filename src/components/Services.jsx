@@ -32,14 +32,14 @@ const Services = () => {
       <div className="mx-auto mt-20 w-[92vw] sm:mt-24 md:mt-32 lg:mt-40 lg:w-[80vw]">
         <FadeIn className="max-w-3xl">
           <div className="flex items-center gap-4">
-            <span className="font-display text-sm font-semibold uppercase tracking-[0.25em] text-accent-500">
+            <span className="font-display text-sm font-semibold uppercase tracking-[0.25em] text-accent-400">
               Dịch vụ
             </span>
             <span className="h-px flex-1 bg-neutral-200" />
           </div>
           <h2 className="mt-4 font-display text-3xl font-medium tracking-tight text-neutral-950 sm:text-4xl md:text-5xl [text-wrap:balance]">
             Chúng tôi giúp bạn kể câu chuyện thương hiệu bằng{" "}
-            <span className="text-accent-500">hình ảnh chuyển động</span>
+            <span className="text-accent-400">hình ảnh chuyển động</span>
           </h2>
           <p className="mt-6 text-base text-neutral-600 sm:text-lg">
             Every frame tells a story.

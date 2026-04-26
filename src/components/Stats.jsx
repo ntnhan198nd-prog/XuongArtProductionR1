@@ -42,7 +42,7 @@ const Stats = () => {
     <section className="mt-20 sm:mt-24 md:mt-32 lg:mt-40">
       <div className="mx-auto w-[92vw] lg:w-[80vw]">
         <FadeIn className="max-w-2xl">
-          <span className="font-display text-sm font-semibold uppercase tracking-[0.25em] text-accent-500">
+          <span className="font-display text-sm font-semibold uppercase tracking-[0.25em] text-accent-400">
             Numbers that matter
           </span>
           <h2 className="mt-4 font-display text-3xl font-medium tracking-tight text-neutral-950 sm:text-4xl md:text-5xl [text-wrap:balance]">

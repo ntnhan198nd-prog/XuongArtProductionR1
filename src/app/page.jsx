@@ -19,7 +19,7 @@ export default function Home() {
         <FadeIn className="mx-auto max-w-3xl text-center">
           <h2 className="font-display text-4xl font-medium tracking-tight text-neutral-950 [text-wrap:balance] sm:text-5xl md:text-6xl">
             Biến ý tưởng thành{" "}
-            <span className="text-accent-500">trải nghiệm số</span>
+            <span className="text-accent-400">trải nghiệm số</span>
           </h2>
           <p className="mx-auto mt-6 max-w-2xl text-base text-neutral-600 sm:text-lg">
             Studio sáng tạo nơi nghệ thuật gặp công nghệ. Chúng tôi sản xuất
@@ -33,14 +33,14 @@ export default function Home() {
         <div className="mx-auto mt-20 w-[92vw] sm:mt-28 lg:w-[80vw]">
           <FadeIn className="max-w-3xl">
             <div className="flex items-center gap-4">
-              <span className="font-display text-sm font-semibold uppercase tracking-[0.25em] text-accent-500">
+              <span className="font-display text-sm font-semibold uppercase tracking-[0.25em] text-accent-400">
                 Dự án nổi bật
               </span>
               <span className="h-px flex-1 bg-neutral-200" />
             </div>
             <h2 className="mt-4 font-display text-3xl font-medium tracking-tight text-neutral-950 sm:text-4xl md:text-5xl [text-wrap:balance]">
               Những thước phim làm nên{" "}
-              <span className="text-accent-500">dấu ấn Xưởng Art</span>
+              <span className="text-accent-400">dấu ấn Xưởng Art</span>
             </h2>
           </FadeIn>
         </div>

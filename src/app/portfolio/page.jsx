@@ -190,13 +190,13 @@ const MasonryCard = ({ item, onOpen, index = 0 }) => {
   return (
     <motion.div
       ref={containerRef}
-      layout
       className={`relative group overflow-hidden rounded-2xl bg-neutral-900 text-white shadow-lg cursor-pointer ${gridSpanClasses}`}
       whileHover={{ scale: 1.02 }}
       onClick={() => onOpen && onOpen(item)}
       initial={{ opacity: 0, scale: 0.98 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.5, delay: index * 0.1 }}
+      whileInView={{ opacity: 1, scale: 1 }}
+      viewport={{ once: true, margin: "0px 0px -50px" }}
+      transition={{ duration: 0.5, delay: Math.min(index, 6) * 0.06 }}
       style={{ ...cardStyle, ...gridStyle }}
     >
       <div className="relative w-full h-full overflow-hidden bg-neutral-800">
@@ -436,31 +436,26 @@ export default function PortfolioPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [isOpen]);
 
-  // Lock body scroll when modal open (mobile + desktop), but allow scrolling inside modal
+  // Lock body scroll when modal open. Use overflow:hidden on <html> + scrollbar
+  // compensation to avoid the visible scroll jump that the previous position:fixed
+  // approach caused when applying multiple style properties non-atomically.
   useEffect(() => {
     if (!isOpen) return;
+    const docEl = document.documentElement;
     const prev = {
-      overflow: document.body.style.overflow,
-      position: document.body.style.position,
-      top: document.body.style.top,
-      width: document.body.style.width,
-      overscrollBehaviorY: document.body.style.overscrollBehaviorY,
+      overflow: docEl.style.overflow,
+      paddingRight: docEl.style.paddingRight,
     };
-    const scrollY = window.scrollY || window.pageYOffset || 0;
-    document.body.style.overflow = 'hidden';
-    document.body.style.position = 'fixed';
-    document.body.style.top = `-${scrollY}px`;
-    document.body.style.width = '100%';
-    document.body.style.overscrollBehaviorY = 'contain';
-    document.documentElement.classList.add('modal-open');
+    const scrollbarWidth = window.innerWidth - docEl.clientWidth;
+    docEl.style.overflow = 'hidden';
+    if (scrollbarWidth > 0) {
+      docEl.style.paddingRight = `${scrollbarWidth}px`;
+    }
+    docEl.classList.add('modal-open');
     return () => {
-      document.body.style.overflow = prev.overflow;
-      document.body.style.position = prev.position;
-      document.body.style.top = prev.top;
-      document.body.style.width = prev.width;
-      document.body.style.overscrollBehaviorY = prev.overscrollBehaviorY;
-      document.documentElement.classList.remove('modal-open');
-      window.scrollTo(0, scrollY);
+      docEl.style.overflow = prev.overflow;
+      docEl.style.paddingRight = prev.paddingRight;
+      docEl.classList.remove('modal-open');
     };
   }, [isOpen]);
 
@@ -726,7 +721,7 @@ export default function PortfolioPage() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
-            className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70"
+            className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 px-4 pt-24 pb-6 sm:pt-28 sm:pb-8"
             onClick={closeProject}
           >
             <motion.div
@@ -734,7 +729,7 @@ export default function PortfolioPage() {
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.98, opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="relative w-[95vw] max-w-8xl h-[85vh] lg:h-[80vh] bg-neutral-950 rounded-2xl border border-white/10 overflow-hidden"
+              className="relative w-[95vw] max-w-8xl h-full max-h-[calc(100vh-8rem)] sm:max-h-[calc(100vh-9rem)] bg-neutral-950 rounded-2xl border border-white/10 overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Mobile top bar (black) with close button */}
