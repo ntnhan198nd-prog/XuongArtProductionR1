@@ -13,24 +13,14 @@ const isPortfolioVideoActive = (pathname) =>
   pathname === "/portfolio" ||
   (pathname.startsWith("/portfolio/") && !pathname.startsWith("/portfolio/images"));
 
-const Header = ({ invert = false }) => {
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+const Header = ({ invert = false, mobileMenuOpen, setMobileMenuOpen }) => {
   const pathname = usePathname() || "";
   const activeVideo = isPortfolioVideoActive(pathname);
   const activeImages = pathname.startsWith("/portfolio/images");
   const activeContact = pathname === "/contact";
 
-  // Close mobile menu when clicking outside
-  useEffect(() => {
-    if (!mobileMenuOpen) return;
-    const handleClickOutside = (event) => {
-      if (!event.target.closest('.mobile-menu-container')) {
-        setMobileMenuOpen(false);
-      }
-    };
-    document.addEventListener('click', handleClickOutside);
-    return () => document.removeEventListener('click', handleClickOutside);
-  }, [mobileMenuOpen]);
+  // Body scroll lock + close on Escape are handled at the layout level so the
+  // menu can be portaled outside the fixed header stacking context.
 
   return (
     <Container>
@@ -108,89 +98,109 @@ const Header = ({ invert = false }) => {
         </div>
       </div>
 
-      {/* Mobile Menu Overlay */}
-      <AnimatePresence>
-        {mobileMenuOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-50 bg-black/50 md:hidden"
-            onClick={() => setMobileMenuOpen(false)}
-          >
-            <motion.div
-              initial={{ x: "100%" }}
-              animate={{ x: 0 }}
-              exit={{ x: "100%" }}
-              transition={{ type: "tween", duration: 0.3 }}
-              className="mobile-menu-container fixed right-0 top-0 h-full w-[280px] bg-white shadow-xl"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex flex-col h-full p-6">
-                <div className="flex items-center justify-between mb-8">
-                  <Link href={"/"} onClick={() => setMobileMenuOpen(false)}>
-                    <Logo className="text-2xl">XUONGART</Logo>
-                  </Link>
-                  <button
-                    onClick={() => setMobileMenuOpen(false)}
-                    className="p-2 hover:bg-neutral-100 rounded-md"
-                  >
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-                
-                <nav className="flex flex-col gap-4 flex-1">
-                  <Link
-                    href="/portfolio"
-                    onClick={() => setMobileMenuOpen(false)}
-                    aria-current={activeVideo ? "page" : undefined}
-                    className={clsx(
-                      "text-lg font-medium transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.88] py-2 border-b border-neutral-100",
-                      activeVideo ? "text-accent-400" : "text-neutral-950 hover:text-accent-400"
-                    )}
-                  >
-                    -động
-                  </Link>
-                  <Link
-                    href="/portfolio/images"
-                    onClick={() => setMobileMenuOpen(false)}
-                    aria-current={activeImages ? "page" : undefined}
-                    className={clsx(
-                      "text-lg font-medium transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.88] py-2 border-b border-neutral-100",
-                      activeImages ? "text-accent-400" : "text-neutral-950 hover:text-accent-400"
-                    )}
-                  >
-                    -tĩnh
-                  </Link>
-                </nav>
-
-                <div className="mt-4 pt-4 border-t border-neutral-200">
-                  <Button
-                    href={"/contact"}
-                    aria-current={activeContact ? "page" : undefined}
-                    className={clsx(
-                      "w-full text-center",
-                      activeContact && "!text-accent-400"
-                    )}
-                  >
-                    -whoweare
-                  </Button>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </Container>
+  );
+};
+
+// Full-screen mobile menu rendered at the top level so it escapes the fixed
+// header's stacking context (the header is z-50 with `transform`/`backdrop-blur`
+// which created a containing block that clipped a previously-nested menu).
+const MobileMenu = ({ open, onClose }) => {
+  const pathname = usePathname() || "";
+  const activeVideo = isPortfolioVideoActive(pathname);
+  const activeImages = pathname.startsWith("/portfolio/images");
+  const activeContact = pathname === "/contact";
+
+  // Body scroll lock + Escape to close.
+  useEffect(() => {
+    if (!open) return;
+    const docEl = document.documentElement;
+    const prevOverflow = docEl.style.overflow;
+    docEl.style.overflow = "hidden";
+    const onKey = (event) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      docEl.style.overflow = prevOverflow;
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, onClose]);
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          className="mobile-menu-container fixed inset-0 z-[200] flex items-center justify-center bg-white md:hidden"
+        >
+          {/* Close button — floats top-right, always visible */}
+          <button
+            onClick={onClose}
+            className="absolute top-5 right-5 flex h-11 w-11 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-900 shadow-sm transition active:scale-90 hover:bg-neutral-100"
+            aria-label="Đóng menu"
+          >
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+
+          {/* Centred content stack */}
+          <div className="flex w-full flex-col items-center gap-10 px-6">
+            <Link href={"/"} onClick={onClose} aria-label="Home">
+              <Logo className="text-3xl">XUONGART</Logo>
+            </Link>
+
+            <nav className="flex flex-col items-center gap-6">
+              <Link
+                href="/portfolio"
+                onClick={onClose}
+                aria-current={activeVideo ? "page" : undefined}
+                className={clsx(
+                  "text-4xl font-display font-medium tracking-tight transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.92]",
+                  activeVideo ? "text-accent-400" : "text-neutral-950 hover:text-accent-400"
+                )}
+              >
+                -động
+              </Link>
+              <Link
+                href="/portfolio/images"
+                onClick={onClose}
+                aria-current={activeImages ? "page" : undefined}
+                className={clsx(
+                  "text-4xl font-display font-medium tracking-tight transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.92]",
+                  activeImages ? "text-accent-400" : "text-neutral-950 hover:text-accent-400"
+                )}
+              >
+                -tĩnh
+              </Link>
+            </nav>
+
+            <Button
+              href={"/contact"}
+              onClick={onClose}
+              aria-current={activeContact ? "page" : undefined}
+              className={clsx(
+                "text-base px-6 py-3",
+                activeContact && "!text-accent-400"
+              )}
+            >
+              -whoweare
+            </Button>
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };
 
 const RootLayoutInner = ({ children, isHome, footerContent, socialContent }) => {
   const shouldReduceMotion = useReducedMotion();
   const [pastHero, setPastHero] = useState(!isHome);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     // On non-home pages the header is always solid.
@@ -233,9 +243,14 @@ const RootLayoutInner = ({ children, isHome, footerContent, socialContent }) => 
             />
           )}
           {/* Header */}
-          <Header invert={overHero} />
+          <Header
+            invert={overHero}
+            mobileMenuOpen={mobileMenuOpen}
+            setMobileMenuOpen={setMobileMenuOpen}
+          />
         </div>
       </header>
+      <MobileMenu open={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} />
       <motion.div
         layout
         className="relative flex flex-auto overflow-hidden bg-white pt-20"

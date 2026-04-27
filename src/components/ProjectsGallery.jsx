@@ -562,9 +562,6 @@ const ProjectsGallery = () => {
 
   // Autoplay only for the active viewport to avoid timer contention.
   useEffect(() => {
-    // Auto-slide tạm thời tắt theo yêu cầu — chuyển slide bằng arrow/dot thủ công.
-    return undefined;
-    // eslint-disable-next-line no-unreachable
     const activeLength = isDesktopViewport ? slides.length : mobileSlides.length;
     if (activeLength <= 1) return undefined;
 
