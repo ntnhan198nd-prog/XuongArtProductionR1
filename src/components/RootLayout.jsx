@@ -154,13 +154,13 @@ const MobileMenu = ({ open, onClose }) => {
               <Logo className="text-3xl">XUONGART</Logo>
             </Link>
 
-            <nav className="flex flex-col items-center gap-6">
+            <nav className="flex flex-col items-center gap-3">
               <Link
                 href="/portfolio"
                 onClick={onClose}
                 aria-current={activeVideo ? "page" : undefined}
                 className={clsx(
-                  "text-4xl font-display font-medium tracking-tight transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.92]",
+                  "text-base font-medium transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.92]",
                   activeVideo ? "text-accent-400" : "text-neutral-950 hover:text-accent-400"
                 )}
               >
@@ -171,7 +171,7 @@ const MobileMenu = ({ open, onClose }) => {
                 onClick={onClose}
                 aria-current={activeImages ? "page" : undefined}
                 className={clsx(
-                  "text-4xl font-display font-medium tracking-tight transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.92]",
+                  "text-base font-medium transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.92]",
                   activeImages ? "text-accent-400" : "text-neutral-950 hover:text-accent-400"
                 )}
               >

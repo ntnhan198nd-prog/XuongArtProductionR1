@@ -351,8 +351,8 @@ function SocialBlock({ value, onChange }) {
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <TextField label="Facebook URL" value={value.facebook} onChange={(v) => set("facebook", v)} placeholder="https://..." />
       <TextField label="Instagram URL" value={value.instagram} onChange={(v) => set("instagram", v)} placeholder="https://..." />
-      <TextField label="LinkedIn URL" value={value.linkedin} onChange={(v) => set("linkedin", v)} placeholder="https://..." />
-      <TextField label="Twitter / X URL" value={value.twitter} onChange={(v) => set("twitter", v)} placeholder="https://..." />
+      <TextField label="TikTok URL" value={value.tiktok} onChange={(v) => set("tiktok", v)} placeholder="https://..." />
+      <TextField label="Zalo URL" value={value.zalo} onChange={(v) => set("zalo", v)} placeholder="https://zalo.me/..." />
     </div>
   );
 }

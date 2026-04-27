@@ -159,9 +159,11 @@ const MasonryCard = ({ item, onOpen, index = 0 }) => {
   // Xếp theo pattern cố định dựa vào index (không phụ thuộc tải media)
   const slot = useMemo(() => MASONRY_PATTERN[index % MASONRY_PATTERN.length], [index]);
   const gridStyle = useMemo(() => {
+    // Mobile uses a flex column stack — masonry slots / row spans only apply
+    // on the sm:grid layout. Returning {} on mobile keeps cards in normal flow.
+    if (isMobile) return {};
     const style = { gridColumn: `${slot.col} / span 1` };
-    if (!isMobile && slot.row) {
-      // Áp row span cố định trên desktop để tạo bố cục bất đối xứng
+    if (slot.row) {
       // gridAutoRows = 8px nên row 32 ~ 256px (chưa tính gap)
       return { ...style, gridRowEnd: `span ${slot.row}` };
     }
@@ -671,7 +673,7 @@ export default function PortfolioPage() {
           <AnimatePresence mode="popLayout">
             <motion.div
               layout
-              className="mt-10 grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-3 gap-2"
+              className="mt-10 flex flex-col gap-3 sm:grid sm:grid-cols-3 sm:gap-2 lg:grid-cols-3"
               style={{
                 gridAutoRows: '8px',
                 gridAutoFlow: 'dense',

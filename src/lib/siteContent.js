@@ -128,8 +128,8 @@ export const DEFAULT_SITE_CONTENT = {
   social: {
     facebook: "https://www.facebook.com/xuongartproduction",
     instagram: "",
-    linkedin: "",
-    twitter: "",
+    tiktok: "",
+    zalo: "",
   },
 };
 

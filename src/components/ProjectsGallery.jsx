@@ -788,20 +788,22 @@ const ProjectsGallery = () => {
 
                 {/* Navigation indicators - inside motion div to stay with content */}
                 <>
-                  {/* Mobile - show dots based on mobile slides */}
+                  {/* Mobile - show horizontal dot indicators */}
                   {mobileSlides.length > 1 && (
-                    <div className="md:hidden mt-8 flex justify-center items-center gap-1.5">
+                    <div className="md:hidden mt-8 flex flex-row justify-center items-center gap-2.5">
                       {mobileSlides.map((_, idx) => (
                         <button
                           key={idx}
+                          type="button"
                           onClick={() => setMobileSlide(idx)}
                           className={clsx(
-                            "rounded-full transition-all duration-300 ease-out",
+                            "block h-2 w-2 min-h-0 min-w-0 rounded-full border-0 p-0 transition-colors duration-300 ease-out",
                             "focus:outline-none focus:ring-2 focus:ring-neutral-900/50",
-                            idx === mobileSlide 
-                              ? "w-2 h-2 bg-neutral-900" 
-                              : "w-2 h-2 bg-neutral-900/30 hover:bg-neutral-900/50"
+                            idx === mobileSlide
+                              ? "bg-neutral-900"
+                              : "bg-neutral-900/30 hover:bg-neutral-900/50"
                           )}
+                          style={{ minHeight: 0, minWidth: 0 }}
                           aria-label={`Trang ${idx + 1}`}
                         />
                       ))}

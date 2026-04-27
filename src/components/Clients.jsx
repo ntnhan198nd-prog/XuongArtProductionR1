@@ -28,11 +28,11 @@ const Clients = ({ content }) => {
         <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-16 sm:w-32 bg-gradient-to-r from-neutral-950 to-transparent" />
         <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-16 sm:w-32 bg-gradient-to-l from-neutral-950 to-transparent" />
 
-        <div className="flex w-max animate-marquee items-center gap-12 will-change-transform group-hover:[animation-play-state:paused] sm:gap-20">
+        <div className="flex w-max animate-marquee items-center gap-6 will-change-transform group-hover:[animation-play-state:paused] sm:gap-20">
           {track.map((name, idx) => (
             <span
               key={`${name}-${idx}`}
-              className="flex shrink-0 items-center gap-12 whitespace-nowrap font-display text-2xl font-semibold text-white sm:gap-20 sm:text-3xl md:text-4xl"
+              className="flex shrink-0 items-center gap-6 whitespace-nowrap font-display text-lg font-semibold text-white sm:gap-20 sm:text-3xl md:text-4xl"
               aria-hidden={idx >= clients.length}
             >
               {name}
