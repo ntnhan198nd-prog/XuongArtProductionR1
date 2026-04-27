@@ -323,35 +323,22 @@ const FeaturedCard = ({ areaName, slotShape, item, onOpen, index = 0, fillHeight
         )}
       </div>
 
-      {/* Hover overlay with improved gradient */}
-      <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent opacity-0 transition-all duration-500 group-hover:opacity-100" />
-      
-      {/* Play button overlay removed */}
-      
-      {/* Title overlay with improved styling (mobile: only show title) */}
+      {/* Permanent dark gradient anchored to the bottom — darkest at the
+          bottom edge, fades up through the client name. Sits above the media
+          but below the text so the two-line caption is always legible. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/95 via-black/55 to-transparent"
+      />
+
+      {/* Extra hover dim on top of the permanent gradient */}
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/40 via-black/10 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+
+      {/* Title overlay (mobile: only show title) */}
       <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute bottom-0 left-0 right-0 p-6 transform translate-y-2 transition-transform duration-300 group-hover:translate-y-0">
-          <div className="hidden sm:block text-xs uppercase tracking-widest text-neutral-300 font-medium">{item.client}</div>
-          <div className="mt-2 line-clamp-2 font-display text-xl font-bold text-white leading-tight">{item.title}</div>
-          {item.tagline && (
-            <div className="hidden sm:block mt-3 text-sm text-neutral-200 line-clamp-2 leading-relaxed">{item.tagline}</div>
-          )}
-          {/* Category badges (multi-support) */}
-          {Array.isArray(item.categories) && item.categories.length > 0 ? (
-            <div className="hidden sm:flex mt-3 flex-wrap gap-2">
-              {item.categories.map((cat, idx) => (
-                <div key={idx} className="inline-block px-3 py-1 bg-white/20 backdrop-blur-sm rounded-full text-xs font-medium text-white border border-white/30">
-                  {cat}
-                </div>
-              ))}
-            </div>
-          ) : (
-            item.category && (
-              <div className="hidden sm:inline-block mt-3 px-3 py-1 bg-white/20 backdrop-blur-sm rounded-full text-xs font-medium text-white border border-white/30">
-                {item.category}
-              </div>
-            )
-          )}
+        <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-5 transform translate-y-1 transition-transform duration-300 group-hover:translate-y-0">
+          <div className="hidden sm:block text-[10px] uppercase tracking-[0.18em] text-neutral-200 font-medium">{item.client}</div>
+          <div className="mt-px line-clamp-2 font-display text-sm sm:text-base font-semibold text-white leading-snug">{item.title}</div>
         </div>
       </div>
     </motion.div>

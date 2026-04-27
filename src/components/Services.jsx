@@ -13,6 +13,9 @@ const Services = ({ content }) => {
     Array.isArray(data?.items) && data.items.length > 0
       ? data.items
       : DEFAULT_SITE_CONTENT.services.items;
+  const customImageUrl = data?.image?.url || "";
+  const heroImageSrc = customImageUrl || imageLaptop;
+  const heroImageAlt = data?.image?.alt || "";
 
   return (
     <>
@@ -40,7 +43,8 @@ const Services = ({ content }) => {
           <div className="flex justify-center lg:w-1/2 lg:justify-end lg:pr-12">
             <FadeIn className="w-full sm:w-[33.75rem] flex-none lg:w-[45rem]">
               <StylizedImage
-                src={imageLaptop}
+                src={heroImageSrc}
+                alt={heroImageAlt}
                 sizes="(min-width: 1024px) 41rem, 31rem"
                 className="justify-center lg:justify-end"
               />

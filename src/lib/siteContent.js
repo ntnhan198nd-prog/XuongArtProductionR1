@@ -33,17 +33,28 @@ export const DEFAULT_SITE_CONTENT = {
     ],
   },
   clients: {
+    strategicHeading: "Đối tác chiến lược",
+    strategicBrands: [
+      { alt: "Samsung", logoUrl: "", logoKey: "" },
+      { alt: "Apple", logoUrl: "", logoKey: "" },
+      { alt: "Sony", logoUrl: "", logoKey: "" },
+      { alt: "BYD", logoUrl: "", logoKey: "" },
+    ],
+    marqueeHeading:
+      "Và các thương hiệu, đối tác sáng tạo đã đồng hành",
+    marqueeShowDots: true,
+    // Legacy field kept for backward-compat with previously-saved content.
     heading: "Chúng tôi đã đồng hành cùng nhiều thương hiệu & đối tác sáng tạo",
     brands: [
       "Redmi",
       "Asus",
-      "Samsung",
       "Cellphones",
       "Oppo",
       "Huawei",
       "Monday VietNam",
-      "Apple",
-      "Sony",
+      "HOYOVERSE",
+      "PGI",
+      "INNO",
     ],
   },
   services: {
@@ -51,6 +62,7 @@ export const DEFAULT_SITE_CONTENT = {
     headingMain: "Chúng tôi giúp bạn kể câu chuyện thương hiệu bằng",
     headingAccent: "hình ảnh chuyển động",
     tagline: "Every frame tells a story.",
+    image: { url: "", key: "", alt: "" },
     items: [
       {
         title: "Post-Production",
@@ -184,19 +196,73 @@ export function normalizeSiteContent(input) {
         };
       }),
     },
-    clients: {
-      heading: pickString(src.clients?.heading, d.clients.heading),
-      brands: pickArray(src.clients?.brands, d.clients.brands, (item) => {
-        if (!isString(item)) return null;
-        const v = item.trim();
-        return v || null;
-      }),
-    },
+    clients: (() => {
+      const rawStrategic = Array.isArray(src.clients?.strategicBrands)
+        ? src.clients.strategicBrands
+        : d.clients.strategicBrands;
+      const emptySlot = { alt: "", logoUrl: "", logoKey: "" };
+      const cleanedStrategic = rawStrategic.map((item) => {
+        // Legacy string entries: keep as alt text so they still render until a
+        // logo is uploaded.
+        if (isString(item)) {
+          return { alt: item.trim(), logoUrl: "", logoKey: "" };
+        }
+        if (isObject(item)) {
+          return {
+            alt: pickString(item.alt, ""),
+            logoUrl: pickString(item.logoUrl, ""),
+            logoKey: pickString(item.logoKey, ""),
+          };
+        }
+        return { ...emptySlot };
+      });
+      const strategicBrands = [
+        ...cleanedStrategic,
+        emptySlot,
+        emptySlot,
+        emptySlot,
+        emptySlot,
+      ].slice(0, 4);
+      // Fall back to legacy `heading` if `marqueeHeading` not present so saved
+      // content from before this split keeps rendering correctly.
+      const marqueeHeading =
+        pickString(src.clients?.marqueeHeading, undefined) ??
+        pickString(src.clients?.heading, d.clients.marqueeHeading);
+      return {
+        strategicHeading: pickString(
+          src.clients?.strategicHeading,
+          d.clients.strategicHeading
+        ),
+        strategicBrands,
+        marqueeHeading,
+        marqueeShowDots:
+          typeof src.clients?.marqueeShowDots === "boolean"
+            ? src.clients.marqueeShowDots
+            : d.clients.marqueeShowDots,
+        heading: pickString(src.clients?.heading, d.clients.heading),
+        brands: pickArray(src.clients?.brands, d.clients.brands, (item) => {
+          if (!isString(item)) return null;
+          const v = item.trim();
+          return v || null;
+        }),
+      };
+    })(),
     services: {
       eyebrow: pickString(src.services?.eyebrow, d.services.eyebrow),
       headingMain: pickString(src.services?.headingMain, d.services.headingMain),
       headingAccent: pickString(src.services?.headingAccent, d.services.headingAccent),
       tagline: pickString(src.services?.tagline, d.services.tagline),
+      image: (() => {
+        const img = src.services?.image;
+        if (isObject(img)) {
+          return {
+            url: pickString(img.url, ""),
+            key: pickString(img.key, ""),
+            alt: pickString(img.alt, ""),
+          };
+        }
+        return { ...d.services.image };
+      })(),
       items: pickArray(src.services?.items, d.services.items, (item) => {
         if (!isObject(item)) return null;
         const title = pickString(item.title, "").trim();

@@ -5,8 +5,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import Container from "@/components/Container";
 
 const URL_REGEX = /^https?:\/\/[^\s]+$/i;
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const TEL_REGEX = /^[+\d][\d\s\-().]*$/;
+// Loose validators — only require a recognizable pattern is *present* anywhere
+// in the value. Lets the user keep decorative prefixes (emojis, icons) without
+// the form constantly flagging them as invalid.
+const EMAIL_PRESENCE_REGEX = /[^\s@]+@[^\s@]+\.[^\s@]+/;
 
 const BLOCKS = [
   { key: "hero", label: "Hero / Showreel banner" },
@@ -33,11 +35,14 @@ function validate(value, validateAs) {
   if (validateAs === "url" && !URL_REGEX.test(text)) {
     return "URL phải bắt đầu bằng http:// hoặc https://";
   }
-  if (validateAs === "email" && !EMAIL_REGEX.test(text)) {
-    return "Email không hợp lệ";
+  if (validateAs === "email" && !EMAIL_PRESENCE_REGEX.test(text)) {
+    return "Cần có địa chỉ email hợp lệ trong ô này";
   }
-  if (validateAs === "tel" && !TEL_REGEX.test(text)) {
-    return "Số điện thoại không hợp lệ";
+  if (validateAs === "tel") {
+    const digits = text.replace(/\D/g, "");
+    if (digits.length < 6) {
+      return "Cần có ít nhất 6 chữ số";
+    }
   }
   return null;
 }
@@ -238,25 +243,324 @@ function StatsBlock({ value, onChange }) {
   );
 }
 
+async function uploadImageToR2(file, folder = "brands") {
+  const contentType = file.type || "image/png";
+  // Step 1 — same-origin presign request
+  let presignRes;
+  try {
+    presignRes = await fetch("/api/admin/r2/upload-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({
+        filename: file.name,
+        contentType,
+        folder,
+      }),
+    });
+  } catch (networkErr) {
+    throw new Error(`Không gọi được presign API: ${networkErr.message}`);
+  }
+  let presignPayload;
+  try {
+    presignPayload = await presignRes.json();
+  } catch {
+    throw new Error(
+      `Presign API trả về dữ liệu không phải JSON (status ${presignRes.status}).`
+    );
+  }
+  if (!presignRes.ok) {
+    throw new Error(
+      presignPayload?.error || `Presign API lỗi ${presignRes.status}.`
+    );
+  }
+  const { key, uploadUrl, publicUrl } = presignPayload.data || {};
+  if (!uploadUrl) throw new Error("Server không trả về upload URL.");
+
+  // Step 2 — PUT direct to R2 via XHR (matches the existing project upload flow
+  // so CORS handling is identical to what's already working).
+  await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", uploadUrl);
+    xhr.setRequestHeader("Content-Type", contentType);
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        reject(new Error(`R2 upload thất bại (HTTP ${xhr.status}).`));
+      }
+    };
+    xhr.onerror = () =>
+      reject(
+        new Error(
+          "Không kết nối được R2 (kiểm tra CORS bucket cho phép PUT từ origin này)."
+        )
+      );
+    xhr.onabort = () => reject(new Error("Upload bị hủy."));
+    xhr.send(file);
+  });
+
+  return { url: publicUrl, key };
+}
+
+function BrandLogoSlot({ idx, value, onChange }) {
+  const [uploading, setUploading] = useState(false);
+  const [localError, setLocalError] = useState("");
+  const safe = value || { alt: "", logoUrl: "", logoKey: "" };
+
+  const handleFile = async (file) => {
+    if (!file) return;
+    if (!file.type?.startsWith("image/")) {
+      setLocalError("Chỉ chấp nhận file ảnh.");
+      return;
+    }
+    setLocalError("");
+    setUploading(true);
+    try {
+      const result = await uploadImageToR2(file, "brands");
+      onChange({ ...safe, logoUrl: result.url, logoKey: result.key });
+    } catch (e) {
+      setLocalError(e.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2 rounded-xl border border-gray-200 bg-white p-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold uppercase tracking-wider text-gray-600">
+          Brand #{idx + 1}
+        </span>
+        {safe.logoUrl ? (
+          <button
+            type="button"
+            onClick={() => onChange({ ...safe, logoUrl: "", logoKey: "" })}
+            className="text-xs text-red-600 hover:underline"
+          >
+            Xoá logo
+          </button>
+        ) : null}
+      </div>
+      <div className="flex aspect-[25/7] w-full items-center justify-center overflow-hidden rounded-lg bg-neutral-950">
+        {safe.logoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={safe.logoUrl}
+            alt={safe.alt || `Brand ${idx + 1}`}
+            className="max-h-full max-w-full object-contain p-3"
+          />
+        ) : (
+          <span className="text-xs text-gray-500">
+            {safe.alt ? `(text) ${safe.alt}` : "Chưa có logo"}
+          </span>
+        )}
+      </div>
+      <input
+        type="file"
+        accept="image/*"
+        disabled={uploading}
+        onChange={(event) => handleFile(event.target.files?.[0])}
+        className="block w-full text-xs file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-black file:px-3 file:py-1.5 file:text-white hover:file:bg-gray-800 disabled:opacity-50"
+      />
+      {uploading ? (
+        <p className="text-xs text-gray-500">Đang tải lên…</p>
+      ) : localError ? (
+        <p className="text-xs text-red-600">{localError}</p>
+      ) : null}
+      <input
+        type="text"
+        value={safe.alt || ""}
+        onChange={(event) => onChange({ ...safe, alt: event.target.value })}
+        placeholder="Tên thương hiệu (alt text / fallback)"
+        className="w-full rounded-md border border-gray-300 px-2 py-1 text-xs text-black focus:border-black focus:outline-none"
+      />
+    </div>
+  );
+}
+
 function ClientsBlock({ value, onChange }) {
   const set = (k, v) => onChange({ ...value, [k]: v });
+  const strategic = Array.isArray(value.strategicBrands)
+    ? value.strategicBrands
+    : [];
+  const emptySlot = { alt: "", logoUrl: "", logoKey: "" };
+  const setStrategicSlot = (idx, slot) => {
+    const next = [...strategic];
+    while (next.length < 4) next.push({ ...emptySlot });
+    next[idx] = slot;
+    onChange({ ...value, strategicBrands: next.slice(0, 4) });
+  };
   return (
-    <div className="space-y-4">
-      <TextField label="Heading" value={value.heading} onChange={(v) => set("heading", v)} multiline rows={2} />
-      <ItemList
-        title="Tên thương hiệu"
-        items={value.brands}
-        onChange={(brands) => set("brands", brands)}
-        emptyItem=""
-        addLabel="Thêm thương hiệu"
-        renderItem={(item, update) => (
-          <input
-            value={item}
-            onChange={(event) => update(event.target.value)}
-            className={inputCls}
-            placeholder="Tên thương hiệu"
+    <div className="space-y-6">
+      <div className="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
+        <div className="flex items-center justify-between">
+          <span className={labelCls}>Cụm 1 — Đối tác chiến lược</span>
+          <span className="text-xs text-gray-500">
+            4 logo · gợi ý 800×224px
+          </span>
+        </div>
+        <TextField
+          label="Heading cụm 1"
+          value={value.strategicHeading}
+          onChange={(v) => set("strategicHeading", v)}
+          placeholder="vd: Đối tác chiến lược"
+        />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {[0, 1, 2, 3].map((idx) => (
+            <BrandLogoSlot
+              key={idx}
+              idx={idx}
+              value={strategic[idx] || emptySlot}
+              onChange={(slot) => setStrategicSlot(idx, slot)}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
+        <div className="flex items-center justify-between">
+          <span className={labelCls}>Cụm 2 — Marquee chạy liên tục</span>
+          <span className="text-xs text-gray-500">Danh sách các brand còn lại</span>
+        </div>
+        <TextField
+          label="Heading cụm 2"
+          value={value.marqueeHeading}
+          onChange={(v) => set("marqueeHeading", v)}
+          multiline
+          rows={2}
+          placeholder="vd: Và các thương hiệu, đối tác sáng tạo đã đồng hành"
+        />
+        <label className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2.5">
+          <span className="flex flex-col">
+            <span className="text-sm font-medium text-gray-900">
+              Hiển thị chấm phân tách giữa các brand
+            </span>
+            <span className="text-xs text-gray-500">
+              Bật để hiện chấm vàng giữa các brand trong marquee
+            </span>
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={value.marqueeShowDots !== false}
+            onClick={() => set("marqueeShowDots", value.marqueeShowDots === false)}
+            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+              value.marqueeShowDots !== false ? "bg-black" : "bg-gray-300"
+            }`}
+          >
+            <span
+              className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                value.marqueeShowDots !== false ? "translate-x-[22px]" : "translate-x-0.5"
+              }`}
+            />
+          </button>
+        </label>
+        <ItemList
+          title="Tên thương hiệu trong marquee"
+          items={value.brands}
+          onChange={(brands) => set("brands", brands)}
+          emptyItem=""
+          addLabel="Thêm thương hiệu"
+          renderItem={(item, update) => (
+            <input
+              value={item}
+              onChange={(event) => update(event.target.value)}
+              className={inputCls}
+              placeholder="Tên thương hiệu"
+            />
+          )}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ImageUploadField({
+  label,
+  hint,
+  value,
+  onChange,
+  folder = "uploads",
+  previewAspect = "1/1",
+  altPlaceholder = "Mô tả ảnh (alt text)",
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [localError, setLocalError] = useState("");
+  const safe = value || { url: "", key: "", alt: "" };
+
+  const handleFile = async (file) => {
+    if (!file) return;
+    if (!file.type?.startsWith("image/")) {
+      setLocalError("Chỉ chấp nhận file ảnh.");
+      return;
+    }
+    setLocalError("");
+    setUploading(true);
+    try {
+      const result = await uploadImageToR2(file, folder);
+      onChange({ ...safe, url: result.url, key: result.key });
+    } catch (e) {
+      setLocalError(e.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2 rounded-xl border border-gray-200 bg-white p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <span className="text-xs font-semibold uppercase tracking-wider text-gray-600">
+            {label}
+          </span>
+          {hint ? (
+            <p className="mt-0.5 text-xs text-gray-500">{hint}</p>
+          ) : null}
+        </div>
+        {safe.url ? (
+          <button
+            type="button"
+            onClick={() => onChange({ ...safe, url: "", key: "" })}
+            className="text-xs text-red-600 hover:underline"
+          >
+            Xoá ảnh
+          </button>
+        ) : null}
+      </div>
+      <div
+        className="flex w-full items-center justify-center overflow-hidden rounded-lg bg-neutral-100"
+        style={{ aspectRatio: previewAspect }}
+      >
+        {safe.url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={safe.url}
+            alt={safe.alt || ""}
+            className="h-full w-full object-cover"
           />
+        ) : (
+          <span className="text-xs text-gray-500">Chưa có ảnh</span>
         )}
+      </div>
+      <input
+        type="file"
+        accept="image/*"
+        disabled={uploading}
+        onChange={(event) => handleFile(event.target.files?.[0])}
+        className="block w-full text-xs file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-black file:px-3 file:py-1.5 file:text-white hover:file:bg-gray-800 disabled:opacity-50"
+      />
+      {uploading ? (
+        <p className="text-xs text-gray-500">Đang tải lên…</p>
+      ) : localError ? (
+        <p className="text-xs text-red-600">{localError}</p>
+      ) : null}
+      <input
+        type="text"
+        value={safe.alt || ""}
+        onChange={(event) => onChange({ ...safe, alt: event.target.value })}
+        placeholder={altPlaceholder}
+        className="w-full rounded-md border border-gray-300 px-2 py-1 text-xs text-black focus:border-black focus:outline-none"
       />
     </div>
   );
@@ -272,6 +576,15 @@ function ServicesBlock({ value, onChange }) {
         <TextField label="Heading — phần thường" value={value.headingMain} onChange={(v) => set("headingMain", v)} multiline rows={2} />
         <TextField label="Heading — phần highlight" value={value.headingAccent} onChange={(v) => set("headingAccent", v)} />
       </div>
+      <ImageUploadField
+        label="Ảnh minh họa (cột trái — mask SVG)"
+        hint="Tỉ lệ ~1:1 (gần vuông). Gợi ý: 1400×1320px hoặc lớn hơn. Ảnh tự động được chuyển grayscale và mask theo hình dạng SVG. Để trống nếu muốn dùng ảnh mặc định."
+        value={value.image}
+        onChange={(img) => set("image", img)}
+        folder="services"
+        previewAspect="719/680"
+        altPlaceholder="Mô tả ảnh (a11y) — ví dụ: Quay phim trong studio"
+      />
       <ItemList
         title="Danh sách dịch vụ"
         items={value.items}

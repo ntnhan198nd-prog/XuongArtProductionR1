@@ -9,6 +9,7 @@ const Counter = ({ to, suffix = "", decimals = 0 }) => {
   const ref = useRef(null);
   const inView = useInView(ref, { once: true, margin: "0px 0px -120px" });
   const [display, setDisplay] = useState(0);
+  const [done, setDone] = useState(false);
 
   useEffect(() => {
     if (!inView) return;
@@ -16,17 +17,23 @@ const Counter = ({ to, suffix = "", decimals = 0 }) => {
       duration: 1.6,
       ease: "easeOut",
       onUpdate: (v) => setDisplay(v),
+      onComplete: () => setDone(true),
     });
     return () => controls.stop();
   }, [inView, to]);
 
   const formatted =
     decimals > 0 ? display.toFixed(decimals) : Math.round(display).toString();
+  const text = `${formatted}${suffix}`;
 
   return (
-    <span ref={ref}>
-      {formatted}
-      {suffix}
+    <span ref={ref} className="relative inline-block">
+      <span>{text}</span>
+      {done ? (
+        <span aria-hidden className="stat-shine pointer-events-none absolute inset-0">
+          {text}
+        </span>
+      ) : null}
     </span>
   );
 };

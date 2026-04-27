@@ -139,3 +139,42 @@
   pointer-events: none !important;
 }
 
+/* Shine sweep highlight — used on the homepage stats numbers after they finish
+   counting. A duplicate text layer sits on top of the base, with a narrow
+   gradient band swept across by animating background-position. background-clip:
+   text masks the gradient to the glyph shape so only the digits "light up". */
+.stat-shine {
+  background-image: linear-gradient(
+    110deg,
+    rgba(232, 163, 61, 0) 30%,
+    rgba(232, 163, 61, 0.65) 45%,
+    rgba(232, 163, 61, 1) 50%,
+    rgba(232, 163, 61, 0.65) 55%,
+    rgba(232, 163, 61, 0) 70%
+  );
+  background-size: 250% 100%;
+  background-position: 200% 0;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: stat-shine-sweep 6s linear infinite;
+  animation-delay: 0.4s;
+}
+
+@keyframes stat-shine-sweep {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stat-shine {
+    animation: none;
+  }
+}
+
