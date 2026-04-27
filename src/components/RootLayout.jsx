@@ -10,13 +10,12 @@ import Footer from "./Footer";
 import { useState, useEffect } from "react";
 
 const isPortfolioVideoActive = (pathname) =>
-  pathname === "/portfolio" ||
-  (pathname.startsWith("/portfolio/") && !pathname.startsWith("/portfolio/images"));
+  pathname === "/portfolio" || pathname.startsWith("/portfolio/");
 
 const Header = ({ invert = false, mobileMenuOpen, setMobileMenuOpen }) => {
   const pathname = usePathname() || "";
   const activeVideo = isPortfolioVideoActive(pathname);
-  const activeImages = pathname.startsWith("/portfolio/images");
+  const activeImages = pathname.startsWith("/images");
   const activeContact = pathname === "/contact";
 
   // Body scroll lock + close on Escape are handled at the layout level so the
@@ -46,7 +45,7 @@ const Header = ({ invert = false, mobileMenuOpen, setMobileMenuOpen }) => {
               -động
             </Link>
             <Link
-              href="/portfolio/images"
+              href="/images"
               aria-current={activeImages ? "page" : undefined}
               className={clsx(
                 "text-base font-medium transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.88] flex items-center h-full px-2.5",
@@ -108,7 +107,7 @@ const Header = ({ invert = false, mobileMenuOpen, setMobileMenuOpen }) => {
 const MobileMenu = ({ open, onClose }) => {
   const pathname = usePathname() || "";
   const activeVideo = isPortfolioVideoActive(pathname);
-  const activeImages = pathname.startsWith("/portfolio/images");
+  const activeImages = pathname.startsWith("/images");
   const activeContact = pathname === "/contact";
 
   // Body scroll lock + Escape to close.
@@ -167,7 +166,7 @@ const MobileMenu = ({ open, onClose }) => {
                 -động
               </Link>
               <Link
-                href="/portfolio/images"
+                href="/images"
                 onClick={onClose}
                 aria-current={activeImages ? "page" : undefined}
                 className={clsx(
