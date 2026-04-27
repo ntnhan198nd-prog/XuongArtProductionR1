@@ -6,51 +6,62 @@ import HeroShowreel from "@/components/HeroShowreel";
 import Services from "@/components/Services";
 import ProjectsGallery from "@/components/ProjectsGallery";
 import Stats from "@/components/Stats";
-import Testimonials from "@/components/Testimonials";
-import logoPhobiaDark from "@/images/clients/phobia/logo-dark.svg";
+import { readStore } from "@/lib/contentStore";
+import { DEFAULT_SITE_CONTENT, normalizeSiteContent } from "@/lib/siteContent";
 
-export default function Home() {
+export const revalidate = 0;
+
+export default async function Home() {
+  let showreelUrl = "/showreel.mp4";
+  let site = DEFAULT_SITE_CONTENT;
+  try {
+    const store = await readStore();
+    if (store.showreel?.url) showreelUrl = store.showreel.url;
+    site = normalizeSiteContent(store.site);
+  } catch (error) {
+    console.warn("Failed to load store for homepage:", error);
+  }
+
   return (
     <main className="text-black">
       {/* Hero banner with showreel video loop */}
-      <HeroShowreel videoSrc="/showreel.mp4" />
+      <HeroShowreel videoSrc={showreelUrl} content={site.hero} />
       {/* Intro — centered manifesto */}
       <Container className="mt-20 sm:mt-28">
         <FadeIn className="mx-auto max-w-3xl text-center">
           <h2 className="font-display text-4xl font-medium tracking-tight text-neutral-950 [text-wrap:balance] sm:text-5xl md:text-6xl">
-            Biến ý tưởng thành{" "}
-            <span className="text-accent-400">trải nghiệm số</span>
+            {site.intro.headingMain}{" "}
+            <span className="text-accent-400">{site.intro.headingAccent}</span>
           </h2>
           <p className="mx-auto mt-6 max-w-2xl text-base text-neutral-600 sm:text-lg">
-            Studio sáng tạo nơi nghệ thuật gặp công nghệ. Chúng tôi sản xuất
-            video và nội dung hình ảnh đậm chất điện ảnh — kể câu chuyện
-            thương hiệu bằng ngôn ngữ thị giác tinh tế và cảm xúc thật.
+            {site.intro.description}
           </p>
         </FadeIn>
       </Container>
-      <Clients />
+      <Clients content={site.clients} />
       {/* Featured projects below the intro */}
       <div id="projects-section" className="scroll-mt-20">
         <div className="mx-auto mt-20 w-[92vw] sm:mt-28 lg:w-[80vw]">
           <FadeIn className="max-w-3xl">
             <div className="flex items-center gap-4">
               <span className="font-display text-sm font-semibold uppercase tracking-[0.25em] text-accent-400">
-                Dự án nổi bật
+                {site.featuredHeader.eyebrow}
               </span>
               <span className="h-px flex-1 bg-neutral-200" />
             </div>
             <h2 className="mt-4 font-display text-3xl font-medium tracking-tight text-neutral-950 sm:text-4xl md:text-5xl [text-wrap:balance]">
-              Những thước phim làm nên{" "}
-              <span className="text-accent-400">dấu ấn Xưởng Art</span>
+              {site.featuredHeader.headingMain}{" "}
+              <span className="text-accent-400">
+                {site.featuredHeader.headingAccent}
+              </span>
             </h2>
           </FadeIn>
         </div>
         <ProjectsGallery />
       </div>
-      <Stats />
-      {/* Testimonials section removed by request */}
-      <Services />
-      <ContactSection />
+      <Stats content={site.stats} />
+      <Services content={site.services} />
+      <ContactSection content={site.cta} />
     </main>
   );
 }

@@ -3,13 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, useInView, animate } from "framer-motion";
 import FadeIn from "./FadeIn";
-
-const stats = [
-  { value: 200, suffix: "+", label: "Dự án đã sản xuất" },
-  { value: 50,  suffix: "+", label: "Thương hiệu đối tác" },
-  { value: 8,   suffix: "",  label: "Năm kinh nghiệm" },
-  { value: 1.2, suffix: "M", label: "Lượt xem trên YouTube", decimals: 1 },
-];
+import { DEFAULT_SITE_CONTENT } from "@/lib/siteContent";
 
 const Counter = ({ to, suffix = "", decimals = 0 }) => {
   const ref = useRef(null);
@@ -37,16 +31,18 @@ const Counter = ({ to, suffix = "", decimals = 0 }) => {
   );
 };
 
-const Stats = () => {
+const Stats = ({ content }) => {
+  const data = content || DEFAULT_SITE_CONTENT.stats;
+  const items = Array.isArray(data?.items) && data.items.length > 0 ? data.items : DEFAULT_SITE_CONTENT.stats.items;
   return (
     <section className="mt-20 sm:mt-24 md:mt-32 lg:mt-40">
       <div className="mx-auto w-[92vw] lg:w-[80vw]">
         <FadeIn className="max-w-2xl">
           <span className="font-display text-sm font-semibold uppercase tracking-[0.25em] text-accent-400">
-            Numbers that matter
+            {data?.eyebrow || DEFAULT_SITE_CONTENT.stats.eyebrow}
           </span>
           <h2 className="mt-4 font-display text-3xl font-medium tracking-tight text-neutral-950 sm:text-4xl md:text-5xl [text-wrap:balance]">
-            Hành trình của <span className="whitespace-nowrap">Xưởng Art</span> qua các con số
+            {data?.heading || DEFAULT_SITE_CONTENT.stats.heading}
           </h2>
         </FadeIn>
 
@@ -57,7 +53,7 @@ const Stats = () => {
           transition={{ staggerChildren: 0.12 }}
           className="mt-12 grid grid-cols-2 gap-x-6 gap-y-10 sm:mt-16 lg:grid-cols-4"
         >
-          {stats.map((s, i) => (
+          {items.map((s, i) => (
             <motion.div
               key={i}
               variants={{

@@ -255,73 +255,75 @@ export default function ImageProjectsPage() {
             <p className="mt-2 text-sm sm:text-base text-gray-600">Tất cả dự án hình ảnh của XUONGART</p>
           </div>
           <div className="flex w-full flex-col gap-3 md:w-auto md:flex-row">
-            <div className="search-container relative w-full md:w-auto">
-              <div 
-                className={`bg-white shadow-sm overflow-hidden transition-all duration-300 ease-out border-2 ${
-                  showSuggestions ? 'rounded-t-2xl rounded-b-none' : 'rounded-full'
-                } ${
-                  isSearchFocused 
-                    ? 'border-gray-300 shadow-md' 
-                    : 'border-transparent'
-                } ${showSuggestions ? 'shadow-none border-b-transparent' : ''}`}
-                style={{
-                  width: isSearchFocused ? '100%' : '100%',
-                  minWidth: '100%'
+            <div className="search-container relative">
+              <motion.div
+                initial={false}
+                animate={{
+                  width: isSearchFocused ? 600 : 260,
+                  borderTopLeftRadius: showSuggestions ? 18 : 9999,
+                  borderTopRightRadius: showSuggestions ? 18 : 9999,
+                  borderBottomLeftRadius: showSuggestions ? 0 : 9999,
+                  borderBottomRightRadius: showSuggestions ? 0 : 9999,
                 }}
+                transition={{ duration: 0.35, ease: [0.32, 0.72, 0, 1] }}
+                className={`overflow-hidden border-2 bg-white ${
+                  showSuggestions
+                    ? "border-gray-200 border-b-transparent shadow-md"
+                    : isSearchFocused
+                    ? "border-gray-300 shadow-md"
+                    : "border-transparent shadow-sm"
+                }`}
+                style={{ minWidth: 260 }}
               >
-                <div className="relative flex items-center px-3 py-1">
-                  <div className={`w-full bg-gray-100 flex items-center ${
-                    showSuggestions ? 'rounded-t-2xl rounded-b-none' : 'rounded-full'
-                  }`}>
-                    <FiSearch className="absolute left-3 sm:left-5 text-gray-500 text-lg pointer-events-none" />
-                    <input
-                      className={`w-full bg-transparent pl-10 sm:pl-12 pr-4 py-3 text-sm text-black placeholder:text-gray-500 focus:outline-none border-none ${
-                        showSuggestions ? 'rounded-t-2xl rounded-b-none' : 'rounded-full'
-                      }`}
-                      placeholder="Tìm dự án, khách hàng..."
-                      value={query}
-                      onChange={(e) => setQuery(e.target.value)}
-                      onFocus={() => {
-                        setIsSearchFocused(true);
-                        setShowSuggestions(true);
-                      }}
-                      onBlur={() => {
-                        setTimeout(() => {
-                          setIsSearchFocused(false);
-                          setShowSuggestions(false);
-                        }, 150);
-                      }}
-                      onClick={() => {
-                        setIsSearchFocused(true);
-                        setShowSuggestions(true);
-                      }}
-                    />
-                  </div>
+                <div className="relative flex items-center">
+                  <FiSearch className="pointer-events-none absolute left-5 text-lg text-gray-500" />
+                  <input
+                    className="w-full border-none bg-transparent py-3.5 pl-12 pr-4 text-sm text-black placeholder:text-gray-500 focus:outline-none"
+                    placeholder="Tìm dự án, khách hàng..."
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onFocus={() => {
+                      setIsSearchFocused(true);
+                      setShowSuggestions(true);
+                    }}
+                    onBlur={() => {
+                      setTimeout(() => {
+                        setIsSearchFocused(false);
+                        setShowSuggestions(false);
+                      }, 150);
+                    }}
+                    onClick={() => {
+                      setIsSearchFocused(true);
+                      setShowSuggestions(true);
+                    }}
+                  />
                 </div>
-              </div>
+              </motion.div>
               <AnimatePresence>
                 {showSuggestions && (
                   <motion.div
-                    initial={{ opacity: 0, y: -10, scaleY: 0 }}
-                    animate={{ opacity: 1, y: 0, scaleY: 1 }}
-                    exit={{ opacity: 0, y: -10, scaleY: 0 }}
-                    transition={{ 
-                      duration: 0.3, 
-                      ease: [0.4, 0.0, 0.2, 1],
-                      scaleY: { duration: 0.3, ease: "easeOut" }
+                    initial={{ opacity: 0, y: -8 }}
+                    animate={{
+                      opacity: 1,
+                      y: 0,
+                      transition: { duration: 0.25, delay: 0.15, ease: [0.32, 0.72, 0, 1] },
                     }}
-                    className="absolute top-full left-0 bg-white rounded-t-none rounded-b-2xl shadow-lg z-50 max-h-60 overflow-y-auto border-t-0 border border-gray-200"
-                    style={{ 
-                      transformOrigin: "top",
-                      width: '100%',
-                      minWidth: '100%'
+                    exit={{
+                      opacity: 0,
+                      y: -8,
+                      transition: { duration: 0.18, ease: [0.32, 0.72, 0, 1] },
+                    }}
+                    className="absolute left-0 top-full z-50 max-h-60 overflow-y-auto rounded-b-2xl border-2 border-t-0 border-gray-200 bg-white shadow-md"
+                    style={{
+                      width: isSearchFocused ? "600px" : "260px",
+                      minWidth: "260px",
                     }}
                   >
                     {categories.map((cat) => (
                       <button
                         key={cat}
                         onClick={() => handleCategorySelect(cat)}
-                        className="w-full text-left px-4 py-3 text-sm text-black hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-b-0 last:rounded-b-xl"
+                        className="w-full border-b border-gray-100 px-5 py-3 text-left text-sm text-black transition-colors last:border-b-0 hover:bg-gray-50"
                       >
                         {cat}
                       </button>

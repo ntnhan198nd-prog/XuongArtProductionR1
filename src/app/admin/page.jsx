@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Container from "@/components/Container";
 import FeaturedLayoutPanel from "@/components/admin/FeaturedLayoutPanel";
+import ShowreelPanel from "@/components/admin/ShowreelPanel";
 
 const TABS = [
   { key: "projects", label: "Video Projects" },
@@ -465,16 +466,29 @@ export default function AdminPage() {
           <div>
             <h1 className="text-3xl font-semibold">Custom Admin</h1>
             <p className="mt-1 text-sm text-gray-600">
-              Quan ly noi dung portfolio. Giao dien frontend giu nguyen.
+              Quản lý dự án &amp; showreel. Để chỉnh nội dung tĩnh khác trên website,
+              vào <a href="/admin-content" className="underline">/admin-content</a>.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="rounded-lg border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50"
-          >
-            Logout
-          </button>
+          <div className="flex gap-2">
+            <a
+              href="/admin-content"
+              className="rounded-lg border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50"
+            >
+              Site Content
+            </a>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="rounded-lg border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50"
+            >
+              Logout
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-8">
+          <ShowreelPanel />
         </div>
 
         <div className="mt-8 flex flex-wrap gap-2">

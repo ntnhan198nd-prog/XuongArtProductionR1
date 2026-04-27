@@ -13,10 +13,31 @@ const STORE_KEY = "_admin/content.json";
 const EMPTY_STORE = {
   projects: [],
   imageProjects: [],
+  showreel: null,
+  site: null,
   nextProjectId: 1,
   nextImageProjectId: 1,
   nextAssetId: 1,
 };
+
+function normalizeShowreel(value) {
+  if (!value || typeof value !== "object") return null;
+  const url = typeof value.url === "string" ? value.url.trim() : "";
+  if (!url) return null;
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+  const str = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  return {
+    url,
+    key: str(value.key),
+    name: str(value.name),
+    mime: str(value.mime),
+    size: num(value.size),
+    width: num(value.width),
+    height: num(value.height),
+    duration: num(value.duration),
+    updatedAt: str(value.updatedAt) || new Date().toISOString(),
+  };
+}
 
 let writeQueue = Promise.resolve();
 
@@ -28,6 +49,10 @@ function normalizeStore(store = {}) {
   return {
     projects: ensureArray(store.projects),
     imageProjects: ensureArray(store.imageProjects),
+    showreel: normalizeShowreel(store.showreel),
+    // site stays as a raw object on the store; the normalizer with defaults
+    // lives in lib/siteContent.js so the frontend always sees a complete shape.
+    site: store.site && typeof store.site === "object" && !Array.isArray(store.site) ? store.site : null,
     nextProjectId: Number(store.nextProjectId) > 0 ? Number(store.nextProjectId) : 1,
     nextImageProjectId:
       Number(store.nextImageProjectId) > 0 ? Number(store.nextImageProjectId) : 1,

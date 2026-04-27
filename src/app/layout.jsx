@@ -1,5 +1,9 @@
 import RootLayout from "@/components/RootLayout";
+import { readStore } from "@/lib/contentStore";
+import { DEFAULT_SITE_CONTENT, normalizeSiteContent } from "@/lib/siteContent";
 import "./globals.css";
+
+export const revalidate = 0;
 
 export const metadata = {
   title: {
@@ -8,14 +12,24 @@ export const metadata = {
   },
 };
 
-export default function Layout({ children }) {
+export default async function Layout({ children }) {
+  let site = DEFAULT_SITE_CONTENT;
+  try {
+    const store = await readStore();
+    site = normalizeSiteContent(store.site);
+  } catch (error) {
+    console.warn("Failed to load site content for layout:", error);
+  }
+
   return (
     <html
       lang="en"
       className="h-full bg-neutral-950 text-base antialiased text-neutral-100"
     >
       <body className="flex min-h-full flex-col">
-        <RootLayout>{children}</RootLayout>
+        <RootLayout footerContent={site.footer} socialContent={site.social}>
+          {children}
+        </RootLayout>
       </body>
     </html>
   );

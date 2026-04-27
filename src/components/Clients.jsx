@@ -1,19 +1,14 @@
 import Container from "./Container";
 import FadeIn from "./FadeIn";
+import { DEFAULT_SITE_CONTENT } from "@/lib/siteContent";
 
-const clients = [
-  "Redmi",
-  "Asus",
-  "Samsung",
-  "Cellphones",
-  "Oppo",
-  "Huawei",
-  "Monday VietNam",
-  "Apple",
-  "Sony",
-];
-
-const Clients = () => {
+const Clients = ({ content }) => {
+  const data = content || DEFAULT_SITE_CONTENT.clients;
+  const clients =
+    Array.isArray(data?.brands) && data.brands.length > 0
+      ? data.brands
+      : DEFAULT_SITE_CONTENT.clients.brands;
+  const heading = data?.heading || DEFAULT_SITE_CONTENT.clients.heading;
   // Duplicate the list so the marquee loops seamlessly when shifted by -50%.
   const track = [...clients, ...clients];
 
@@ -22,7 +17,7 @@ const Clients = () => {
       <Container>
         <FadeIn className="flex flex-col sm:flex-row items-center gap-x-8 gap-y-4">
           <h2 className="text-center text-base sm:text-xl md:text-2xl font-sans font-semibold tracking-normal text-white sm:text-left">
-            Chúng tôi đã đồng hành cùng nhiều thương hiệu & đối tác sáng tạo
+            {heading}
           </h2>
           <div className="h-px w-full sm:w-auto sm:flex-auto bg-neutral-800" />
         </FadeIn>

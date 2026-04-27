@@ -1,8 +1,11 @@
 "use client";
 
 import { motion } from "framer-motion";
+import { DEFAULT_SITE_CONTENT } from "@/lib/siteContent";
 
-const HeroShowreel = ({ videoSrc, posterSrc, scrollTargetId = "projects-section" }) => {
+const HeroShowreel = ({ videoSrc, posterSrc, scrollTargetId = "projects-section", content }) => {
+  const data = content || DEFAULT_SITE_CONTENT.hero;
+  const c = (key) => data?.[key] || DEFAULT_SITE_CONTENT.hero[key];
   const handleScrollToProjects = () => {
     if (typeof document === "undefined") return;
     const target = document.getElementById(scrollTargetId);
@@ -60,7 +63,7 @@ const HeroShowreel = ({ videoSrc, posterSrc, scrollTargetId = "projects-section"
         {/* Top meta bar — Showreel tag anchored to the right */}
         <div className="absolute inset-x-0 top-0 flex items-center justify-end px-6 pt-24 sm:px-12 sm:pt-28 md:px-16">
           <span className="font-display text-xs font-semibold uppercase tracking-[0.3em] text-accent-400">
-            Showreel · 2026
+            {c("showreelLabel")}
           </span>
         </div>
 
@@ -69,16 +72,16 @@ const HeroShowreel = ({ videoSrc, posterSrc, scrollTargetId = "projects-section"
           <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="font-display text-xs font-semibold uppercase tracking-[0.4em] text-white/60">
-                Xưởng Art Production
+                {c("tagline")}
               </p>
               <h1 className="mt-3 font-display text-4xl font-bold leading-[1.05] tracking-tight text-white sm:text-6xl md:text-7xl [text-wrap:balance]">
-                Every frame <span className="text-accent-400">tells a story</span>
+                {c("headingMain")} <span className="text-accent-400">{c("headingAccent")}</span>
               </h1>
             </div>
             <div className="md:max-w-xs md:text-right">
               <div className="hidden md:block ml-auto h-px w-16 bg-accent-400/70" />
               <p className="mt-3 text-sm text-white/70 sm:text-base">
-                Studio sản xuất video · TVC · MV · Livestream sự kiện · Hậu kỳ điện ảnh.
+                {c("description")}
               </p>
             </div>
           </div>
@@ -100,7 +103,7 @@ const HeroShowreel = ({ videoSrc, posterSrc, scrollTargetId = "projects-section"
             >
               ↓
             </motion.span>
-            <span>Cuộn để xem dự án nổi bật</span>
+            <span>{c("scrollHint")}</span>
           </button>
         </div>
       </div>

@@ -9,8 +9,16 @@ import clsx from "clsx";
 import Footer from "./Footer";
 import { useState, useEffect } from "react";
 
+const isPortfolioVideoActive = (pathname) =>
+  pathname === "/portfolio" ||
+  (pathname.startsWith("/portfolio/") && !pathname.startsWith("/portfolio/images"));
+
 const Header = ({ invert = false }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const pathname = usePathname() || "";
+  const activeVideo = isPortfolioVideoActive(pathname);
+  const activeImages = pathname.startsWith("/portfolio/images");
+  const activeContact = pathname === "/contact";
 
   // Close mobile menu when clicking outside
   useEffect(() => {
@@ -33,20 +41,30 @@ const Header = ({ invert = false }) => {
         </Link>
         <div className="flex items-center gap-x-8 h-full">
           <nav className="hidden md:flex items-center gap-x-6 h-full">
-            <Link 
-              href="/portfolio" 
+            <Link
+              href="/portfolio"
+              aria-current={activeVideo ? "page" : undefined}
               className={clsx(
-                "text-base font-medium transition-colors duration-200 flex items-center h-full px-2.5",
-                invert ? "text-white hover:text-accent-400" : "text-neutral-950 hover:text-accent-400"
+                "text-base font-medium transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.88] flex items-center h-full px-2.5",
+                activeVideo
+                  ? "text-accent-400"
+                  : invert
+                  ? "text-white hover:text-accent-400"
+                  : "text-neutral-950 hover:text-accent-400"
               )}
             >
               -động
             </Link>
-            <Link 
-              href="/portfolio/images" 
+            <Link
+              href="/portfolio/images"
+              aria-current={activeImages ? "page" : undefined}
               className={clsx(
-                "text-base font-medium transition-colors duration-200 flex items-center h-full px-2.5",
-                invert ? "text-white hover:text-accent-400" : "text-neutral-950 hover:text-accent-400"
+                "text-base font-medium transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.88] flex items-center h-full px-2.5",
+                activeImages
+                  ? "text-accent-400"
+                  : invert
+                  ? "text-white hover:text-accent-400"
+                  : "text-neutral-950 hover:text-accent-400"
               )}
             >
               -tĩnh
@@ -54,7 +72,15 @@ const Header = ({ invert = false }) => {
           </nav>
           <div className="flex items-center h-full gap-x-4">
             <div className="hidden md:block">
-              <Button href={"/contact"} invert={invert} className="text-sm sm:text-base px-4 sm:px-5 py-2">
+              <Button
+                href={"/contact"}
+                invert={invert}
+                aria-current={activeContact ? "page" : undefined}
+                className={clsx(
+                  "text-sm sm:text-base px-4 sm:px-5 py-2",
+                  activeContact && "!text-accent-400"
+                )}
+              >
                 -whoweare
               </Button>
             </div>
@@ -63,7 +89,7 @@ const Header = ({ invert = false }) => {
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               className={clsx(
-                "md:hidden p-2 rounded-md transition-colors",
+                "md:hidden p-2 rounded-md transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.85]",
                 invert ? "text-white hover:bg-white/10" : "text-neutral-950 hover:bg-neutral-100"
               )}
               aria-label="Toggle menu"
@@ -117,24 +143,39 @@ const Header = ({ invert = false }) => {
                 </div>
                 
                 <nav className="flex flex-col gap-4 flex-1">
-                  <Link 
+                  <Link
                     href="/portfolio"
                     onClick={() => setMobileMenuOpen(false)}
-                    className="text-lg font-medium text-neutral-950 hover:text-accent-400 transition-colors py-2 border-b border-neutral-100"
+                    aria-current={activeVideo ? "page" : undefined}
+                    className={clsx(
+                      "text-lg font-medium transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.88] py-2 border-b border-neutral-100",
+                      activeVideo ? "text-accent-400" : "text-neutral-950 hover:text-accent-400"
+                    )}
                   >
                     -động
                   </Link>
-                  <Link 
+                  <Link
                     href="/portfolio/images"
                     onClick={() => setMobileMenuOpen(false)}
-                    className="text-lg font-medium text-neutral-950 hover:text-accent-400 transition-colors py-2 border-b border-neutral-100"
+                    aria-current={activeImages ? "page" : undefined}
+                    className={clsx(
+                      "text-lg font-medium transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.88] py-2 border-b border-neutral-100",
+                      activeImages ? "text-accent-400" : "text-neutral-950 hover:text-accent-400"
+                    )}
                   >
                     -tĩnh
                   </Link>
                 </nav>
-                
+
                 <div className="mt-4 pt-4 border-t border-neutral-200">
-                  <Button href={"/contact"} className="w-full text-center">
+                  <Button
+                    href={"/contact"}
+                    aria-current={activeContact ? "page" : undefined}
+                    className={clsx(
+                      "w-full text-center",
+                      activeContact && "!text-accent-400"
+                    )}
+                  >
                     -whoweare
                   </Button>
                 </div>
@@ -147,7 +188,7 @@ const Header = ({ invert = false }) => {
   );
 };
 
-const RootLayoutInner = ({ children, isHome }) => {
+const RootLayoutInner = ({ children, isHome, footerContent, socialContent }) => {
   const shouldReduceMotion = useReducedMotion();
   const [pastHero, setPastHero] = useState(!isHome);
 
@@ -209,18 +250,23 @@ const RootLayoutInner = ({ children, isHome }) => {
         >
           <main className="w-full flex-auto">{children}</main>
           {/* Footer */}
-          <Footer />
+          <Footer content={footerContent} social={socialContent} />
         </motion.div>
       </motion.div>
     </MotionConfig>
   );
 };
 
-const RootLayout = ({ children }) => {
+const RootLayout = ({ children, footerContent, socialContent }) => {
   const pathName = usePathname();
   const isHome = pathName === "/";
   return (
-    <RootLayoutInner key={pathName} isHome={isHome}>
+    <RootLayoutInner
+      key={pathName}
+      isHome={isHome}
+      footerContent={footerContent}
+      socialContent={socialContent}
+    >
       {children}
     </RootLayoutInner>
   );
