@@ -13,7 +13,7 @@ const Clients = ({ content }) => {
   const track = [...clients, ...clients];
 
   return (
-    <div className="mt-20 sm:mt-24 md:mt-32 lg:mt-56 rounded-4xl bg-neutral-950 py-12 sm:py-20 md:py-28 overflow-hidden">
+    <div className="mt-20 sm:mt-24 md:mt-32 lg:mt-56 rounded-[1.5rem] sm:rounded-[1.875rem] md:rounded-[2.25rem] lg:rounded-[2.625rem] bg-neutral-950 py-12 sm:py-20 md:py-28 overflow-hidden">
       <Container>
         <FadeIn className="flex flex-col sm:flex-row items-center gap-x-8 gap-y-4">
           <h2 className="text-center text-base sm:text-xl md:text-2xl font-sans font-semibold tracking-normal text-white sm:text-left">

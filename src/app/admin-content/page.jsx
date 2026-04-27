@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import Container from "@/components/Container";
+
+const URL_REGEX = /^https?:\/\/[^\s]+$/i;
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const TEL_REGEX = /^[+\d][\d\s\-().]*$/;
 
 const BLOCKS = [
   { key: "hero", label: "Hero / Showreel banner" },
@@ -21,13 +26,43 @@ const inputCls =
   "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-black focus:border-black focus:outline-none";
 const labelCls = "block text-xs font-semibold uppercase tracking-wider text-gray-600";
 
-function TextField({ label, value, onChange, multiline = false, rows = 3, placeholder }) {
+function validate(value, validateAs) {
+  if (!validateAs) return null;
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  if (validateAs === "url" && !URL_REGEX.test(text)) {
+    return "URL phải bắt đầu bằng http:// hoặc https://";
+  }
+  if (validateAs === "email" && !EMAIL_REGEX.test(text)) {
+    return "Email không hợp lệ";
+  }
+  if (validateAs === "tel" && !TEL_REGEX.test(text)) {
+    return "Số điện thoại không hợp lệ";
+  }
+  return null;
+}
+
+function TextField({
+  label,
+  value,
+  onChange,
+  multiline = false,
+  rows = 3,
+  placeholder,
+  validateAs,
+  hint,
+}) {
+  const error = validate(value, validateAs);
+  const errorCls = error
+    ? "border-red-400 focus:border-red-500"
+    : "border-gray-300 focus:border-black";
+  const finalCls = `w-full rounded-lg border ${errorCls} px-3 py-2 text-sm text-black focus:outline-none mt-1.5`;
   return (
     <label className="block">
       <span className={labelCls}>{label}</span>
       {multiline ? (
         <textarea
-          className={`${inputCls} mt-1.5`}
+          className={finalCls}
           value={value ?? ""}
           rows={rows}
           placeholder={placeholder}
@@ -35,12 +70,17 @@ function TextField({ label, value, onChange, multiline = false, rows = 3, placeh
         />
       ) : (
         <input
-          className={`${inputCls} mt-1.5`}
+          className={finalCls}
           value={value ?? ""}
           placeholder={placeholder}
           onChange={(event) => onChange(event.target.value)}
         />
       )}
+      {error ? (
+        <span className="mt-1 block text-xs text-red-600">{error}</span>
+      ) : hint ? (
+        <span className="mt-1 block text-xs text-gray-500">{hint}</span>
+      ) : null}
     </label>
   );
 }
@@ -254,14 +294,14 @@ function CtaBlock({ value, onChange }) {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <TextField label="Heading lớn" value={value.heading} onChange={(v) => set("heading", v)} multiline rows={2} />
-      <TextField label="Text nút CTA" value={value.buttonText} onChange={(v) => set("buttonText", v)} />
+      <TextField label="Text nút CTA" value={value.buttonText} onChange={(v) => set("buttonText", v)} placeholder="vd: Liên hệ ngay" />
       <TextField label="Heading nhỏ — Thông tin liên hệ" value={value.contactsHeading} onChange={(v) => set("contactsHeading", v)} />
       <TextField label="Tên office" value={value.officeName} onChange={(v) => set("officeName", v)} />
       <div className="lg:col-span-2">
         <TextField label="Địa chỉ" value={value.address} onChange={(v) => set("address", v)} />
       </div>
-      <TextField label="Phone" value={value.phone} onChange={(v) => set("phone", v)} />
-      <TextField label="Email" value={value.email} onChange={(v) => set("email", v)} />
+      <TextField label="Phone" value={value.phone} onChange={(v) => set("phone", v)} validateAs="tel" placeholder="vd: +84 988 888 888" />
+      <TextField label="Email" value={value.email} onChange={(v) => set("email", v)} validateAs="email" placeholder="vd: hello@xuongart.com" />
     </div>
   );
 }
@@ -338,8 +378,8 @@ function FooterBlock({ value, onChange }) {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <TextField label="Heading footer" value={value.heading} onChange={(v) => set("heading", v)} />
-      <TextField label="Email" value={value.email} onChange={(v) => set("email", v)} />
-      <TextField label="Phone" value={value.phone} onChange={(v) => set("phone", v)} />
+      <TextField label="Email" value={value.email} onChange={(v) => set("email", v)} validateAs="email" />
+      <TextField label="Phone" value={value.phone} onChange={(v) => set("phone", v)} validateAs="tel" />
       <TextField label="Tên copyright" value={value.copyright} onChange={(v) => set("copyright", v)} />
     </div>
   );
@@ -349,10 +389,10 @@ function SocialBlock({ value, onChange }) {
   const set = (k, v) => onChange({ ...value, [k]: v });
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      <TextField label="Facebook URL" value={value.facebook} onChange={(v) => set("facebook", v)} placeholder="https://..." />
-      <TextField label="Instagram URL" value={value.instagram} onChange={(v) => set("instagram", v)} placeholder="https://..." />
-      <TextField label="TikTok URL" value={value.tiktok} onChange={(v) => set("tiktok", v)} placeholder="https://..." />
-      <TextField label="Zalo URL" value={value.zalo} onChange={(v) => set("zalo", v)} placeholder="https://zalo.me/..." />
+      <TextField label="Facebook URL" value={value.facebook} onChange={(v) => set("facebook", v)} placeholder="https://facebook.com/..." validateAs="url" />
+      <TextField label="Instagram URL" value={value.instagram} onChange={(v) => set("instagram", v)} placeholder="https://instagram.com/..." validateAs="url" />
+      <TextField label="TikTok URL" value={value.tiktok} onChange={(v) => set("tiktok", v)} placeholder="https://tiktok.com/@..." validateAs="url" />
+      <TextField label="Zalo URL" value={value.zalo} onChange={(v) => set("zalo", v)} placeholder="https://zalo.me/..." validateAs="url" />
     </div>
   );
 }
@@ -386,10 +426,31 @@ export default function AdminContentPage() {
   const [error, setError] = useState("");
   const [savedAt, setSavedAt] = useState(null);
 
-  const dirty = useMemo(() => {
-    if (!content || !original) return false;
-    return JSON.stringify(content) !== JSON.stringify(original);
+  const dirtyByBlock = useMemo(() => {
+    if (!content || !original) return {};
+    const result = {};
+    for (const block of BLOCKS) {
+      const a = JSON.stringify(content[block.key] ?? null);
+      const b = JSON.stringify(original[block.key] ?? null);
+      result[block.key] = a !== b;
+    }
+    return result;
   }, [content, original]);
+
+  const dirty = useMemo(
+    () => Object.values(dirtyByBlock).some(Boolean),
+    [dirtyByBlock]
+  );
+
+  const dirtyCount = useMemo(
+    () => Object.values(dirtyByBlock).filter(Boolean).length,
+    [dirtyByBlock]
+  );
+
+  const activeBlockLabel = useMemo(
+    () => BLOCKS.find((b) => b.key === activeBlock)?.label || activeBlock,
+    [activeBlock]
+  );
 
   const loadContent = useCallback(async () => {
     setLoading(true);
@@ -475,7 +536,7 @@ export default function AdminContentPage() {
 
   const handleResetBlock = () => {
     if (!defaults || !content) return;
-    if (!window.confirm(`Khôi phục mặc định cho block "${activeBlock}"?`)) return;
+    if (!window.confirm(`Khôi phục mặc định cho "${activeBlockLabel}"?`)) return;
     setContent({ ...content, [activeBlock]: structuredClone(defaults[activeBlock]) });
   };
 
@@ -484,6 +545,43 @@ export default function AdminContentPage() {
     if (!window.confirm("Khôi phục mặc định cho TẤT CẢ block? (chưa lưu)")) return;
     setContent(structuredClone(defaults));
   };
+
+  const handleDiscardBlock = () => {
+    if (!original || !content) return;
+    if (!dirtyByBlock[activeBlock]) return;
+    if (!window.confirm(`Hủy thay đổi chưa lưu của "${activeBlockLabel}"?`)) return;
+    setContent({ ...content, [activeBlock]: structuredClone(original[activeBlock]) });
+  };
+
+  const handleDiscardAll = () => {
+    if (!original || !dirty) return;
+    if (!window.confirm("Hủy TẤT CẢ thay đổi chưa lưu?")) return;
+    setContent(structuredClone(original));
+  };
+
+  useEffect(() => {
+    const handler = (event) => {
+      const isMac = navigator.platform.toLowerCase().includes("mac");
+      const ctrlKey = isMac ? event.metaKey : event.ctrlKey;
+      if (ctrlKey && (event.key === "s" || event.key === "S")) {
+        event.preventDefault();
+        if (authenticated && dirty && !saving) handleSave();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated, dirty, saving, content]);
+
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const handler = (event) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
 
   if (checkingSession) {
     return (
@@ -555,23 +653,54 @@ export default function AdminContentPage() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {savedAt ? (
-              <span className="text-xs text-gray-500">
-                Đã lưu lúc {savedAt.toLocaleTimeString()}
-              </span>
-            ) : null}
+            <AnimatePresence mode="wait" initial={false}>
+              {dirty ? (
+                <motion.span
+                  key="dirty"
+                  initial={{ opacity: 0, x: 8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 8 }}
+                  transition={{ duration: 0.18 }}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800"
+                >
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+                  {dirtyCount} block chưa lưu
+                </motion.span>
+              ) : savedAt ? (
+                <motion.span
+                  key="saved"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="text-xs text-gray-500"
+                >
+                  ✓ Đã lưu lúc {savedAt.toLocaleTimeString()}
+                </motion.span>
+              ) : null}
+            </AnimatePresence>
+            <button
+              type="button"
+              onClick={handleDiscardAll}
+              disabled={!dirty}
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+              title="Hủy TẤT CẢ thay đổi chưa lưu (về last saved)"
+            >
+              Hủy thay đổi
+            </button>
             <button
               type="button"
               onClick={handleResetAll}
               className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs hover:bg-gray-50"
+              title="Reset TẤT CẢ block về giá trị mặc định"
             >
-              Reset tất cả
+              Reset mặc định
             </button>
             <button
               type="button"
               onClick={handleSave}
               disabled={!dirty || saving}
               className="rounded-lg bg-black px-4 py-1.5 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+              title="⌘/Ctrl + S"
             >
               {saving ? "Đang lưu..." : dirty ? "Lưu thay đổi" : "Đã lưu"}
             </button>
@@ -591,47 +720,103 @@ export default function AdminContentPage() {
           </div>
         ) : null}
 
-        <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-[220px_1fr]">
+        <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-[240px_1fr]">
           <aside>
-            <nav className="sticky top-6 flex flex-col gap-1 rounded-2xl border border-gray-200 p-2">
-              {BLOCKS.map((block) => (
-                <button
-                  key={block.key}
-                  type="button"
-                  onClick={() => setActiveBlock(block.key)}
-                  className={`rounded-lg px-3 py-2 text-left text-sm transition ${
-                    activeBlock === block.key
-                      ? "bg-black text-white"
-                      : "text-gray-700 hover:bg-gray-100"
-                  }`}
-                >
-                  {block.label}
-                </button>
-              ))}
+            <div className="lg:hidden">
+              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-gray-600">
+                Chọn block
+              </label>
+              <select
+                value={activeBlock}
+                onChange={(event) => setActiveBlock(event.target.value)}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-black focus:outline-none"
+              >
+                {BLOCKS.map((block) => (
+                  <option key={block.key} value={block.key}>
+                    {dirtyByBlock[block.key] ? "● " : ""}
+                    {block.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <nav className="sticky top-6 hidden flex-col gap-1 rounded-2xl border border-gray-200 p-2 lg:flex">
+              {BLOCKS.map((block) => {
+                const isActive = activeBlock === block.key;
+                const isDirty = dirtyByBlock[block.key];
+                return (
+                  <button
+                    key={block.key}
+                    type="button"
+                    onClick={() => setActiveBlock(block.key)}
+                    className={`flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${
+                      isActive
+                        ? "bg-black text-white"
+                        : "text-gray-700 hover:bg-gray-100"
+                    }`}
+                  >
+                    <span className="truncate">{block.label}</span>
+                    {isDirty ? (
+                      <span
+                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                          isActive ? "bg-amber-300" : "bg-amber-500"
+                        }`}
+                        title="Có thay đổi chưa lưu"
+                      />
+                    ) : null}
+                  </button>
+                );
+              })}
             </nav>
           </aside>
 
           <section className="rounded-2xl border border-gray-200 p-5">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold">
-                {BLOCKS.find((b) => b.key === activeBlock)?.label || activeBlock}
-              </h2>
-              <button
-                type="button"
-                onClick={handleResetBlock}
-                className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs hover:bg-gray-50"
-              >
-                Reset block
-              </button>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-semibold">{activeBlockLabel}</h2>
+                {dirtyByBlock[activeBlock] ? (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">
+                    chưa lưu
+                  </span>
+                ) : null}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleDiscardBlock}
+                  disabled={!dirtyByBlock[activeBlock]}
+                  className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  title="Hủy thay đổi chưa lưu của block này"
+                >
+                  Hủy thay đổi
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResetBlock}
+                  className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs hover:bg-gray-50"
+                  title="Reset block này về giá trị mặc định"
+                >
+                  Reset mặc định
+                </button>
+              </div>
             </div>
-            {ActiveRenderer ? (
-              <ActiveRenderer
-                value={content[activeBlock]}
-                onChange={(next) => setContent({ ...content, [activeBlock]: next })}
-              />
-            ) : (
-              <p className="text-sm text-gray-500">Block chưa có editor.</p>
-            )}
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={activeBlock}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
+              >
+                {ActiveRenderer ? (
+                  <ActiveRenderer
+                    value={content[activeBlock]}
+                    onChange={(next) => setContent({ ...content, [activeBlock]: next })}
+                  />
+                ) : (
+                  <p className="text-sm text-gray-500">Block chưa có editor.</p>
+                )}
+              </motion.div>
+            </AnimatePresence>
           </section>
         </div>
       </Container>

@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import Container from "@/components/Container";
 import FeaturedLayoutPanel from "@/components/admin/FeaturedLayoutPanel";
 import ShowreelPanel from "@/components/admin/ShowreelPanel";
+import AutocompleteInput from "@/components/admin/AutocompleteInput";
 
 const TABS = [
   { key: "projects", label: "Video Projects" },
@@ -204,8 +206,57 @@ export default function AdminPage() {
   const [thumbnailFile, setThumbnailFile] = useState(null);
 
   const isEditing = editingId !== null;
+  const [listFilter, setListFilter] = useState("");
 
   const tabLabel = useMemo(() => TABS.find((item) => item.key === tab)?.label || tab, [tab]);
+
+  const suggestions = useMemo(() => {
+    const buckets = {
+      title: new Set(),
+      client: new Set(),
+      tagline: new Set(),
+      category: new Set(),
+      categories: new Set(),
+      duration: new Set(),
+    };
+    for (const item of items) {
+      if (!item) continue;
+      if (item.title) buckets.title.add(item.title);
+      if (item.client) buckets.client.add(item.client);
+      if (item.tagline) buckets.tagline.add(item.tagline);
+      if (item.category) buckets.category.add(item.category);
+      if (item.duration) buckets.duration.add(item.duration);
+      if (Array.isArray(item.categories)) {
+        for (const cat of item.categories) {
+          if (cat) {
+            buckets.category.add(cat);
+            buckets.categories.add(cat);
+          }
+        }
+      }
+    }
+    return Object.fromEntries(
+      Object.entries(buckets).map(([k, set]) => [k, Array.from(set).sort()])
+    );
+  }, [items]);
+
+  const filteredItems = useMemo(() => {
+    const query = listFilter.trim().toLowerCase();
+    if (!query) return items;
+    return items.filter((item) => {
+      const haystack = [
+        item.title,
+        item.client,
+        item.slug,
+        item.category,
+        Array.isArray(item.categories) ? item.categories.join(" ") : "",
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [items, listFilter]);
 
   const resetEditor = () => {
     setEditingId(null);
@@ -499,8 +550,9 @@ export default function AdminPage() {
               onClick={() => {
                 setTab(item.key);
                 resetEditor();
+                setListFilter("");
               }}
-              className={`rounded-full px-4 py-2 text-sm ${
+              className={`rounded-full px-4 py-2 text-sm transition-colors ${
                 tab === item.key
                   ? "bg-black text-white"
                   : "border border-gray-300 text-gray-700 hover:bg-gray-50"
@@ -512,9 +564,9 @@ export default function AdminPage() {
           <button
             type="button"
             onClick={startCreate}
-            className="rounded-full border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50"
+            className="rounded-full border border-gray-300 px-4 py-2 text-sm transition-colors hover:bg-gray-50"
           >
-            New {tabLabel}
+            + New {tabLabel}
           </button>
         </div>
 
@@ -531,16 +583,43 @@ export default function AdminPage() {
         ) : null}
 
         <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-2">
-          <div className="rounded-2xl border border-gray-200 p-5">
-            <h2 className="text-lg font-semibold">{isEditing ? `Edit #${editingId}` : `Create ${tabLabel}`}</h2>
+          <motion.div
+            layout
+            className="rounded-2xl border border-gray-200 p-5"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-lg font-semibold">
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.span
+                    key={isEditing ? `edit-${editingId}` : "create"}
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 4 }}
+                    transition={{ duration: 0.18 }}
+                    className="inline-block"
+                  >
+                    {isEditing ? `Edit #${editingId}` : `Create ${tabLabel}`}
+                  </motion.span>
+                </AnimatePresence>
+              </h2>
+              {isEditing ? (
+                <button
+                  type="button"
+                  onClick={resetEditor}
+                  className="rounded-md border border-gray-300 px-2.5 py-1 text-xs hover:bg-gray-50"
+                >
+                  + Tạo mới
+                </button>
+              ) : null}
+            </div>
 
             <form onSubmit={handleSave} className="mt-4 space-y-4">
               <div>
                 <label className="mb-2 block text-sm font-medium">Title *</label>
-                <input
+                <AutocompleteInput
                   value={form.title}
-                  onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
-                  className={baseInputClassName()}
+                  onChange={(v) => setForm((prev) => ({ ...prev, title: v }))}
+                  suggestions={suggestions.title}
                   required
                 />
               </div>
@@ -558,39 +637,39 @@ export default function AdminPage() {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <label className="mb-2 block text-sm font-medium">Client</label>
-                  <input
+                  <AutocompleteInput
                     value={form.client}
-                    onChange={(event) => setForm((prev) => ({ ...prev, client: event.target.value }))}
-                    className={baseInputClassName()}
+                    onChange={(v) => setForm((prev) => ({ ...prev, client: v }))}
+                    suggestions={suggestions.client}
                   />
                 </div>
                 <div>
                   <label className="mb-2 block text-sm font-medium">Category</label>
-                  <input
+                  <AutocompleteInput
                     value={form.category}
-                    onChange={(event) => setForm((prev) => ({ ...prev, category: event.target.value }))}
-                    className={baseInputClassName()}
+                    onChange={(v) => setForm((prev) => ({ ...prev, category: v }))}
+                    suggestions={suggestions.category}
                   />
                 </div>
               </div>
 
               <div>
                 <label className="mb-2 block text-sm font-medium">Categories (comma-separated)</label>
-                <input
+                <AutocompleteInput
                   value={form.categoriesText}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, categoriesText: event.target.value }))
-                  }
-                  className={baseInputClassName()}
+                  onChange={(v) => setForm((prev) => ({ ...prev, categoriesText: v }))}
+                  suggestions={suggestions.categories}
+                  splitDelimiter=","
+                  placeholder="vd: Commercial, TVC"
                 />
               </div>
 
               <div>
                 <label className="mb-2 block text-sm font-medium">Tagline</label>
-                <input
+                <AutocompleteInput
                   value={form.tagline}
-                  onChange={(event) => setForm((prev) => ({ ...prev, tagline: event.target.value }))}
-                  className={baseInputClassName()}
+                  onChange={(v) => setForm((prev) => ({ ...prev, tagline: v }))}
+                  suggestions={suggestions.tagline}
                 />
               </div>
 
@@ -672,10 +751,10 @@ export default function AdminPage() {
               {tab === "projects" ? (
                 <div>
                   <label className="mb-2 block text-sm font-medium">Duration</label>
-                  <input
+                  <AutocompleteInput
                     value={form.duration}
-                    onChange={(event) => setForm((prev) => ({ ...prev, duration: event.target.value }))}
-                    className={baseInputClassName()}
+                    onChange={(v) => setForm((prev) => ({ ...prev, duration: v }))}
+                    suggestions={suggestions.duration}
                     placeholder="Ex: 01:30"
                   />
                 </div>
@@ -750,53 +829,131 @@ export default function AdminPage() {
                 </button>
               </div>
             </form>
-          </div>
+          </motion.div>
 
-          <div className="rounded-2xl border border-gray-200 p-5">
-            <h2 className="text-lg font-semibold">{tabLabel}</h2>
-            <p className="mt-1 text-xs text-gray-600">Total: {items.length}</p>
+          <motion.div layout className="rounded-2xl border border-gray-200 p-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold">{tabLabel}</h2>
+                <p className="mt-1 text-xs text-gray-600">
+                  {listFilter
+                    ? `${filteredItems.length} / ${items.length}`
+                    : `Total: ${items.length}`}
+                </p>
+              </div>
+              <input
+                type="search"
+                value={listFilter}
+                onChange={(event) => setListFilter(event.target.value)}
+                placeholder="Tìm theo title, client, slug, category..."
+                className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-black focus:outline-none sm:w-72"
+              />
+            </div>
 
             {loadingItems ? (
               <p className="mt-4 text-sm text-gray-600">Loading...</p>
             ) : items.length === 0 ? (
               <p className="mt-4 text-sm text-gray-600">No items yet.</p>
+            ) : filteredItems.length === 0 ? (
+              <p className="mt-4 text-sm text-gray-500">
+                Không có mục nào khớp với &quot;{listFilter}&quot;.
+              </p>
             ) : (
-              <div className="mt-4 space-y-3">
-                {items.map((item) => (
-                  <div
-                    key={item.id}
-                    className="rounded-xl border border-gray-200 p-3 text-sm text-gray-800"
-                  >
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <div className="font-semibold">#{item.id} {item.title || "(No title)"}</div>
-                        <div className="text-xs text-gray-600">slug: {item.slug || "-"}</div>
-                        <div className="text-xs text-gray-600">
-                          order: {item.order ?? "-"} | featured: {item.featured ? "yes" : "no"}
+              <motion.div layout className="mt-4 space-y-3">
+                <AnimatePresence initial={false}>
+                  {filteredItems.map((item) => {
+                    const thumbUrl = item.thumbnail?.url || item.media?.url;
+                    const isCurrent = Number(editingId) === Number(item.id);
+                    const cats = Array.isArray(item.categories) ? item.categories : [];
+                    return (
+                      <motion.div
+                        key={item.id}
+                        layout
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -8 }}
+                        transition={{ duration: 0.18 }}
+                        className={`rounded-xl border p-3 text-sm text-gray-800 transition-colors ${
+                          isCurrent
+                            ? "border-black bg-gray-50"
+                            : "border-gray-200"
+                        }`}
+                      >
+                        <div className="flex gap-3">
+                          {thumbUrl ? (
+                            <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-gray-100">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={thumbUrl}
+                                alt={item.title || "thumbnail"}
+                                className="h-full w-full object-cover"
+                                loading="lazy"
+                              />
+                            </div>
+                          ) : (
+                            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-[10px] text-gray-400">
+                              no media
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="truncate font-semibold">
+                                  #{item.id} {item.title || "(No title)"}
+                                </div>
+                                <div className="mt-0.5 truncate text-xs text-gray-600">
+                                  {item.client || "—"} · slug: {item.slug || "-"}
+                                </div>
+                                <div className="mt-1 flex flex-wrap items-center gap-1">
+                                  {item.featured ? (
+                                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                                      ★ featured
+                                    </span>
+                                  ) : null}
+                                  <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-700">
+                                    order: {item.order ?? "-"}
+                                  </span>
+                                  {cats.slice(0, 3).map((cat) => (
+                                    <span
+                                      key={cat}
+                                      className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-700"
+                                    >
+                                      {cat}
+                                    </span>
+                                  ))}
+                                  {cats.length > 3 ? (
+                                    <span className="text-[10px] text-gray-500">
+                                      +{cats.length - 3}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </div>
+                              <div className="flex shrink-0 gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => startEdit(item)}
+                                  className="rounded-md border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDelete(item.id)}
+                                  className="rounded-md border border-red-300 px-3 py-1 text-xs text-red-700 hover:bg-red-50"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => startEdit(item)}
-                          className="rounded-md border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(item.id)}
-                          className="rounded-md border border-red-300 px-3 py-1 text-xs text-red-700 hover:bg-red-50"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                      </motion.div>
+                    );
+                  })}
+                </AnimatePresence>
+              </motion.div>
             )}
-          </div>
+          </motion.div>
         </div>
       </Container>
     </main>

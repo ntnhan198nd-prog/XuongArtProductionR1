@@ -1,6 +1,14 @@
 "use client";
 import { usePathname } from "next/navigation";
-import { motion, MotionConfig, useReducedMotion, AnimatePresence } from "framer-motion";
+import {
+  motion,
+  MotionConfig,
+  useReducedMotion,
+  AnimatePresence,
+  useScroll,
+  useTransform,
+  useMotionValueEvent,
+} from "framer-motion";
 import Container from "./Container";
 import Link from "next/link";
 import Logo from "./Logo";
@@ -198,55 +206,84 @@ const MobileMenu = ({ open, onClose }) => {
 
 const RootLayoutInner = ({ children, isHome, footerContent, socialContent }) => {
   const shouldReduceMotion = useReducedMotion();
-  const [pastHero, setPastHero] = useState(!isHome);
+  const [overHero, setOverHero] = useState(isHome);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [vh, setVh] = useState(800);
+  const { scrollY } = useScroll();
 
+  // Track viewport height (for hero-fade range). Updated on mount + resize so SSR
+  // doesn't crash. 800 is a reasonable default before hydration.
   useEffect(() => {
-    // On non-home pages the header is always solid.
+    const onResize = () => setVh(window.innerHeight);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // Scroll-driven opacity: header bg fades in continuously between 50%–90% of the
+  // hero (viewport height). Gradient overlay fades out across the same range so
+  // the two layers cross-fade smoothly instead of snapping.
+  const fadeStart = vh * 0.5;
+  const fadeEnd = vh * 0.9;
+  const rawBgOpacity = useTransform(scrollY, [fadeStart, fadeEnd], [0, 1], {
+    clamp: true,
+  });
+  const rawGradientOpacity = useTransform(scrollY, [fadeStart, fadeEnd], [1, 0], {
+    clamp: true,
+  });
+  // On non-home pages: lock bg fully opaque, gradient hidden.
+  const bgOpacity = isHome ? rawBgOpacity : 1;
+  const gradientOpacity = isHome ? rawGradientOpacity : 0;
+
+  // Text-invert flips at the midpoint of the fade so links read against whichever
+  // background is dominant. Avoids the "white-on-white" mid-transition glitch.
+  const flipPoint = vh * 0.7;
+  useMotionValueEvent(scrollY, "change", (latest) => {
     if (!isHome) {
-      setPastHero(true);
+      if (overHero) setOverHero(false);
       return;
     }
-    // Switch when user has scrolled past ~85% of the hero (viewport height).
-    const onScroll = () => {
-      setPastHero(window.scrollY > window.innerHeight * 0.85);
-    };
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll);
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
-    };
-  }, [isHome]);
+    const next = latest < flipPoint;
+    if (next !== overHero) setOverHero(next);
+  });
 
-  const overHero = isHome && !pastHero;
+  useEffect(() => {
+    if (!isHome) {
+      setOverHero(false);
+    } else if (typeof window !== "undefined") {
+      setOverHero(window.scrollY < flipPoint);
+    }
+  }, [isHome, flipPoint]);
 
   return (
     <MotionConfig transition={shouldReduceMotion ? { duration: 0 } : undefined}>
       <header>
         {/* Noise overlay */}
         <div className="noise-overlay" />
-        <div
-          className={clsx(
-            "fixed left-0 right-0 top-0 z-50 header-interactive transition-colors duration-300",
-            overHero
-              ? "bg-transparent"
-              : "bg-white/90 backdrop-blur-md shadow-[0_1px_0_rgba(0,0,0,0.06)]"
-          )}
-        >
-          {overHero && (
-            <div
-              className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/55 via-black/20 to-transparent"
-              aria-hidden="true"
-            />
-          )}
-          {/* Header */}
-          <Header
-            invert={overHero}
-            mobileMenuOpen={mobileMenuOpen}
-            setMobileMenuOpen={setMobileMenuOpen}
+        <div className="fixed left-0 right-0 top-0 z-50 header-interactive">
+          {/* Top-of-page dark gradient — visible when over the hero, fades out as
+              the solid bg below fades in. */}
+          <motion.div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/55 via-black/20 to-transparent"
+            style={{ opacity: gradientOpacity }}
           />
+          {/* Solid frosted bg — invisible at the top of home, fades in past the
+              hero. Backdrop-blur and shadow ride along on the same opacity so
+              they all transition in lockstep. */}
+          <motion.div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 bg-white/90 shadow-[0_1px_0_rgba(0,0,0,0.06)] backdrop-blur-md"
+            style={{ opacity: bgOpacity }}
+          />
+          {/* Header content sits above the layers */}
+          <div className="relative">
+            <Header
+              invert={overHero}
+              mobileMenuOpen={mobileMenuOpen}
+              setMobileMenuOpen={setMobileMenuOpen}
+            />
+          </div>
         </div>
       </header>
       <MobileMenu open={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} />

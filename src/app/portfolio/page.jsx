@@ -7,7 +7,7 @@ import TimeAgo from "@/components/TimeAgo";
 import RichTextRenderer from "@/components/RichTextRenderer";
 import { motion, AnimatePresence } from "framer-motion";
 import Image from "next/image";
-import { FiSearch } from "react-icons/fi";
+import SearchWithCategoryDropdown from "@/components/SearchWithCategoryDropdown";
 
 // Pattern bất đối xứng 3 cột mô phỏng layout tham chiếu (lặp tuần tự)
 // Mỗi slot xác định cột, số hàng (row span) và orientation mong muốn để gán item phù hợp
@@ -294,8 +294,6 @@ export default function PortfolioPage() {
   const [page, setPage] = useState(1);
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const [pageSize, setPageSize] = useState(20); // Default to desktop size
 
@@ -461,17 +459,6 @@ export default function PortfolioPage() {
     };
   }, [isOpen]);
 
-  // Close suggestions dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (showSuggestions && !event.target.closest('.search-container')) {
-        setShowSuggestions(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showSuggestions]);
-
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     let items = projects.filter((p) =>
@@ -566,13 +553,6 @@ export default function PortfolioPage() {
     return cats;
   }, [projects]);
 
-  // Handle category selection from suggestions
-  const handleCategorySelect = (selectedCategory) => {
-    setCategory(selectedCategory);
-    setShowSuggestions(false);
-    setIsSearchFocused(false);
-  };
-
   return (
     <main className="bg-white text-black">
       <Container className="pt-12 sm:pt-16">
@@ -582,83 +562,12 @@ export default function PortfolioPage() {
             <p className="mt-2 text-gray-600">Tất cả dự án của XUONGART</p>
           </div>
           <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
-            <div className="search-container relative">
-              <motion.div
-                initial={false}
-                animate={{
-                  width: isSearchFocused ? 600 : 260,
-                  borderTopLeftRadius: showSuggestions ? 18 : 9999,
-                  borderTopRightRadius: showSuggestions ? 18 : 9999,
-                  borderBottomLeftRadius: showSuggestions ? 0 : 9999,
-                  borderBottomRightRadius: showSuggestions ? 0 : 9999,
-                }}
-                transition={{ duration: 0.35, ease: [0.32, 0.72, 0, 1] }}
-                className={`overflow-hidden border-2 bg-white ${
-                  showSuggestions
-                    ? "border-gray-200 border-b-transparent shadow-md"
-                    : isSearchFocused
-                    ? "border-gray-300 shadow-md"
-                    : "border-transparent shadow-sm"
-                }`}
-                style={{ minWidth: 260 }}
-              >
-                <div className="relative flex items-center">
-                  <FiSearch className="pointer-events-none absolute left-5 text-lg text-gray-500" />
-                  <input
-                    className="w-full border-none bg-transparent py-3.5 pl-12 pr-4 text-sm text-black placeholder:text-gray-500 focus:outline-none"
-                    placeholder="Tìm dự án, khách hàng..."
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    onFocus={() => {
-                      setIsSearchFocused(true);
-                      setShowSuggestions(true);
-                    }}
-                    onBlur={() => {
-                      setTimeout(() => {
-                        setIsSearchFocused(false);
-                        setShowSuggestions(false);
-                      }, 150);
-                    }}
-                    onClick={() => {
-                      setIsSearchFocused(true);
-                      setShowSuggestions(true);
-                    }}
-                  />
-                </div>
-              </motion.div>
-              <AnimatePresence>
-                {showSuggestions && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -8 }}
-                    animate={{
-                      opacity: 1,
-                      y: 0,
-                      transition: { duration: 0.25, delay: 0.15, ease: [0.32, 0.72, 0, 1] },
-                    }}
-                    exit={{
-                      opacity: 0,
-                      y: -8,
-                      transition: { duration: 0.18, ease: [0.32, 0.72, 0, 1] },
-                    }}
-                    className="absolute left-0 top-full z-50 max-h-60 overflow-y-auto rounded-b-2xl border-2 border-t-0 border-gray-200 bg-white shadow-md"
-                    style={{
-                      width: isSearchFocused ? "600px" : "260px",
-                      minWidth: "260px",
-                    }}
-                  >
-                    {categories.map((cat) => (
-                      <button
-                        key={cat}
-                        onClick={() => handleCategorySelect(cat)}
-                        className="w-full border-b border-gray-100 px-5 py-3 text-left text-sm text-black transition-colors last:border-b-0 hover:bg-gray-50"
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
+            <SearchWithCategoryDropdown
+              query={query}
+              onQueryChange={setQuery}
+              categories={categories}
+              onCategorySelect={setCategory}
+            />
           </div>
         </div>
 
