@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import Image from "next/image";
 import { FiX, FiChevronLeft, FiChevronRight } from "react-icons/fi";
 import SearchWithCategoryDropdown from "@/components/SearchWithCategoryDropdown";
+import CategoryQuickPicker from "@/components/CategoryQuickPicker";
 import { useSiteContent } from "@/components/SiteContentProvider";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 
@@ -218,7 +219,21 @@ export default function ImageProjectsPage() {
         <div className="flex flex-col items-start gap-6 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="font-display text-3xl sm:text-4xl md:text-6xl font-semibold">Dự án Hình ảnh</h1>
-            <p className="mt-2 text-sm sm:text-base text-gray-600">Tất cả dự án hình ảnh của XUONGART</p>
+            <p className="mt-2 text-sm sm:text-base text-gray-600">
+              {category && category !== "Tất cả" ? (
+                <>
+                  Tất cả dự án{" "}
+                  <CategoryQuickPicker
+                    active={category}
+                    categories={categories}
+                    onSelect={setCategory}
+                  />{" "}
+                  của XUONGART
+                </>
+              ) : (
+                <>Tất cả dự án của XUONGART</>
+              )}
+            </p>
           </div>
           <div className="flex w-full flex-col gap-3 md:w-auto md:flex-row">
             <SearchWithCategoryDropdown
