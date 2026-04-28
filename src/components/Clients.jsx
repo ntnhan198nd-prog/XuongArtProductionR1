@@ -70,7 +70,7 @@ const Clients = ({ content }) => {
                 },
               }}
             >
-              <div className="mx-auto flex max-w-5xl items-center justify-evenly gap-x-2 sm:gap-x-4 md:gap-x-6">
+              <div className="mx-auto flex max-w-5xl items-center justify-evenly gap-x-1 sm:gap-x-2 md:gap-x-3">
                 {strategicBrands.map((brand, idx) => (
                   <motion.div
                     key={`${brand.logoKey || brand.alt}-${idx}`}

@@ -387,9 +387,9 @@ function ClientsBlock({ value, onChange }) {
   const emptySlot = { alt: "", logoUrl: "", logoKey: "" };
   const setStrategicSlot = (idx, slot) => {
     const next = [...strategic];
-    while (next.length < 4) next.push({ ...emptySlot });
+    while (next.length < 5) next.push({ ...emptySlot });
     next[idx] = slot;
-    onChange({ ...value, strategicBrands: next.slice(0, 4) });
+    onChange({ ...value, strategicBrands: next.slice(0, 5) });
   };
   return (
     <div className="space-y-6">
@@ -397,7 +397,7 @@ function ClientsBlock({ value, onChange }) {
         <div className="flex items-center justify-between">
           <span className={labelCls}>Cụm 1 — Đối tác chiến lược</span>
           <span className="text-xs text-gray-500">
-            4 logo · gợi ý 800×224px
+            5 logo · gợi ý 800×224px
           </span>
         </div>
         <TextField
@@ -407,7 +407,7 @@ function ClientsBlock({ value, onChange }) {
           placeholder="vd: Đối tác chiến lược"
         />
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {[0, 1, 2, 3].map((idx) => (
+          {[0, 1, 2, 3, 4].map((idx) => (
             <BrandLogoSlot
               key={idx}
               idx={idx}

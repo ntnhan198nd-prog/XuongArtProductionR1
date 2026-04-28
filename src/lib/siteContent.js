@@ -39,6 +39,7 @@ export const DEFAULT_SITE_CONTENT = {
       { alt: "Apple", logoUrl: "", logoKey: "" },
       { alt: "Sony", logoUrl: "", logoKey: "" },
       { alt: "BYD", logoUrl: "", logoKey: "" },
+      { alt: "Xiaomi", logoUrl: "", logoKey: "" },
     ],
     marqueeHeading:
       "Và các thương hiệu, đối tác sáng tạo đã đồng hành",
@@ -222,7 +223,8 @@ export function normalizeSiteContent(input) {
         emptySlot,
         emptySlot,
         emptySlot,
-      ].slice(0, 4);
+        emptySlot,
+      ].slice(0, 5);
       // Fall back to legacy `heading` if `marqueeHeading` not present so saved
       // content from before this split keeps rendering correctly.
       const marqueeHeading =
