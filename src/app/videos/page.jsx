@@ -563,7 +563,7 @@ export default function PortfolioPage() {
       <Container className="pt-12 sm:pt-16">
         <div className="flex flex-col items-start gap-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="font-display text-4xl font-semibold sm:text-6xl">Portfolio</h1>
+            <h1 className="font-display text-4xl font-semibold sm:text-6xl">Dự án Video</h1>
             <p className="mt-2 text-gray-600">
               {category && category !== "Tất cả" ? (
                 <>
