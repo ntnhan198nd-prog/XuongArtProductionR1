@@ -286,14 +286,18 @@ export default function ImageProjectsPage() {
           <>
             {/* Backdrop - Covers entire screen including header */}
             <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[99998]" onClick={closeProject} style={{ top: 0, left: 0, right: 0, bottom: 0 }} />
-            {/* Modal content */}
-            <div className="fixed inset-0 flex items-center justify-center z-[99999] pointer-events-none px-4 pt-4 sm:pt-0">
+            {/* Modal content — outer wrapper carries the same top/bottom
+                breathing room as /videos so the modal never sits directly
+                under the fixed header. max-h replaces a fixed 85vh so the
+                inner card scales to whatever is left after the padding,
+                staying centred in that safe region. */}
+            <div className="fixed inset-0 flex items-center justify-center z-[99999] pointer-events-none px-4 pt-24 pb-6 sm:pt-28 sm:pb-8">
               <motion.div
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.95, opacity: 0 }}
                 transition={{ duration: 0.3 }}
-                className="w-[98vw] max-w-7xl h-[85vh] sm:h-[85vh] bg-white rounded-2xl shadow-2xl overflow-hidden pointer-events-auto mt-8 sm:mt-0"
+                className="w-[98vw] max-w-7xl h-full max-h-[calc(100vh-8rem)] sm:max-h-[calc(100vh-9rem)] bg-white rounded-2xl shadow-2xl overflow-hidden pointer-events-auto"
                 onClick={(e) => e.stopPropagation()}
               >
               {/* Header */}
