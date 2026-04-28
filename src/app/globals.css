@@ -178,3 +178,55 @@
   }
 }
 
+/* Shine sweep on the footer logo image. Same idea as .stat-shine but the
+   ink is a PNG, not text — so the gradient is masked to the logo's alpha
+   channel via mask-image. The ::after lays the orange highlight on top of
+   the image, then animates background-position; the mask clips it so only
+   the visible logo pixels light up, never the transparent surround. */
+.logo-shine-wrap {
+  position: relative;
+  display: inline-block;
+}
+.logo-shine-wrap::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(
+    110deg,
+    rgba(232, 163, 61, 0) 30%,
+    rgba(232, 163, 61, 0.65) 45%,
+    rgba(232, 163, 61, 1) 50%,
+    rgba(232, 163, 61, 0.65) 55%,
+    rgba(232, 163, 61, 0) 70%
+  );
+  background-size: 250% 100%;
+  background-position: 200% 0;
+  background-repeat: no-repeat;
+  -webkit-mask-image: url("/logos/XUONGARTLOGODEN.png");
+  mask-image: url("/logos/XUONGARTLOGODEN.png");
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  pointer-events: none;
+  animation: logo-shine-sweep 6s linear infinite;
+  animation-delay: 0.6s;
+}
+
+@keyframes logo-shine-sweep {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .logo-shine-wrap::after {
+    animation: none;
+  }
+}
+

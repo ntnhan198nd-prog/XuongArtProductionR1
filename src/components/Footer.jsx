@@ -45,16 +45,27 @@ const Footer = ({ content, social, minimal = false }) => {
       {/* The PNG already includes the "xưởng" wordmark inside the mark, so
           a separate text "XUONGART" sat redundantly next to it. Now the
           image carries the whole brand name — Link picks up its accessible
-          name from alt instead of an explicit aria-label. */}
-      <Link href={"/"} className="inline-flex">
-        <Image
-          src="/logos/XUONGARTLOGODEN.png"
-          alt="XUONGART"
-          width={256}
-          height={256}
-          className="h-20 w-20 sm:h-28 sm:w-28 object-contain"
-          priority={false}
-        />
+          name from alt instead of an explicit aria-label.
+
+          Click animation matches the header wordmark: ease-out-back curve
+          with a brief active:scale-[0.92] press. The .logo-shine-wrap span
+          paints an orange shine sweep across the image, masked to the
+          logo's alpha so the highlight only catches the ink — same
+          treatment as the homepage stats numbers. */}
+      <Link
+        href={"/"}
+        className="inline-flex transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.92]"
+      >
+        <span className="logo-shine-wrap">
+          <Image
+            src="/logos/XUONGARTLOGODEN.png"
+            alt="XUONGART"
+            width={256}
+            height={256}
+            className="h-20 w-20 sm:h-28 sm:w-28 object-contain"
+            priority={false}
+          />
+        </span>
       </Link>
       <p className="text-xs sm:text-sm text-neutral-700">
         © {copyright} {new Date().getFullYear()}
