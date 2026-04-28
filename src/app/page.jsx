@@ -2,7 +2,6 @@ import Clients from "@/components/Clients";
 import Container from "@/components/Container";
 import FadeIn from "@/components/FadeIn";
 import HeroShowreel from "@/components/HeroShowreel";
-import Services from "@/components/Services";
 import ProjectsGallery from "@/components/ProjectsGallery";
 import Stats from "@/components/Stats";
 import { readStore } from "@/lib/contentStore";
@@ -59,10 +58,9 @@ export default async function Home() {
         <ProjectsGallery />
       </div>
       <Stats content={site.stats} />
-      <Services content={site.services} />
-      {/* The CTA banner that used to live here moved to /whoweare; the
-          contact info that sat under it now lives below the page footer
-          (rendered by RootLayout, controlled by showContactInFooter). */}
+      {/* The Services section moved to /whoweare so the homepage now ends
+          on Stats. CTA banner also moved out — its contact info is in
+          the footer (rendered by RootLayout via showContactInFooter). */}
     </main>
   );
 }

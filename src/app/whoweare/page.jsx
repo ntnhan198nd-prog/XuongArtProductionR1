@@ -2,6 +2,7 @@ import ContactSection from "@/components/ContactSection";
 import Container from "@/components/Container";
 import Cultures from "@/components/Cultures";
 import PageIntro from "@/components/PageIntro";
+import Services from "@/components/Services";
 import { StatList, StatListItem } from "@/components/StatList";
 import { readStore } from "@/lib/contentStore";
 import { DEFAULT_SITE_CONTENT, normalizeSiteContent } from "@/lib/siteContent";
@@ -41,6 +42,7 @@ const ContactPage = async () => {
         </StatList>
       </Container>
       <Cultures content={site.cultures} />
+      <Services content={site.services} />
       <ContactSection content={site.cta} social={site.social} />
     </>
   );

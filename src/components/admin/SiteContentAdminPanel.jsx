@@ -15,12 +15,12 @@ const BLOCKS = [
   { key: "featuredHeader", label: "Header Dự án nổi bật" },
   { key: "stats", label: "Stats trang chủ" },
   { key: "clients", label: "Khách hàng (marquee)" },
-  { key: "services", label: "Dịch vụ" },
-  { key: "cta", label: "CTA & Liên hệ (banner đen)" },
+  { key: "services", label: "Dịch vụ (trang /whoweare)" },
+  { key: "cta", label: "CTA /whoweare + Footer trang chủ" },
   { key: "about", label: "Trang Who We Are" },
   { key: "cultures", label: "Văn hoá" },
-  { key: "footer", label: "Footer" },
-  { key: "social", label: "Mạng xã hội" },
+  { key: "footer", label: "Footer · Copyright" },
+  { key: "social", label: "Mạng xã hội (footer + CTA)" },
   { key: "ui", label: "UI · Loading text" },
   { key: "portfolio", label: "Bộ lọc tìm kiếm (-động + -tĩnh)" },
 ];
@@ -606,16 +606,41 @@ function ServicesBlock({ value, onChange }) {
 function CtaBlock({ value, onChange }) {
   const set = (k, v) => onChange({ ...value, [k]: v });
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      <TextField label="Heading lớn" value={value.heading} onChange={(v) => set("heading", v)} multiline rows={2} />
-      <TextField label="Text nút CTA" value={value.buttonText} onChange={(v) => set("buttonText", v)} placeholder="vd: Liên hệ ngay" />
-      <TextField label="Heading nhỏ — Thông tin liên hệ" value={value.contactsHeading} onChange={(v) => set("contactsHeading", v)} />
-      <TextField label="Tên office" value={value.officeName} onChange={(v) => set("officeName", v)} />
-      <div className="lg:col-span-2">
-        <TextField label="Địa chỉ" value={value.address} onChange={(v) => set("address", v)} />
+    <div className="space-y-4">
+      <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-xs text-gray-600">
+        <p className="font-semibold uppercase tracking-wider text-gray-700">
+          Hai nơi dùng chung dữ liệu này
+        </p>
+        <ul className="mt-1.5 list-disc space-y-1 pl-5">
+          <li>
+            <span className="font-medium">CTA banner đen ở /whoweare</span> —
+            dùng đầy đủ Heading lớn + nút CTA + Heading nhỏ + office/địa
+            chỉ/phone/email.
+          </li>
+          <li>
+            <span className="font-medium">Footer trang chủ (nền đen)</span> —
+            chỉ dùng <em>Tên office, Địa chỉ, Phone, Email</em>. Heading lớn
+            và nút CTA không hiển thị ở đây.
+          </li>
+        </ul>
+        <p className="mt-1.5">
+          Copyright "© XUONGART Inc. 2026" sửa ở block{" "}
+          <span className="font-medium">Footer · Copyright</span>; icon
+          mạng xã hội ở block <span className="font-medium">Mạng xã hội</span>.
+        </p>
       </div>
-      <TextField label="Phone" value={value.phone} onChange={(v) => set("phone", v)} validateAs="tel" placeholder="vd: +84 988 888 888" />
-      <TextField label="Email" value={value.email} onChange={(v) => set("email", v)} validateAs="email" placeholder="vd: hello@xuongart.com" />
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <TextField label="Heading lớn (chỉ /whoweare)" value={value.heading} onChange={(v) => set("heading", v)} multiline rows={2} />
+        <TextField label="Text nút CTA (chỉ /whoweare)" value={value.buttonText} onChange={(v) => set("buttonText", v)} placeholder="vd: Liên hệ ngay" />
+        <TextField label="Heading nhỏ — Thông tin liên hệ (chỉ /whoweare)" value={value.contactsHeading} onChange={(v) => set("contactsHeading", v)} />
+        <TextField label="Tên office (footer + /whoweare)" value={value.officeName} onChange={(v) => set("officeName", v)} />
+        <div className="lg:col-span-2">
+          <TextField label="Địa chỉ (footer + /whoweare)" value={value.address} onChange={(v) => set("address", v)} />
+        </div>
+        <TextField label="Phone (footer + /whoweare)" value={value.phone} onChange={(v) => set("phone", v)} validateAs="tel" placeholder="vd: +84 988 888 888" />
+        <TextField label="Email (footer + /whoweare)" value={value.email} onChange={(v) => set("email", v)} validateAs="email" placeholder="vd: hello@xuongart.com" />
+      </div>
     </div>
   );
 }
