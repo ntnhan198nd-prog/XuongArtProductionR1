@@ -15,7 +15,7 @@ import Logo from "./Logo";
 import Button from "./Button";
 import clsx from "clsx";
 import Footer from "./Footer";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 const isVideosActive = (pathname) =>
   pathname === "/videos" || pathname.startsWith("/videos/");
@@ -209,7 +209,25 @@ const RootLayoutInner = ({ children, isHome, minimalFooter, footerContent, socia
   const [overHero, setOverHero] = useState(isHome);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [vh, setVh] = useState(800);
+  // The footer is rendered out of the scroll column and pinned to the
+  // viewport bottom, with the main content stacked on top so it covers
+  // the footer until the user scrolls into the reveal zone (Apple-style
+  // parallax). footerHeight is the size of that reveal zone — kept in
+  // sync via ResizeObserver so swapping minimal vs full footer or
+  // resizing the window updates the page padding without a refresh.
+  const [footerHeight, setFooterHeight] = useState(0);
+  const footerRef = useRef(null);
   const { scrollY } = useScroll();
+
+  useEffect(() => {
+    const el = footerRef.current;
+    if (!el) return undefined;
+    const update = () => setFooterHeight(el.offsetHeight);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [minimalFooter]);
 
   // Track viewport height (for hero-fade range). Updated on mount + resize so SSR
   // doesn't crash. 800 is a reasonable default before hydration.
@@ -287,26 +305,43 @@ const RootLayoutInner = ({ children, isHome, minimalFooter, footerContent, socia
         </div>
       </header>
       <MobileMenu open={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} />
-      {/* Solid white surface — never animated, so the dark <html> body never
-          peeks through during route transitions. */}
-      <div className="relative flex flex-auto overflow-hidden bg-white pt-20">
+      {/* Outer wrapper still carries bg-white so the dark <html> body never
+          peeks through during route transitions. paddingBottom matches
+          footerHeight so the page can scroll just past the content into
+          the reveal zone where the fixed footer (below) becomes visible.
+          Motion.div is z-10 with bg-white — it covers the fixed footer
+          while it overlaps in viewport, then lifts above as the user
+          scrolls into the reveal zone. */}
+      <div
+        className="relative flex flex-auto overflow-hidden bg-white pt-20"
+        style={{ paddingBottom: footerHeight }}
+      >
         <motion.div
-          className="relative isolate flex w-full flex-col pt-0"
+          className="relative z-10 isolate flex w-full flex-col bg-white"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}
         >
           <main className="w-full flex-auto">{children}</main>
-          {/* Pages where the social + contact info already lives elsewhere
-              (homepage CTA banner, portfolio gallery focus) get the minimal
-              footer — logo + copyright only. /contact and friends still get
-              the full footer with FooterNavigation + Newsletter. */}
-          <Footer
-            content={footerContent}
-            social={socialContent}
-            minimal={minimalFooter}
-          />
         </motion.div>
+      </div>
+      {/* Pages where the social + contact info already lives elsewhere
+          (homepage CTA banner, gallery focus, /whoweare) get the minimal
+          footer — logo + copyright only. /contact and friends still get
+          the full footer with FooterNavigation + Newsletter.
+
+          Pinned to the viewport bottom and sitting behind the main content
+          (z-0 vs the motion column's z-10) so it stays put while the user
+          scrolls — the content slides over it like an overlay. */}
+      <div
+        ref={footerRef}
+        className="fixed bottom-0 left-0 right-0 z-0 bg-white"
+      >
+        <Footer
+          content={footerContent}
+          social={socialContent}
+          minimal={minimalFooter}
+        />
       </div>
     </MotionConfig>
   );
