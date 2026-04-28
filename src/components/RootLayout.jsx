@@ -341,9 +341,12 @@ const RootLayoutInner = ({
           Pinned to the viewport bottom and sitting behind the main content
           (z-0 vs the motion column's z-10) so it stays put while the user
           scrolls — the content slides over it like an overlay. */}
+      {/* No bg here — Footer applies its own (white normally, dark on the
+          homepage) so the inverse-coloured variant doesn't get a white
+          underlay peeking through during scroll-reveal. */}
       <div
         ref={footerRef}
-        className="fixed bottom-0 left-0 right-0 z-0 bg-white"
+        className="fixed bottom-0 left-0 right-0 z-0"
       >
         <Footer
           content={footerContent}
