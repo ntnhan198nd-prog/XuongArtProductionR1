@@ -624,7 +624,7 @@ function CtaBlock({ value, onChange }) {
           </li>
         </ul>
         <p className="mt-1.5">
-          Copyright "© XUONGART Inc. 2026" sửa ở block{" "}
+          Copyright &ldquo;© XUONGART Inc. 2026&rdquo; sửa ở block{" "}
           <span className="font-medium">Footer · Copyright</span>; icon
           mạng xã hội ở block <span className="font-medium">Mạng xã hội</span>.
         </p>
