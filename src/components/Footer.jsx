@@ -32,10 +32,14 @@ const Footer = ({ content, social, minimal = false }) => {
   // already lives in the CTA banner above. The full footer (other pages)
   // additionally renders FooterNavigation + the newsletter/contact column.
 
+  // sm:items-center pulls the copyright onto the logo's vertical midline
+  // (was sm:items-end — the small text sat flush with the logo's bottom
+  // edge, looking offset). Margins/paddings shrunk roughly 50% so the
+  // strip reads as a thin closing line instead of a heavy banner.
   const bottomStrip = (
     <div
-      className={`mb-12 sm:mb-20 flex flex-col sm:flex-row flex-wrap items-start sm:items-end justify-between gap-4 sm:gap-x-6 gap-y-4 border-t border-neutral-950/10 ${
-        minimal ? "mt-0 pt-6 sm:pt-8" : "mt-12 sm:mt-16 md:mt-24 pt-8 sm:pt-12"
+      className={`mb-6 sm:mb-10 flex flex-col sm:flex-row flex-wrap items-start sm:items-center justify-between gap-3 sm:gap-x-6 gap-y-3 border-t border-neutral-950/10 ${
+        minimal ? "mt-0 pt-3 sm:pt-4" : "mt-12 sm:mt-16 md:mt-24 pt-4 sm:pt-6"
       }`}
     >
       {/* The PNG already includes the "xưởng" wordmark inside the mark, so
