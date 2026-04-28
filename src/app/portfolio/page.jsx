@@ -8,6 +8,7 @@ import RichTextRenderer from "@/components/RichTextRenderer";
 import { motion, AnimatePresence } from "framer-motion";
 import Image from "next/image";
 import SearchWithCategoryDropdown from "@/components/SearchWithCategoryDropdown";
+import { useSiteContent } from "@/components/SiteContentProvider";
 
 // Pattern bất đối xứng 3 cột mô phỏng layout tham chiếu (lặp tuần tự)
 // Mỗi slot xác định cột, số hàng (row span) và orientation mong muốn để gán item phù hợp
@@ -289,6 +290,7 @@ const MasonryCard = ({ item, onOpen, index = 0 }) => {
 };
 
 export default function PortfolioPage() {
+  const { ui } = useSiteContent();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("Tất cả");
   const [page, setPage] = useState(1);
@@ -575,7 +577,7 @@ export default function PortfolioPage() {
           <div className="mt-10 flex justify-center">
             <div className="text-center">
               <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-gray-300 border-t-gray-900"></div>
-              <p className="mt-4 text-gray-600">Đang tải dự án...</p>
+              <p className="mt-4 text-gray-600">{ui.loadingProjectsText}</p>
             </div>
           </div>
         ) : (

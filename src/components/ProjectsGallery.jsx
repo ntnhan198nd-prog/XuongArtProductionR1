@@ -9,6 +9,7 @@ import TimeAgo from "@/components/TimeAgo";
 import RichTextRenderer from "@/components/RichTextRenderer";
 import { MdChevronLeft, MdChevronRight } from "react-icons/md";
 import { getFeaturedProjects } from "@/lib/strapi";
+import { useSiteContent } from "@/components/SiteContentProvider";
 
 const AUTOPLAY_INTERVAL_MS = 7000;
 const DESKTOP_BREAKPOINT_QUERY = "(min-width: 1024px)";
@@ -349,6 +350,7 @@ const FeaturedCard = ({ areaName, slotShape, item, onOpen, index = 0, fillHeight
 
 // Main ProjectsGallery component
 const ProjectsGallery = () => {
+  const { ui } = useSiteContent();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
 
@@ -611,7 +613,7 @@ const ProjectsGallery = () => {
                 <div className="mx-auto h-12 w-12 animate-spin rounded-full border-4 border-neutral-200 border-t-neutral-900"></div>
                 <div className="absolute inset-0 mx-auto h-12 w-12 animate-ping rounded-full border-4 border-neutral-300 opacity-20"></div>
               </div>
-              <p className="mt-6 text-lg font-medium text-neutral-700">Đang tải dự án...</p>
+              <p className="mt-6 text-lg font-medium text-neutral-700">{ui.loadingProjectsText}</p>
               <p className="mt-2 text-sm text-neutral-500">Vui lòng chờ trong giây lát</p>
             </div>
           </div>

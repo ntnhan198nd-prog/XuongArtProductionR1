@@ -8,9 +8,11 @@ import TimeAgo from "@/components/TimeAgo";
 import RichTextRenderer from "@/components/RichTextRenderer";
 import Image from "next/image";
 import Link from "next/link";
+import { useSiteContent } from "@/components/SiteContentProvider";
 // Sử dụng icon SVG đơn giản thay vì heroicons
 
 export default function ProjectDetailPage() {
+  const { ui } = useSiteContent();
   const params = useParams();
   const slug = params.slug;
   const [project, setProject] = useState(null);
@@ -76,7 +78,7 @@ export default function ProjectDetailPage() {
           <div className="flex justify-center">
             <div className="text-center">
               <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-gray-300 border-t-gray-900"></div>
-              <p className="mt-4 text-gray-600">Đang tải dự án...</p>
+              <p className="mt-4 text-gray-600">{ui.loadingProjectsText}</p>
             </div>
           </div>
         </Container>

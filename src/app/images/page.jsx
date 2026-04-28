@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import Image from "next/image";
 import { FiX, FiChevronLeft, FiChevronRight } from "react-icons/fi";
 import SearchWithCategoryDropdown from "@/components/SearchWithCategoryDropdown";
+import { useSiteContent } from "@/components/SiteContentProvider";
 
 const PAGE_SIZE = 20;
 
@@ -65,6 +66,7 @@ const ImageProjectCard = ({ item, onOpen, index = 0 }) => {
 };
 
 export default function ImageProjectsPage() {
+  const { ui } = useSiteContent();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("Tất cả");
   const [page, setPage] = useState(1);
@@ -249,7 +251,7 @@ export default function ImageProjectsPage() {
           <div className="mt-10 flex justify-center">
             <div className="text-center">
               <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-gray-300 border-t-gray-900"></div>
-              <p className="mt-4 text-gray-600">Đang tải dự án...</p>
+              <p className="mt-4 text-gray-600">{ui.loadingProjectsText}</p>
             </div>
           </div>
         ) : (

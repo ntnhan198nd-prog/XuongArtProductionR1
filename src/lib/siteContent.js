@@ -144,6 +144,9 @@ export const DEFAULT_SITE_CONTENT = {
     tiktok: "",
     zalo: "",
   },
+  ui: {
+    loadingProjectsText: "Đang tải dự án...",
+  },
 };
 
 const isString = (v) => typeof v === "string";
@@ -313,6 +316,10 @@ export function normalizeSiteContent(input) {
     social: {
       ...d.social,
       ...(isObject(src.social) ? src.social : {}),
+    },
+    ui: {
+      ...d.ui,
+      ...(isObject(src.ui) ? src.ui : {}),
     },
   };
 }

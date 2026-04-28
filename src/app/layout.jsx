@@ -1,4 +1,5 @@
 import RootLayout from "@/components/RootLayout";
+import { SiteContentProvider } from "@/components/SiteContentProvider";
 import { readStore } from "@/lib/contentStore";
 import { DEFAULT_SITE_CONTENT, normalizeSiteContent } from "@/lib/siteContent";
 import "./globals.css";
@@ -28,7 +29,7 @@ export default async function Layout({ children }) {
     >
       <body className="flex min-h-full flex-col">
         <RootLayout footerContent={site.footer} socialContent={site.social}>
-          {children}
+          <SiteContentProvider value={site}>{children}</SiteContentProvider>
         </RootLayout>
       </body>
     </html>
