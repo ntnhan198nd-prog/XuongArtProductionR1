@@ -6,22 +6,37 @@ import { FiSearch, FiX } from "react-icons/fi";
 
 const PROJECT_SUGGESTION_LIMIT = 8;
 
-// Highlight occurrences of `match` inside `text`. Used to bold the matched
-// substring in autocomplete suggestions.
+// Diacritic-insensitive comparison so a Vietnamese user typing "tim" matches
+// titles containing "Tìm". Force NFC first so the strip-combining-marks
+// pass below produces a one-codepoint-per-character output that maps 1:1
+// back onto the original string for highlight slicing.
+function normalizeForSearch(value) {
+  return String(value ?? "")
+    .normalize("NFC")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+}
+
+// Highlight occurrences of `match` inside `text`, ignoring diacritics and
+// case. Position mapping works because both `original` and `normText` are
+// derived from the same NFC string with a 1:1 codepoint correspondence.
 function highlight(text, match) {
   if (!text) return "";
   if (!match) return text;
-  const lower = text.toLowerCase();
-  const needle = match.toLowerCase();
-  const idx = lower.indexOf(needle);
-  if (idx === -1) return text;
+  const original = String(text).normalize("NFC");
+  const normText = normalizeForSearch(original);
+  const normMatch = normalizeForSearch(match);
+  if (!normMatch) return original;
+  const idx = normText.indexOf(normMatch);
+  if (idx === -1) return original;
   return (
     <>
-      {text.slice(0, idx)}
+      {original.slice(0, idx)}
       <span className="font-semibold text-black">
-        {text.slice(idx, idx + match.length)}
+        {original.slice(idx, idx + normMatch.length)}
       </span>
-      {text.slice(idx + match.length)}
+      {original.slice(idx + normMatch.length)}
     </>
   );
 }
@@ -65,10 +80,13 @@ export default function SearchWithCategoryDropdown({
 
   const trimmedQuery = (query || "").trim();
   const isSearching = trimmedQuery.length > 0;
-  const lowerQuery = trimmedQuery.toLowerCase();
+  const normQuery = normalizeForSearch(trimmedQuery);
 
   // While typing, surface up to N matching projects so the user can jump
   // directly into a project from the dropdown instead of scanning the grid.
+  // Match against the diacritic-stripped form of each field so users typing
+  // "cellphones" find a project tagged "Cellphones" *and* one tagged
+  // "Cellphónes" (or any accented variant) without thinking about it.
   const matchedProjects = useMemo(() => {
     if (!isSearching || !Array.isArray(projects) || projects.length === 0) {
       return [];
@@ -76,20 +94,20 @@ export default function SearchWithCategoryDropdown({
     return projects
       .filter((p) =>
         [p.title, p.client, p.tagline].some((field) =>
-          (field || "").toLowerCase().includes(lowerQuery)
+          normalizeForSearch(field).includes(normQuery)
         )
       )
       .slice(0, PROJECT_SUGGESTION_LIMIT);
-  }, [projects, lowerQuery, isSearching]);
+  }, [projects, normQuery, isSearching]);
 
   // Filter category list by query too — keeps everything searchable from the
   // same input. Always keep "Tất cả" available so the user can reset.
   const filteredCategories = useMemo(() => {
     if (!isSearching) return categories;
     return categories.filter(
-      (cat) => cat === "Tất cả" || cat.toLowerCase().includes(lowerQuery)
+      (cat) => cat === "Tất cả" || normalizeForSearch(cat).includes(normQuery)
     );
-  }, [categories, lowerQuery, isSearching]);
+  }, [categories, normQuery, isSearching]);
 
   const hasResults =
     matchedProjects.length > 0 || filteredCategories.length > 0;
