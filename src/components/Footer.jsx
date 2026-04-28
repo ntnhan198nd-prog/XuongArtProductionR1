@@ -52,10 +52,14 @@ const Footer = ({ content, social, minimal = false }) => {
           alt=""
           width={64}
           height={64}
-          className="h-6 w-6 sm:h-8 sm:w-8 object-contain"
+          className="h-7 w-7 sm:h-9 sm:w-9 object-contain"
           priority={false}
         />
-        <Logo className="h-6 sm:h-8 text-xl sm:text-2xl">XUONGART</Logo>
+        {/* leading-none collapses the default 1.4× line-box padding around
+            the text so its visual centre lines up with the square mark
+            once the row is items-center'd. Without it the glyphs sit lower
+            than the image's centre. */}
+        <Logo className="text-xl sm:text-2xl leading-none">XUONGART</Logo>
       </Link>
       <p className="text-xs sm:text-sm text-neutral-700">
         © {copyright} {new Date().getFullYear()}
