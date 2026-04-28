@@ -61,54 +61,51 @@ const Footer = ({ content, social, cta, minimal = false, showContact = false }) 
     </div>
   );
 
-  // Homepage variant: one cohesive black footer. Top row pairs the logo
-  // with the copyright; second row pairs the contact heading with the
-  // social icons; the contact details (office, address, phone, email)
-  // sit underneath as a single column. No huge gap between the logo
-  // strip and the contact band the way the previous split layout had.
+  // Homepage variant: contact info + social icons on the left, oversized
+  // brand mark + copyright on the right. The "Thông tin liên hệ" heading
+  // is dropped — Office name in bold acts as its own opening line, and
+  // dropping the heading lets the contact column read as one block.
   if (dark) {
     return (
       <footer className="w-full bg-neutral-950 text-white">
         <Container className="py-10 sm:py-14">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <Link
-              href={"/"}
-              className="inline-flex transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.92]"
-            >
-              <Image
-                src="/logos/XUONGARTLOGOTRANG.png"
-                alt="XUONGART"
-                width={256}
-                height={256}
-                className="h-20 w-20 sm:h-28 sm:w-28 object-contain"
-                priority={false}
-              />
-            </Link>
-            <p className="text-xs sm:text-sm text-neutral-400">
-              © {copyright} {new Date().getFullYear()}
-            </p>
-          </div>
+          <div className="flex flex-col gap-10 sm:flex-row sm:items-start sm:justify-between sm:gap-8 md:gap-12">
+            <div className="flex flex-col gap-6 min-w-0">
+              <div className="text-sm leading-relaxed text-neutral-300 sm:text-base">
+                <p className="font-semibold text-white">
+                  {ctaData.officeName || DEFAULT_SITE_CONTENT.cta.officeName}
+                </p>
+                <p className="mt-3">
+                  {ctaData.address || DEFAULT_SITE_CONTENT.cta.address}
+                </p>
+                <p className="mt-1">
+                  {ctaData.phone || DEFAULT_SITE_CONTENT.cta.phone}
+                </p>
+                <p className="mt-1">
+                  {ctaData.email || DEFAULT_SITE_CONTENT.cta.email}
+                </p>
+              </div>
+              <SocialMedia invert content={social} />
+            </div>
 
-          <div className="mt-8 flex flex-col gap-4 sm:mt-10 sm:flex-row sm:items-center sm:justify-between">
-            <h3 className="font-display text-base font-semibold text-white">
-              {ctaData.contactsHeading || DEFAULT_SITE_CONTENT.cta.contactsHeading}
-            </h3>
-            <SocialMedia className="shrink-0" invert content={social} />
-          </div>
-
-          <div className="mt-5 max-w-xl text-sm leading-relaxed text-neutral-300 sm:text-base">
-            <p className="font-semibold text-white">
-              {ctaData.officeName || DEFAULT_SITE_CONTENT.cta.officeName}
-            </p>
-            <p className="mt-2">
-              {ctaData.address || DEFAULT_SITE_CONTENT.cta.address}
-            </p>
-            <p className="mt-1">
-              {ctaData.phone || DEFAULT_SITE_CONTENT.cta.phone}
-            </p>
-            <p className="mt-1">
-              {ctaData.email || DEFAULT_SITE_CONTENT.cta.email}
-            </p>
+            <div className="flex flex-col items-start gap-3 sm:items-end">
+              <Link
+                href={"/"}
+                className="inline-flex shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.92]"
+              >
+                <Image
+                  src="/logos/XUONGARTLOGOTRANG.png"
+                  alt="XUONGART"
+                  width={512}
+                  height={512}
+                  className="h-32 w-32 sm:h-40 sm:w-40 md:h-48 md:w-48 object-contain"
+                  priority={false}
+                />
+              </Link>
+              <p className="text-xs sm:text-sm text-neutral-400">
+                © {copyright} {new Date().getFullYear()}
+              </p>
+            </div>
           </div>
         </Container>
       </footer>
