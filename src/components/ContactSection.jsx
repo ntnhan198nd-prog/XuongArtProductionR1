@@ -2,9 +2,10 @@ import React from "react";
 import Container from "./Container";
 import FadeIn from "./FadeIn";
 import Button from "./Button";
+import SocialMedia from "./SocialMedia";
 import { DEFAULT_SITE_CONTENT } from "@/lib/siteContent";
 
-const ContactSection = ({ content }) => {
+const ContactSection = ({ content, social }) => {
   const data = content || DEFAULT_SITE_CONTENT.cta;
   return (
     <Container className="mt-24 sm:mt-32 lg:mt-40">
@@ -20,16 +21,25 @@ const ContactSection = ({ content }) => {
             </Button>
           </div>
           <div className="mt-8 border-t border-white/10 pt-8">
-            <h3 className="font-display text-base font-semibold text-white">
-              {data?.contactsHeading || DEFAULT_SITE_CONTENT.cta.contactsHeading}
-            </h3>
-            <div className="mt-5 text-neutral-300">
-              <p className="font-semibold text-white">
-                {data?.officeName || DEFAULT_SITE_CONTENT.cta.officeName}
-              </p>
-              <p className="mt-2 sm:whitespace-nowrap">{data?.address || DEFAULT_SITE_CONTENT.cta.address}</p>
-              <p className="mt-1">{data?.phone || DEFAULT_SITE_CONTENT.cta.phone}</p>
-              <p className="mt-1">{data?.email || DEFAULT_SITE_CONTENT.cta.email}</p>
+            <div className="flex flex-col gap-8 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <h3 className="font-display text-base font-semibold text-white">
+                  {data?.contactsHeading || DEFAULT_SITE_CONTENT.cta.contactsHeading}
+                </h3>
+                <div className="mt-5 text-neutral-300">
+                  <p className="font-semibold text-white">
+                    {data?.officeName || DEFAULT_SITE_CONTENT.cta.officeName}
+                  </p>
+                  <p className="mt-2">{data?.address || DEFAULT_SITE_CONTENT.cta.address}</p>
+                  <p className="mt-1">{data?.phone || DEFAULT_SITE_CONTENT.cta.phone}</p>
+                  <p className="mt-1">{data?.email || DEFAULT_SITE_CONTENT.cta.email}</p>
+                </div>
+              </div>
+              <SocialMedia
+                className="shrink-0 sm:mt-1"
+                invert
+                content={social}
+              />
             </div>
           </div>
         </div>

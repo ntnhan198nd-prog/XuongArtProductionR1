@@ -1,14 +1,38 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { FiSearch } from "react-icons/fi";
+import { FiSearch, FiX } from "react-icons/fi";
+
+const PROJECT_SUGGESTION_LIMIT = 8;
+
+// Highlight occurrences of `match` inside `text`. Used to bold the matched
+// substring in autocomplete suggestions.
+function highlight(text, match) {
+  if (!text) return "";
+  if (!match) return text;
+  const lower = text.toLowerCase();
+  const needle = match.toLowerCase();
+  const idx = lower.indexOf(needle);
+  if (idx === -1) return text;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <span className="font-semibold text-black">
+        {text.slice(idx, idx + match.length)}
+      </span>
+      {text.slice(idx + match.length)}
+    </>
+  );
+}
 
 export default function SearchWithCategoryDropdown({
   query,
   onQueryChange,
   categories = [],
   onCategorySelect,
+  projects = [],
+  onProjectSelect,
   placeholder = "Tìm dự án, khách hàng...",
   closedWidth = 260,
   openWidth = 600,
@@ -27,11 +51,48 @@ export default function SearchWithCategoryDropdown({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const handleSelect = (cat) => {
+  const handleSelectCategory = (cat) => {
     onCategorySelect?.(cat);
     setIsOpen(false);
     inputRef.current?.blur();
   };
+
+  const handleSelectProject = (project) => {
+    onProjectSelect?.(project);
+    setIsOpen(false);
+    inputRef.current?.blur();
+  };
+
+  const trimmedQuery = (query || "").trim();
+  const isSearching = trimmedQuery.length > 0;
+  const lowerQuery = trimmedQuery.toLowerCase();
+
+  // While typing, surface up to N matching projects so the user can jump
+  // directly into a project from the dropdown instead of scanning the grid.
+  const matchedProjects = useMemo(() => {
+    if (!isSearching || !Array.isArray(projects) || projects.length === 0) {
+      return [];
+    }
+    return projects
+      .filter((p) =>
+        [p.title, p.client, p.tagline].some((field) =>
+          (field || "").toLowerCase().includes(lowerQuery)
+        )
+      )
+      .slice(0, PROJECT_SUGGESTION_LIMIT);
+  }, [projects, lowerQuery, isSearching]);
+
+  // Filter category list by query too — keeps everything searchable from the
+  // same input. Always keep "Tất cả" available so the user can reset.
+  const filteredCategories = useMemo(() => {
+    if (!isSearching) return categories;
+    return categories.filter(
+      (cat) => cat === "Tất cả" || cat.toLowerCase().includes(lowerQuery)
+    );
+  }, [categories, lowerQuery, isSearching]);
+
+  const hasResults =
+    matchedProjects.length > 0 || filteredCategories.length > 0;
 
   return (
     <div
@@ -58,23 +119,56 @@ export default function SearchWithCategoryDropdown({
           <FiSearch className="pointer-events-none absolute left-5 text-lg text-gray-500" />
           <input
             ref={inputRef}
-            className="h-full w-full border-none bg-transparent pl-12 pr-4 text-sm text-black placeholder:text-gray-500 focus:outline-none"
+            className={`h-full w-full border-none bg-transparent pl-12 text-sm text-black placeholder:text-gray-500 focus:outline-none ${
+              query ? "pr-12" : "pr-4"
+            }`}
             placeholder={placeholder}
             value={query}
             onChange={(e) => onQueryChange?.(e.target.value)}
             onFocus={() => setIsOpen(true)}
             onClick={() => setIsOpen(true)}
             onKeyDown={(e) => {
+              // IME composition guard — Vietnamese Telex/VNI (and similar
+              // input methods) commit the composing buffer on Enter, which
+              // re-emits the same text into the input. Without this guard the
+              // value ends up doubled (e.g. "cell" + commit → "cellcell").
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+
               if (e.key === "Escape") {
+                setIsOpen(false);
+                e.currentTarget.blur();
+              } else if (e.key === "Enter") {
+                // Commit the current query: close the dropdown so the user
+                // sees the live-filtered grid behind it. The grid is already
+                // matching against title/client/tagline, so the query state
+                // is enough — no extra submit step needed.
+                e.preventDefault();
                 setIsOpen(false);
                 e.currentTarget.blur();
               }
             }}
           />
+          {query ? (
+            <button
+              type="button"
+              // onMouseDown.preventDefault keeps the input focused so the
+              // dropdown doesn't flicker shut from a click-outside detection
+              // before the click handler runs.
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onQueryChange?.("");
+                inputRef.current?.focus();
+              }}
+              aria-label="Xoá tìm kiếm"
+              className="absolute right-3 flex h-7 w-7 items-center justify-center rounded-full text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
+            >
+              <FiX className="text-base" />
+            </button>
+          ) : null}
         </div>
 
         <AnimatePresence initial={false}>
-          {isOpen && categories.length > 0 && (
+          {isOpen && (categories.length > 0 || isSearching) && (
             <motion.div
               key="suggestions"
               initial={{ height: 0, opacity: 0 }}
@@ -96,18 +190,59 @@ export default function SearchWithCategoryDropdown({
               }}
               className="overflow-hidden"
             >
-              <div className="max-h-60 overflow-y-auto border-t border-gray-100">
-                {categories.map((cat) => (
-                  <button
-                    key={cat}
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => handleSelect(cat)}
-                    className="block w-full border-b border-gray-100 px-5 py-3 text-left text-sm text-black transition-colors last:border-b-0 hover:bg-gray-50"
-                  >
-                    {cat}
-                  </button>
-                ))}
+              <div className="max-h-80 overflow-y-auto border-t border-gray-100">
+                {isSearching && matchedProjects.length > 0 ? (
+                  <div>
+                    <div className="bg-gray-50 px-5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+                      Dự án ({matchedProjects.length})
+                    </div>
+                    {matchedProjects.map((project) => (
+                      <button
+                        key={project.id}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => handleSelectProject(project)}
+                        className="block w-full border-b border-gray-100 px-5 py-2.5 text-left transition-colors last:border-b-0 hover:bg-gray-50"
+                      >
+                        <div className="text-sm text-black">
+                          {highlight(project.title || "(Không tên)", trimmedQuery)}
+                        </div>
+                        {project.client ? (
+                          <div className="mt-0.5 text-xs text-gray-500">
+                            {highlight(project.client, trimmedQuery)}
+                          </div>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+
+                {filteredCategories.length > 0 ? (
+                  <div>
+                    {isSearching && matchedProjects.length > 0 ? (
+                      <div className="bg-gray-50 px-5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+                        Danh mục
+                      </div>
+                    ) : null}
+                    {filteredCategories.map((cat) => (
+                      <button
+                        key={cat}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => handleSelectCategory(cat)}
+                        className="block w-full border-b border-gray-100 px-5 py-3 text-left text-sm text-black transition-colors last:border-b-0 hover:bg-gray-50"
+                      >
+                        {isSearching ? highlight(cat, trimmedQuery) : cat}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+
+                {isSearching && !hasResults ? (
+                  <div className="px-5 py-6 text-center text-sm text-gray-500">
+                    Không tìm thấy kết quả cho &quot;{trimmedQuery}&quot;
+                  </div>
+                ) : null}
               </div>
             </motion.div>
           )}

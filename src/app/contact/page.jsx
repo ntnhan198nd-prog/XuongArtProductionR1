@@ -41,7 +41,7 @@ const ContactPage = async () => {
         </StatList>
       </Container>
       <Cultures content={site.cultures} />
-      <ContactSection content={site.cta} />
+      <ContactSection content={site.cta} social={site.social} />
     </>
   );
 };

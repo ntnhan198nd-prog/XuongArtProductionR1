@@ -20,12 +20,44 @@ const NewsletterForm = ({ heading, email, phone, social }) => {
   );
 };
 
-const Footer = ({ content, social }) => {
+const Footer = ({ content, social, minimal = false }) => {
   const data = content || DEFAULT_SITE_CONTENT.footer;
   const heading = data?.heading || DEFAULT_SITE_CONTENT.footer.heading;
   const email = data?.email || DEFAULT_SITE_CONTENT.footer.email;
   const phone = data?.phone || DEFAULT_SITE_CONTENT.footer.phone;
   const copyright = data?.copyright || DEFAULT_SITE_CONTENT.footer.copyright;
+
+  // The minimal footer (homepage) shows only the bottom strip — logo +
+  // copyright with a thin top border — because the social + contact info
+  // already lives in the CTA banner above. The full footer (other pages)
+  // additionally renders FooterNavigation + the newsletter/contact column.
+
+  const bottomStrip = (
+    <div
+      className={`mb-12 sm:mb-20 flex flex-col sm:flex-row flex-wrap items-start sm:items-end justify-between gap-4 sm:gap-x-6 gap-y-4 border-t border-neutral-950/10 ${
+        minimal ? "mt-0 pt-6 sm:pt-8" : "mt-12 sm:mt-16 md:mt-24 pt-8 sm:pt-12"
+      }`}
+    >
+      <Link href={"/"} aria-label="Home">
+        <Logo className="h-6 sm:h-8 text-xl sm:text-2xl">XUONGART</Logo>
+      </Link>
+      <p className="text-xs sm:text-sm text-neutral-700">
+        © {copyright} {new Date().getFullYear()}
+      </p>
+    </div>
+  );
+
+  // FadeIn's whileInView shrinks the viewport by 200px at the bottom, which
+  // means a short strip near the page bottom never crosses the threshold and
+  // would stay at opacity:0 forever. The minimal footer is too thin for that
+  // reveal, so we render it without FadeIn.
+  if (minimal) {
+    return (
+      <Container as="footer" className="mt-16 sm:mt-24 md:mt-32 lg:mt-40 w-full">
+        {bottomStrip}
+      </Container>
+    );
+  }
 
   return (
     <Container as="footer" className="mt-16 sm:mt-24 md:mt-32 lg:mt-40 w-full">
@@ -36,16 +68,7 @@ const Footer = ({ content, social }) => {
             <NewsletterForm heading={heading} email={email} phone={phone} social={social} />
           </div>
         </div>
-        <div className="mb-12 sm:mb-20 mt-12 sm:mt-16 md:mt-24 flex flex-col sm:flex-row flex-wrap items-start sm:items-end justify-between gap-4 sm:gap-x-6 gap-y-4 border-t border-neutral-950/10 pt-8 sm:pt-12">
-          <Link href={"/"} aria-label="Home">
-            <Logo className="h-6 sm:h-8 text-xl sm:text-2xl">
-              XUONGART
-            </Logo>
-          </Link>
-          <p className="text-xs sm:text-sm text-neutral-700">
-            © {copyright} {new Date().getFullYear()}
-          </p>
-        </div>
+        {bottomStrip}
       </FadeIn>
     </Container>
   );

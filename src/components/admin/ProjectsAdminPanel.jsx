@@ -202,6 +202,8 @@ export default function ProjectsAdminPanel() {
 
   const isEditing = editingId !== null;
   const [listFilter, setListFilter] = useState("");
+  const [reordering, setReordering] = useState(false);
+  const [dragId, setDragId] = useState(null);
 
   const tabLabel = useMemo(() => TABS.find((item) => item.key === tab)?.label || tab, [tab]);
 
@@ -295,6 +297,61 @@ export default function ProjectsAdminPanel() {
     setMediaFiles([]);
     setThumbnailFile(null);
     setError("");
+  };
+
+  // Persist a new ordering of `items` to the server. Called by both the
+  // ↑/↓ buttons and drag-and-drop. Optimistic: updates local state first,
+  // then reloads on failure so the UI matches the source of truth.
+  const persistOrder = useCallback(
+    async (nextItems) => {
+      const reordered = nextItems.map((it, i) => ({ ...it, order: i + 1 }));
+      setItems(reordered);
+      setReordering(true);
+      setError("");
+      try {
+        const response = await fetch(`/api/admin/${tab}/reorder`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            orderedIds: reordered.map((it) => it.id),
+          }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload?.error || "Reorder failed.");
+        }
+      } catch (reorderError) {
+        setError(reorderError.message);
+        await loadItems(tab);
+      } finally {
+        setReordering(false);
+      }
+    },
+    [tab, loadItems]
+  );
+
+  const handleMove = (item, direction) => {
+    if (listFilter || reordering) return;
+    const idx = items.findIndex((it) => Number(it.id) === Number(item.id));
+    if (idx < 0) return;
+    const target = idx + direction;
+    if (target < 0 || target >= items.length) return;
+    const next = [...items];
+    [next[idx], next[target]] = [next[target], next[idx]];
+    persistOrder(next);
+  };
+
+  const handleDropOnto = (targetItem) => {
+    if (listFilter || reordering) return;
+    if (dragId === null) return;
+    const fromIdx = items.findIndex((it) => Number(it.id) === Number(dragId));
+    const toIdx = items.findIndex((it) => Number(it.id) === Number(targetItem.id));
+    setDragId(null);
+    if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
+    const next = [...items];
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, moved);
+    persistOrder(next);
   };
 
   const handleDelete = async (id) => {
@@ -713,6 +770,9 @@ export default function ProjectsAdminPanel() {
                 {listFilter
                   ? `${filteredItems.length} / ${items.length}`
                   : `Total: ${items.length}`}
+                {reordering ? (
+                  <span className="ml-2 text-amber-700">· đang lưu thứ tự...</span>
+                ) : null}
               </p>
             </div>
             <input
@@ -723,6 +783,12 @@ export default function ProjectsAdminPanel() {
               className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-black focus:outline-none sm:w-72"
             />
           </div>
+
+          <p className="mt-2 text-xs text-gray-500">
+            {listFilter
+              ? "Xoá bộ lọc để bật sắp xếp thứ tự (kéo-thả hoặc nút ↑/↓)."
+              : "Kéo-thả thẻ hoặc dùng ↑/↓ để đổi thứ tự hiển thị trên trang công khai."}
+          </p>
 
           {loadingItems ? (
             <p className="mt-4 text-sm text-gray-600">Loading...</p>
@@ -739,6 +805,11 @@ export default function ProjectsAdminPanel() {
                   const thumbUrl = item.thumbnail?.url || item.media?.url;
                   const isCurrent = Number(editingId) === Number(item.id);
                   const cats = Array.isArray(item.categories) ? item.categories : [];
+                  const sortIdx = items.findIndex(
+                    (it) => Number(it.id) === Number(item.id)
+                  );
+                  const canReorder = !listFilter && !reordering;
+                  const isDragging = dragId !== null && Number(dragId) === Number(item.id);
                   return (
                     <motion.div
                       key={item.id}
@@ -747,13 +818,69 @@ export default function ProjectsAdminPanel() {
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -8 }}
                       transition={{ duration: 0.18 }}
+                      draggable={canReorder}
+                      onDragStart={(event) => {
+                        if (!canReorder) return;
+                        setDragId(item.id);
+                        event.dataTransfer.effectAllowed = "move";
+                        try {
+                          event.dataTransfer.setData("text/plain", String(item.id));
+                        } catch {}
+                      }}
+                      onDragOver={(event) => {
+                        if (!canReorder || dragId === null) return;
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "move";
+                      }}
+                      onDrop={(event) => {
+                        if (!canReorder) return;
+                        event.preventDefault();
+                        handleDropOnto(item);
+                      }}
+                      onDragEnd={() => setDragId(null)}
                       className={`rounded-xl border p-3 text-sm text-gray-800 transition-colors ${
                         isCurrent
                           ? "border-black bg-gray-50"
                           : "border-gray-200"
+                      } ${canReorder ? "cursor-grab active:cursor-grabbing" : ""} ${
+                        isDragging ? "opacity-50" : ""
                       }`}
                     >
                       <div className="flex gap-3">
+                        <div className="flex shrink-0 flex-col items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleMove(item, -1)}
+                            disabled={!canReorder || sortIdx <= 0}
+                            title={
+                              listFilter
+                                ? "Xoá bộ lọc để sắp xếp"
+                                : "Lên trên"
+                            }
+                            className="rounded border border-gray-300 px-1.5 py-0.5 text-xs text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-30"
+                            aria-label="Move up"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleMove(item, 1)}
+                            disabled={
+                              !canReorder ||
+                              sortIdx === -1 ||
+                              sortIdx >= items.length - 1
+                            }
+                            title={
+                              listFilter
+                                ? "Xoá bộ lọc để sắp xếp"
+                                : "Xuống dưới"
+                            }
+                            className="rounded border border-gray-300 px-1.5 py-0.5 text-xs text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-30"
+                            aria-label="Move down"
+                          >
+                            ↓
+                          </button>
+                        </div>
                         {thumbUrl ? (
                           <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-gray-100">
                             {/* eslint-disable-next-line @next/next/no-img-element */}

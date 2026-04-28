@@ -61,7 +61,7 @@ export default async function Home() {
       </div>
       <Stats content={site.stats} />
       <Services content={site.services} />
-      <ContactSection content={site.cta} />
+      <ContactSection content={site.cta} social={site.social} />
     </main>
   );
 }

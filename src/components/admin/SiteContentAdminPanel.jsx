@@ -22,6 +22,7 @@ const BLOCKS = [
   { key: "footer", label: "Footer" },
   { key: "social", label: "Mạng xã hội" },
   { key: "ui", label: "UI · Loading text" },
+  { key: "portfolio", label: "Bộ lọc tìm kiếm (-động + -tĩnh)" },
 ];
 
 const inputCls =
@@ -725,6 +726,72 @@ function UiBlock({ value, onChange }) {
   );
 }
 
+function PortfolioBlock({ value, onChange }) {
+  const set = (k, v) => onChange({ ...value, [k]: v });
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-xs text-gray-600">
+        <p className="font-semibold uppercase tracking-wider text-gray-700">
+          Bộ lọc trong nút search ở 2 trang gallery
+        </p>
+        <p className="mt-1.5">
+          Mỗi trang dùng danh sách riêng. Chỉ category liệt kê ở đây mới hiện
+          trong dropdown của ô search — các tag khác trên thẻ vẫn click được
+          như thường.
+        </p>
+        <p className="mt-1.5">
+          Để trống một danh sách → trang đó fallback sang gom tự động từ tất cả
+          dự án (hành vi cũ).
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="rounded-xl border border-gray-200 bg-white p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <span className={labelCls}>Trang /portfolio (-động · video)</span>
+          </div>
+          <ItemList
+            title="Danh sách category"
+            items={value.searchCategories}
+            onChange={(items) => set("searchCategories", items)}
+            emptyItem=""
+            addLabel="Thêm category"
+            renderItem={(item, update) => (
+              <input
+                value={item}
+                onChange={(event) => update(event.target.value)}
+                className={inputCls}
+                placeholder="vd: TVC, Commercial, MV..."
+              />
+            )}
+          />
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-white p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <span className={labelCls}>Trang /images (-tĩnh · hình ảnh)</span>
+          </div>
+          <ItemList
+            title="Danh sách category"
+            items={value.imageSearchCategories}
+            onChange={(items) => set("imageSearchCategories", items)}
+            emptyItem=""
+            addLabel="Thêm category"
+            renderItem={(item, update) => (
+              <input
+                value={item}
+                onChange={(event) => update(event.target.value)}
+                className={inputCls}
+                placeholder="vd: Fashion, Product, Event..."
+              />
+            )}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const BLOCK_RENDERERS = {
   hero: HeroBlock,
   intro: IntroBlock,
@@ -738,6 +805,7 @@ const BLOCK_RENDERERS = {
   footer: FooterBlock,
   social: SocialBlock,
   ui: UiBlock,
+  portfolio: PortfolioBlock,
 };
 
 export default function SiteContentAdminPanel({ onDirtyChange }) {

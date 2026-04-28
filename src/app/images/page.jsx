@@ -66,7 +66,7 @@ const ImageProjectCard = ({ item, onOpen, index = 0 }) => {
 };
 
 export default function ImageProjectsPage() {
-  const { ui } = useSiteContent();
+  const { ui, portfolio: portfolioContent } = useSiteContent();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("Tất cả");
   const [page, setPage] = useState(1);
@@ -211,23 +211,36 @@ export default function ImageProjectsPage() {
     return filtered.slice(start, start + PAGE_SIZE);
   }, [filtered, page]);
 
-  // Get unique categories from projects
+  // Categories shown in the search dropdown:
+  // - Prefer the admin-curated whitelist from site content (separate list per
+  //   gallery — /images uses imageSearchCategories).
+  // - If the whitelist is empty, fall back to auto-collecting every category
+  //   that appears on at least one project.
   const categories = useMemo(() => {
+    const curated = (portfolioContent?.imageSearchCategories || [])
+      .map((c) => String(c).trim())
+      .filter(Boolean);
+    if (curated.length > 0) {
+      return ["Tất cả", ...curated];
+    }
     const allCategories = new Set();
-    
-    projects.forEach(p => {
-      // Add single category
+    projects.forEach((p) => {
       if (p.category) allCategories.add(p.category);
-      
-      // Add multiple categories
       if (p.categories && Array.isArray(p.categories)) {
-        p.categories.forEach(cat => allCategories.add(cat));
+        p.categories.forEach((cat) => allCategories.add(cat));
       }
     });
-    
-    const cats = ["Tất cả", ...Array.from(allCategories).sort()];
-    return cats;
-  }, [projects]);
+    return ["Tất cả", ...Array.from(allCategories).sort()];
+  }, [projects, portfolioContent]);
+
+  // When the user starts typing a free-text query, clear any active category
+  // filter so the search runs across the full project list (mirrors /portfolio).
+  const handleQueryChange = (next) => {
+    setQuery(next);
+    if (next.trim().length > 0 && category !== "Tất cả") {
+      setCategory("Tất cả");
+    }
+  };
 
   return (
     <main className="bg-white text-black">
@@ -240,9 +253,11 @@ export default function ImageProjectsPage() {
           <div className="flex w-full flex-col gap-3 md:w-auto md:flex-row">
             <SearchWithCategoryDropdown
               query={query}
-              onQueryChange={setQuery}
+              onQueryChange={handleQueryChange}
               categories={categories}
               onCategorySelect={setCategory}
+              projects={projects}
+              onProjectSelect={openProject}
             />
           </div>
         </div>

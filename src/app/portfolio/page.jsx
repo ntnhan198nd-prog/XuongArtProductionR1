@@ -10,6 +10,78 @@ import Image from "next/image";
 import SearchWithCategoryDropdown from "@/components/SearchWithCategoryDropdown";
 import { useSiteContent } from "@/components/SiteContentProvider";
 
+// Inline dropdown that turns the active category in the page heading into a
+// quick-switcher: click the yellow word to pick another category from the
+// site-content category list without opening the search.
+function CategoryQuickPicker({ active, categories, onSelect }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const handler = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <span ref={ref} className="relative inline-block align-baseline">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="font-semibold text-accent-400 underline-offset-4 transition hover:underline focus:outline-none focus:underline"
+      >
+        {active}
+      </button>
+      <AnimatePresence>
+        {open ? (
+          <motion.ul
+            role="listbox"
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.16, ease: [0.32, 0.72, 0, 1] }}
+            className="absolute left-0 top-full z-30 mt-2 max-h-72 min-w-[12rem] overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg"
+          >
+            {categories.map((cat) => {
+              const isActive = cat === active;
+              return (
+                <li key={cat}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSelect(cat);
+                      setOpen(false);
+                    }}
+                    className={`block w-full border-b border-gray-100 px-4 py-2 text-left text-sm transition-colors last:border-b-0 ${
+                      isActive
+                        ? "bg-gray-100 font-semibold text-black"
+                        : "text-gray-700 hover:bg-gray-50 hover:text-black"
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                </li>
+              );
+            })}
+          </motion.ul>
+        ) : null}
+      </AnimatePresence>
+    </span>
+  );
+}
+
 // Pattern bất đối xứng 3 cột mô phỏng layout tham chiếu (lặp tuần tự)
 // Mỗi slot xác định cột, số hàng (row span) và orientation mong muốn để gán item phù hợp
 // Giá trị row tương thích với gridAutoRows=8px (row span 32 ~ 256px + gaps)
@@ -290,7 +362,7 @@ const MasonryCard = ({ item, onOpen, index = 0 }) => {
 };
 
 export default function PortfolioPage() {
-  const { ui } = useSiteContent();
+  const { ui, portfolio: portfolioContent } = useSiteContent();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("Tất cả");
   const [page, setPage] = useState(1);
@@ -537,23 +609,38 @@ export default function PortfolioPage() {
     return result.concat(remaining);
   }, [pageItems]);
 
-  // Get unique categories from projects
+  // Categories shown in the search dropdown:
+  // - Prefer the admin-curated whitelist from site content (lets editors hide
+  //   noisy/internal tags from the picker even when projects still carry them).
+  // - If the whitelist is empty, fall back to auto-collecting every category
+  //   that appears on at least one project.
   const categories = useMemo(() => {
+    const curated = (portfolioContent?.searchCategories || [])
+      .map((c) => String(c).trim())
+      .filter(Boolean);
+    if (curated.length > 0) {
+      return ["Tất cả", ...curated];
+    }
     const allCategories = new Set();
-    
-    projects.forEach(p => {
-      // Add single category
+    projects.forEach((p) => {
       if (p.category) allCategories.add(p.category);
-      
-      // Add multiple categories
       if (p.categories && Array.isArray(p.categories)) {
-        p.categories.forEach(cat => allCategories.add(cat));
+        p.categories.forEach((cat) => allCategories.add(cat));
       }
     });
-    
-    const cats = ["Tất cả", ...Array.from(allCategories).sort()];
-    return cats;
-  }, [projects]);
+    return ["Tất cả", ...Array.from(allCategories).sort()];
+  }, [projects, portfolioContent]);
+
+  // When the user starts typing a free-text query, clear any active category
+  // filter so the search runs across the full project list. Prevents the
+  // confusing "Recap + CellphoneS = no results" combination where the two
+  // restrictive filters AND together.
+  const handleQueryChange = (next) => {
+    setQuery(next);
+    if (next.trim().length > 0 && category !== "Tất cả") {
+      setCategory("Tất cả");
+    }
+  };
 
   return (
     <main className="bg-white text-black">
@@ -561,14 +648,30 @@ export default function PortfolioPage() {
         <div className="flex flex-col items-start gap-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="font-display text-4xl font-semibold sm:text-6xl">Portfolio</h1>
-            <p className="mt-2 text-gray-600">Tất cả dự án của XUONGART</p>
+            <p className="mt-2 text-gray-600">
+              {category && category !== "Tất cả" ? (
+                <>
+                  Tất cả dự án{" "}
+                  <CategoryQuickPicker
+                    active={category}
+                    categories={categories}
+                    onSelect={setCategory}
+                  />{" "}
+                  của XUONGART
+                </>
+              ) : (
+                <>Tất cả dự án của XUONGART</>
+              )}
+            </p>
           </div>
           <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
             <SearchWithCategoryDropdown
               query={query}
-              onQueryChange={setQuery}
+              onQueryChange={handleQueryChange}
               categories={categories}
               onCategorySelect={setCategory}
+              projects={projects}
+              onProjectSelect={openProject}
             />
           </div>
         </div>

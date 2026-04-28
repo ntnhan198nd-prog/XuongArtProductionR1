@@ -147,6 +147,12 @@ export const DEFAULT_SITE_CONTENT = {
   ui: {
     loadingProjectsText: "Đang tải dự án...",
   },
+  portfolio: {
+    // Whitelist of category labels surfaced in the search dropdown of each
+    // gallery. Empty array = fall back to auto-collecting from project data.
+    searchCategories: ["Commercial", "TVC", "Recap", "MV", "Social Media"],
+    imageSearchCategories: ["Fashion", "Product", "Event", "Portrait"],
+  },
 };
 
 const isString = (v) => typeof v === "string";
@@ -320,6 +326,26 @@ export function normalizeSiteContent(input) {
     ui: {
       ...d.ui,
       ...(isObject(src.ui) ? src.ui : {}),
+    },
+    portfolio: {
+      searchCategories: pickArray(
+        src.portfolio?.searchCategories,
+        d.portfolio.searchCategories,
+        (item) => {
+          if (!isString(item)) return null;
+          const v = item.trim();
+          return v || null;
+        }
+      ),
+      imageSearchCategories: pickArray(
+        src.portfolio?.imageSearchCategories,
+        d.portfolio.imageSearchCategories,
+        (item) => {
+          if (!isString(item)) return null;
+          const v = item.trim();
+          return v || null;
+        }
+      ),
     },
   };
 }

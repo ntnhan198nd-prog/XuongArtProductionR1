@@ -864,7 +864,7 @@ const ProjectsGallery = () => {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
-            className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70"
+            className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 px-4 pt-24 pb-6 sm:pt-28 sm:pb-8"
             onClick={closeProject}
           >
             <motion.div
@@ -872,7 +872,7 @@ const ProjectsGallery = () => {
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.98, opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="relative w-[88vw] h-[85vh] lg:h-[82vh] bg-neutral-950 rounded-2xl border border-white/10 overflow-hidden flex flex-col lg:flex-row"
+              className="relative w-[95vw] max-w-8xl h-full max-h-[calc(100vh-8rem)] sm:max-h-[calc(100vh-9rem)] bg-neutral-950 rounded-2xl border border-white/10 overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Mobile top bar (black) with close button */}
@@ -885,95 +885,97 @@ const ProjectsGallery = () => {
                   ✕
                 </button>
               </div>
-              {/* Close */}
+              {/* Desktop floating close button */}
               <button
                 onClick={(e)=>{ e.stopPropagation(); closeProject(); }}
-                className="hidden sm:flex absolute top-3 sm:top-4 right-3 sm:right-4 z-10 h-10 w-10 items-center justify-center rounded-full bg-white/20 border border-white/30 text-white hover:bg-white/30 focus:outline-none focus:ring-2 focus:ring-white/50"
+                className="hidden sm:flex absolute top-3 right-3 z-10 h-10 w-10 items-center justify-center rounded-full bg-white/20 border border-white/30 text-white hover:bg-white/30 focus:outline-none focus:ring-2 focus:ring-white/50"
                 aria-label="Đóng"
               >
                 ✕
               </button>
 
-              {/* Media section */}
-              <div className="relative w-full lg:w-2/3 h-1/2 lg:h-full bg-black">
-                {isVideoUrl(selectedProject.media) ? (
-                  <video
-                    src={selectedProject.media}
-                    className="h-full w-full object-contain"
-                    controls
-                    controlsList="nodownload nofullscreen noremoteplayback"
-                    disablePictureInPicture
-                    onContextMenu={(e) => e.preventDefault()}
-                    autoPlay
-                    playsInline
-                    poster={selectedProject.poster || ''}
-                    onClick={(e) => {
-                      // Toggle play/pause on desktop
-                      try {
-                        if (typeof window !== 'undefined' && window.innerWidth >= 1024) {
-                          const v = e.currentTarget;
-                          if (v.paused) {
-                            v.play();
-                          } else {
-                            v.pause();
+              <div className="flex flex-col lg:flex-row h-full w-full">
+                {/* Media section */}
+                <div className="relative w-full lg:w-2/3 h-1/2 lg:h-full bg-black">
+                  {isVideoUrl(selectedProject.media) ? (
+                    <video
+                      src={selectedProject.media}
+                      className="h-full w-full object-contain"
+                      controls
+                      controlsList="nodownload nofullscreen noremoteplayback"
+                      disablePictureInPicture
+                      onContextMenu={(e) => e.preventDefault()}
+                      autoPlay
+                      playsInline
+                      poster={selectedProject.poster || ''}
+                      onClick={(e) => {
+                        // Toggle play/pause on desktop
+                        try {
+                          if (typeof window !== 'undefined' && window.innerWidth >= 1024) {
+                            const v = e.currentTarget;
+                            if (v.paused) {
+                              v.play();
+                            } else {
+                              v.pause();
+                            }
                           }
-                        }
-                      } catch {}
-                    }}
-                  />
-                ) : (
-                  <Image
-                    src={selectedProject.media}
-                    alt={selectedProject.title}
-                    fill
-                    className="object-contain"
-                  />
-                )}
-              </div>
-
-              {/* Info section - bottom on mobile, right on desktop */}
-              <div className="w-full lg:w-1/3 h-1/2 lg:h-full overflow-y-auto p-4 lg:p-6 bg-neutral-900/40 border-t lg:border-t-0 lg:border-l border-white/10">
-                <div className="font-display text-xl lg:text-2xl font-bold text-white leading-tight pr-8 lg:pr-16">
-                  {selectedProject.title}
-                </div>
-
-                {/* 2. Thời gian hoàn thành và Thể loại cùng hàng */}
-                <div className="mt-3 lg:mt-4 flex items-center gap-2 lg:gap-4 flex-wrap">
-                  {selectedProject.completionDate && (
-                    <TimeAgo completionDate={selectedProject.completionDate} className="text-neutral-300 text-xs lg:text-sm" />
-                  )}
-                  {/* Show multi categories if available, otherwise fallback to single category */}
-                  {Array.isArray(selectedProject.categories) && selectedProject.categories.length > 0 ? (
-                    <div className="flex flex-wrap gap-2">
-                      {selectedProject.categories.map((cat, index) => (
-                        <div key={index} className="inline-block px-2 py-0.5 lg:px-3 lg:py-1 bg-white/10 rounded-full text-xs font-medium text-white border border-white/20">
-                          {cat}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    selectedProject.category && (
-                      <div className="inline-block px-2 py-0.5 lg:px-3 lg:py-1 bg-white/10 rounded-full text-xs font-medium text-white border border-white/20">
-                        {selectedProject.category}
-                      </div>
-                    )
-                  )}
-                </div>
-
-                {/* 4. Author */}
-                <div className="mt-4 lg:mt-6">
-                  <AuthorAvatar size="md" textColor="text-white" />
-                </div>
-
-                {/* 5. Mô tả chi tiết */}
-                {selectedProject.description && (
-                  <div className="mt-4 lg:mt-6 space-y-2 lg:space-y-3 text-xs lg:text-sm text-neutral-200">
-                    <RichTextRenderer 
-                      content={selectedProject.description} 
-                      className="text-neutral-200 leading-relaxed" 
+                        } catch {}
+                      }}
                     />
+                  ) : (
+                    <Image
+                      src={selectedProject.media}
+                      alt={selectedProject.title}
+                      fill
+                      className="object-contain"
+                    />
+                  )}
+                </div>
+
+                {/* Info section - bottom on mobile, right on desktop */}
+                <div className="w-full lg:w-1/3 h-1/2 lg:h-full overflow-y-auto p-4 lg:p-6 bg-neutral-900/40 border-t lg:border-t-0 lg:border-l border-white/10">
+                  <div className="font-display text-xl lg:text-2xl font-bold text-white leading-tight pr-8 lg:pr-16">
+                    {selectedProject.title}
                   </div>
-                )}
+
+                  {/* 2. Thời gian hoàn thành và Thể loại cùng hàng */}
+                  <div className="mt-3 lg:mt-4 flex items-center gap-2 lg:gap-4 flex-wrap">
+                    {selectedProject.completionDate && (
+                      <TimeAgo completionDate={selectedProject.completionDate} className="text-neutral-300 text-xs lg:text-sm" />
+                    )}
+                    {/* Show multi categories if available, otherwise fallback to single category */}
+                    {Array.isArray(selectedProject.categories) && selectedProject.categories.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {selectedProject.categories.map((cat, index) => (
+                          <div key={index} className="inline-block px-2 py-0.5 lg:px-3 lg:py-1 bg-white/10 rounded-full text-xs font-medium text-white border border-white/20">
+                            {cat}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      selectedProject.category && (
+                        <div className="inline-block px-2 py-0.5 lg:px-3 lg:py-1 bg-white/10 rounded-full text-xs font-medium text-white border border-white/20">
+                          {selectedProject.category}
+                        </div>
+                      )
+                    )}
+                  </div>
+
+                  {/* 4. Author */}
+                  <div className="mt-4 lg:mt-6">
+                    <AuthorAvatar size="md" textColor="text-white" />
+                  </div>
+
+                  {/* 5. Mô tả chi tiết */}
+                  {selectedProject.description && (
+                    <div className="mt-4 lg:mt-6 space-y-2 lg:space-y-3 text-xs lg:text-sm text-neutral-200">
+                      <RichTextRenderer
+                        content={selectedProject.description}
+                        className="text-neutral-200 leading-relaxed"
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
             </motion.div>
           </motion.div>

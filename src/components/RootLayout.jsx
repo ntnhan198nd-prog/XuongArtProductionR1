@@ -204,7 +204,7 @@ const MobileMenu = ({ open, onClose }) => {
   );
 };
 
-const RootLayoutInner = ({ children, isHome, footerContent, socialContent }) => {
+const RootLayoutInner = ({ children, isHome, minimalFooter, footerContent, socialContent }) => {
   const shouldReduceMotion = useReducedMotion();
   const [overHero, setOverHero] = useState(isHome);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -297,7 +297,15 @@ const RootLayoutInner = ({ children, isHome, footerContent, socialContent }) => 
           transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}
         >
           <main className="w-full flex-auto">{children}</main>
-          <Footer content={footerContent} social={socialContent} />
+          {/* Pages where the social + contact info already lives elsewhere
+              (homepage CTA banner, portfolio gallery focus) get the minimal
+              footer — logo + copyright only. /contact and friends still get
+              the full footer with FooterNavigation + Newsletter. */}
+          <Footer
+            content={footerContent}
+            social={socialContent}
+            minimal={minimalFooter}
+          />
         </motion.div>
       </div>
     </MotionConfig>
@@ -307,10 +315,14 @@ const RootLayoutInner = ({ children, isHome, footerContent, socialContent }) => 
 const RootLayout = ({ children, footerContent, socialContent }) => {
   const pathName = usePathname();
   const isHome = pathName === "/";
+  // Routes that show the minimal footer (logo + copyright only).
+  const minimalFooter =
+    isHome || pathName === "/portfolio" || pathName.startsWith("/portfolio/");
   return (
     <RootLayoutInner
       key={pathName}
       isHome={isHome}
+      minimalFooter={minimalFooter}
       footerContent={footerContent}
       socialContent={socialContent}
     >
