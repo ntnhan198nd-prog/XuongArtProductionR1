@@ -204,7 +204,15 @@ const MobileMenu = ({ open, onClose }) => {
   );
 };
 
-const RootLayoutInner = ({ children, isHome, minimalFooter, footerContent, socialContent }) => {
+const RootLayoutInner = ({
+  children,
+  isHome,
+  minimalFooter,
+  footerContent,
+  socialContent,
+  ctaContent,
+  showContactInFooter,
+}) => {
   const shouldReduceMotion = useReducedMotion();
   const [overHero, setOverHero] = useState(isHome);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -340,14 +348,16 @@ const RootLayoutInner = ({ children, isHome, minimalFooter, footerContent, socia
         <Footer
           content={footerContent}
           social={socialContent}
+          cta={ctaContent}
           minimal={minimalFooter}
+          showContact={showContactInFooter}
         />
       </div>
     </MotionConfig>
   );
 };
 
-const RootLayout = ({ children, footerContent, socialContent }) => {
+const RootLayout = ({ children, footerContent, socialContent, ctaContent }) => {
   const pathName = usePathname();
   const isHome = pathName === "/";
   // Routes that show the minimal footer (logo + copyright only). Gallery
@@ -361,6 +371,12 @@ const RootLayout = ({ children, footerContent, socialContent }) => {
     pathName === "/images" ||
     pathName.startsWith("/images/") ||
     pathName === "/whoweare";
+  // The dark contact band appears below the bottom strip on the homepage,
+  // taking the place of the CTA banner that used to live in the page
+  // itself. /whoweare already renders the full CTA section above the
+  // footer, so showing the contact info again in the footer would just
+  // duplicate it.
+  const showContactInFooter = isHome;
   return (
     <RootLayoutInner
       key={pathName}
@@ -368,6 +384,8 @@ const RootLayout = ({ children, footerContent, socialContent }) => {
       minimalFooter={minimalFooter}
       footerContent={footerContent}
       socialContent={socialContent}
+      ctaContent={ctaContent}
+      showContactInFooter={showContactInFooter}
     >
       {children}
     </RootLayoutInner>

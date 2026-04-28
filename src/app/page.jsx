@@ -1,5 +1,4 @@
 import Clients from "@/components/Clients";
-import ContactSection from "@/components/ContactSection";
 import Container from "@/components/Container";
 import FadeIn from "@/components/FadeIn";
 import HeroShowreel from "@/components/HeroShowreel";
@@ -61,7 +60,9 @@ export default async function Home() {
       </div>
       <Stats content={site.stats} />
       <Services content={site.services} />
-      <ContactSection content={site.cta} social={site.social} />
+      {/* The CTA banner that used to live here moved to /whoweare; the
+          contact info that sat under it now lives below the page footer
+          (rendered by RootLayout, controlled by showContactInFooter). */}
     </main>
   );
 }

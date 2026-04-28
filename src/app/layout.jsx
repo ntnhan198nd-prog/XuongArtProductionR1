@@ -28,7 +28,11 @@ export default async function Layout({ children }) {
       className="h-full bg-neutral-950 text-base antialiased text-neutral-100"
     >
       <body className="flex min-h-full flex-col">
-        <RootLayout footerContent={site.footer} socialContent={site.social}>
+        <RootLayout
+          footerContent={site.footer}
+          socialContent={site.social}
+          ctaContent={site.cta}
+        >
           <SiteContentProvider value={site}>{children}</SiteContentProvider>
         </RootLayout>
       </body>
