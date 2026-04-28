@@ -45,14 +45,9 @@ const Footer = ({ content, social, minimal = false }) => {
       {/* The PNG already includes the "xưởng" wordmark inside the mark, so
           a separate text "XUONGART" sat redundantly next to it. Now the
           image carries the whole brand name — Link picks up its accessible
-          name from alt instead of an explicit aria-label.
-
-          Two animations, on different elements so their transforms don't
-          fight each other:
-          - Link: ease-out-back active:scale-[0.92] click press, matching
-            the header wordmark.
-          - Image: .logo-bounce, a slow 2.4s ease-in-out vertical
-            oscillation that keeps the mark gently alive at idle. */}
+          name from alt instead of an explicit aria-label. Click press is
+          the only motion: ease-out-back active:scale-[0.92], matching
+          the header wordmark. */}
       <Link
         href={"/"}
         className="inline-flex transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.92]"
@@ -62,7 +57,7 @@ const Footer = ({ content, social, minimal = false }) => {
           alt="XUONGART"
           width={256}
           height={256}
-          className="h-20 w-20 sm:h-28 sm:w-28 object-contain logo-bounce"
+          className="h-20 w-20 sm:h-28 sm:w-28 object-contain"
           priority={false}
         />
       </Link>

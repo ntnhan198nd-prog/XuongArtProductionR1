@@ -178,28 +178,4 @@
   }
 }
 
-/* Gentle continuous "breathing" bounce on the footer logo. Subtle 6px
-   vertical oscillation on a slow ease-in-out cycle so the mark feels
-   alive without being distracting. Applied to the Image directly so it
-   doesn't fight the Link wrapper's active:scale-[0.92] click animation
-   — different elements, both transforms compose. */
-@keyframes logo-bounce {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-6px);
-  }
-}
-
-.logo-bounce {
-  animation: logo-bounce 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .logo-bounce {
-    animation: none;
-  }
-}
 
