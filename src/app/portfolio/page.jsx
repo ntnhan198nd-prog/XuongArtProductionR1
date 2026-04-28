@@ -212,7 +212,9 @@ const MasonryCard = ({ item, onOpen, index = 0 }) => {
     <motion.div
       ref={containerRef}
       className={`relative group overflow-hidden rounded-2xl bg-neutral-900 text-white shadow-lg cursor-pointer ${gridSpanClasses}`}
-      whileHover={{ scale: 1.02 }}
+      // Hover transition is shorter and uses Apple's signature ease curve so the
+      // scale-up settles fast without inheriting the 0.5s entry transition.
+      whileHover={{ scale: 1.02, transition: { duration: 0.22, ease: [0.32, 0.72, 0, 1] } }}
       onClick={() => onOpen && onOpen(item)}
       initial={{ opacity: 0, scale: 0.98 }}
       whileInView={{ opacity: 1, scale: 1 }}
@@ -276,8 +278,10 @@ const MasonryCard = ({ item, onOpen, index = 0 }) => {
         )}
       </div>
       
-      {/* Overlay with project info */}
-      <div className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition duration-300">
+      {/* Overlay with project info — opacity-only transition (avoids
+          animating layout/transform together) and 200ms so info reveals just
+          ahead of the card scale settling. */}
+      <div className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 ease-[cubic-bezier(0.32,0.72,0,1)]">
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
         <div className="absolute bottom-0 left-0 right-0 p-4">
           {/* Display multiple categories */}

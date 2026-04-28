@@ -20,8 +20,11 @@ const ImageProjectCard = ({ item, onOpen, index = 0 }) => {
   return (
     <motion.div
       layout
-      className="relative group overflow-hidden rounded-2xl bg-white border border-gray-200 shadow-sm hover:shadow-lg cursor-pointer transition-all duration-300"
-      whileHover={{ y: -4 }}
+      // transition-shadow only (transition-all also animates transform / layout
+      // and made the lift feel rubbery). Apple's ease curve on the shadow
+      // mirrors the lift below.
+      className="relative group overflow-hidden rounded-2xl bg-white border border-gray-200 shadow-sm hover:shadow-lg cursor-pointer transition-shadow duration-200 ease-[cubic-bezier(0.32,0.72,0,1)]"
+      whileHover={{ y: -4, transition: { duration: 0.22, ease: [0.32, 0.72, 0, 1] } }}
       onClick={() => onOpen && onOpen(item)}
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
@@ -33,7 +36,9 @@ const ImageProjectCard = ({ item, onOpen, index = 0 }) => {
             src={item.media}
             alt={item.title || "Project"}
             fill
-            className="object-cover group-hover:scale-105 transition-transform duration-500"
+            // Slow, slight zoom inside the still card — gives an Apple-like
+            // "looking deeper" feel without making the hover feel busy.
+            className="object-cover group-hover:scale-[1.04] transition-transform duration-[600ms] ease-[cubic-bezier(0.32,0.72,0,1)]"
             sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
           />
         ) : (
@@ -41,9 +46,9 @@ const ImageProjectCard = ({ item, onOpen, index = 0 }) => {
             <span className="text-gray-400 text-sm">Không có media</span>
           </div>
         )}
-        
-        {/* Hover overlay with project info */}
-        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end">
+
+        {/* Hover overlay with project info — fades in just ahead of the lift. */}
+        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] flex items-end">
           <div className="p-4 sm:p-6 text-white w-full">
             {/* Display categories */}
             {(item.categories && item.categories.length > 0) && (
