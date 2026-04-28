@@ -315,9 +315,15 @@ const RootLayoutInner = ({ children, isHome, minimalFooter, footerContent, socia
 const RootLayout = ({ children, footerContent, socialContent }) => {
   const pathName = usePathname();
   const isHome = pathName === "/";
-  // Routes that show the minimal footer (logo + copyright only).
+  // Routes that show the minimal footer (logo + copyright only). Both
+  // gallery routes get this so the masonry/grid is the visual ending —
+  // the contact + nav columns are redundant on those pages.
   const minimalFooter =
-    isHome || pathName === "/portfolio" || pathName.startsWith("/portfolio/");
+    isHome ||
+    pathName === "/portfolio" ||
+    pathName.startsWith("/portfolio/") ||
+    pathName === "/images" ||
+    pathName.startsWith("/images/");
   return (
     <RootLayoutInner
       key={pathName}
