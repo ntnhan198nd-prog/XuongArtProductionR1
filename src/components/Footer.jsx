@@ -3,7 +3,6 @@ import Image from "next/image";
 import Container from "./Container";
 import FadeIn from "./FadeIn";
 import FooterNavigation from "./FooterNavigation";
-import Logo from "./Logo";
 import Link from "next/link";
 import SocialMedia from "./SocialMedia";
 import { DEFAULT_SITE_CONTENT } from "@/lib/siteContent";
@@ -39,27 +38,19 @@ const Footer = ({ content, social, minimal = false }) => {
         minimal ? "mt-0 pt-6 sm:pt-8" : "mt-12 sm:mt-16 md:mt-24 pt-8 sm:pt-12"
       }`}
     >
-      <Link
-        href={"/"}
-        aria-label="Home"
-        className="flex items-center gap-2 sm:gap-3"
-      >
-        {/* alt="" because the text wordmark right next to it already
-            announces the brand to screen readers — the image is purely
-            decorative reinforcement, not redundant naming. */}
+      {/* The PNG already includes the "xưởng" wordmark inside the mark, so
+          a separate text "XUONGART" sat redundantly next to it. Now the
+          image carries the whole brand name — Link picks up its accessible
+          name from alt instead of an explicit aria-label. */}
+      <Link href={"/"} className="inline-flex">
         <Image
           src="/logos/XUONGARTLOGODEN.png"
-          alt=""
-          width={64}
-          height={64}
-          className="h-7 w-7 sm:h-9 sm:w-9 object-contain"
+          alt="XUONGART"
+          width={256}
+          height={256}
+          className="h-20 w-20 sm:h-28 sm:w-28 object-contain"
           priority={false}
         />
-        {/* leading-none collapses the default 1.4× line-box padding around
-            the text so its visual centre lines up with the square mark
-            once the row is items-center'd. Without it the glyphs sit lower
-            than the image's centre. */}
-        <Logo className="text-xl sm:text-2xl leading-none">XUONGART</Logo>
       </Link>
       <p className="text-xs sm:text-sm text-neutral-700">
         © {copyright} {new Date().getFullYear()}
