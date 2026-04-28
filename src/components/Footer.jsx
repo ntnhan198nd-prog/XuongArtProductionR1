@@ -1,4 +1,5 @@
 import React from "react";
+import Image from "next/image";
 import Container from "./Container";
 import FadeIn from "./FadeIn";
 import FooterNavigation from "./FooterNavigation";
@@ -38,7 +39,22 @@ const Footer = ({ content, social, minimal = false }) => {
         minimal ? "mt-0 pt-6 sm:pt-8" : "mt-12 sm:mt-16 md:mt-24 pt-8 sm:pt-12"
       }`}
     >
-      <Link href={"/"} aria-label="Home">
+      <Link
+        href={"/"}
+        aria-label="Home"
+        className="flex items-center gap-2 sm:gap-3"
+      >
+        {/* alt="" because the text wordmark right next to it already
+            announces the brand to screen readers — the image is purely
+            decorative reinforcement, not redundant naming. */}
+        <Image
+          src="/logos/XUONGARTLOGODEN.png"
+          alt=""
+          width={64}
+          height={64}
+          className="h-6 w-6 sm:h-8 sm:w-8 object-contain"
+          priority={false}
+        />
         <Logo className="h-6 sm:h-8 text-xl sm:text-2xl">XUONGART</Logo>
       </Link>
       <p className="text-xs sm:text-sm text-neutral-700">
