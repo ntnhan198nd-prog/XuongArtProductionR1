@@ -1,7 +1,14 @@
 import { NextResponse } from "next/server";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { isAdminAuthenticated } from "@/lib/adminAuth";
-import { getPublicFileUrl, getR2Client, getR2Config, validateR2Config } from "@/lib/r2";
+import {
+  getPublicFileUrl,
+  getR2Client,
+  getR2Config,
+  isAllowedContentType,
+  isAllowedFolder,
+  validateR2Config,
+} from "@/lib/r2";
 
 function sanitizeFileName(name) {
   return String(name || "file")
@@ -9,14 +16,6 @@ function sanitizeFileName(name) {
     .replace(/[^a-zA-Z0-9._-]/g, "-")
     .replace(/-+/g, "-")
     .slice(0, 120);
-}
-
-function normalizeFolder(input) {
-  const folder = String(input || "projects")
-    .toLowerCase()
-    .replace(/[^a-z0-9/_-]/g, "")
-    .replace(/^\/+|\/+$/g, "");
-  return folder || "projects";
 }
 
 function parseNumber(input) {
@@ -52,8 +51,21 @@ export async function POST(request) {
     }
 
     const filename = sanitizeFileName(file.name);
-    const folder = normalizeFolder(formData.get("folder"));
+    const folder = String(formData.get("folder") || "uploads").toLowerCase();
     const contentType = file.type || "application/octet-stream";
+
+    if (!isAllowedContentType(contentType)) {
+      return NextResponse.json(
+        { error: `contentType "${contentType}" is not allowed.` },
+        { status: 400 }
+      );
+    }
+    if (!isAllowedFolder(folder)) {
+      return NextResponse.json(
+        { error: `folder "${folder}" is not allowed.` },
+        { status: 400 }
+      );
+    }
 
     const now = new Date();
     const datePrefix = `${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, "0")}`;

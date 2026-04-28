@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAdminAuthenticated } from "@/lib/adminAuth";
 import { readStore, updateStore } from "@/lib/contentStore";
+import { deleteR2Keys } from "@/lib/r2";
 
 export const revalidate = 0;
 
@@ -30,7 +31,11 @@ export async function POST(request) {
   }
 
   let saved = null;
+  let oldKey = null;
   await updateStore((store) => {
+    if (store.showreel?.key && store.showreel.key !== body.key) {
+      oldKey = store.showreel.key;
+    }
     store.showreel = {
       url,
       key: body.key || null,
@@ -42,19 +47,32 @@ export async function POST(request) {
       duration: Number(body.duration) || null,
       updatedAt: new Date().toISOString(),
     };
+    saved = store.showreel;
     return store;
   });
 
-  const fresh = await readStore();
-  saved = fresh.showreel;
+  // Replace, not append: drop the previous showreel video from R2 once the
+  // store has switched over.
+  if (oldKey) {
+    await deleteR2Keys([oldKey]);
+  }
+
   return NextResponse.json({ data: saved });
 }
 
 export async function DELETE(request) {
   if (!isAdminAuthenticated(request)) return unauthorized();
+
+  let oldKey = null;
   await updateStore((store) => {
+    if (store.showreel?.key) oldKey = store.showreel.key;
     store.showreel = null;
     return store;
   });
+
+  if (oldKey) {
+    await deleteR2Keys([oldKey]);
+  }
+
   return NextResponse.json({ ok: true });
 }

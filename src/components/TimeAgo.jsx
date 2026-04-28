@@ -1,34 +1,39 @@
 import { useState, useEffect } from 'react';
 
+function calculateTimeAgo(completionDate) {
+  if (!completionDate) return '';
+  const completion = new Date(completionDate);
+  const diffInMs = Date.now() - completion.getTime();
+  const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
+  const diffInMonths = Math.floor(diffInDays / 30);
+  const diffInYears = Math.floor(diffInDays / 365);
+
+  if (diffInYears > 0) {
+    return `${diffInYears} ${diffInYears === 1 ? 'year' : 'years'} ago`;
+  }
+  if (diffInMonths > 0) {
+    return `${diffInMonths} ${diffInMonths === 1 ? 'month' : 'months'} ago`;
+  }
+  if (diffInDays > 0) {
+    return `${diffInDays} ${diffInDays === 1 ? 'day' : 'days'} ago`;
+  }
+  return 'Today';
+}
+
 const TimeAgo = ({ completionDate, className = "" }) => {
-  const [timeAgo, setTimeAgo] = useState('');
+  // Initialize with the computed value so SSR and the first client render
+  // both produce the final string — no empty-then-filled flicker. Server
+  // and client agree because Date.now() is evaluated during render in
+  // both environments and the result is text, not a DOM attribute that
+  // depends on time-of-render precision.
+  const [timeAgo, setTimeAgo] = useState(() => calculateTimeAgo(completionDate));
 
   useEffect(() => {
-    if (!completionDate) return;
-
-  const calculateTimeAgo = () => {
-    const now = new Date();
-    const completion = new Date(completionDate);
-    const diffInMs = now - completion;
-    const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
-    const diffInMonths = Math.floor(diffInDays / 30);
-    const diffInYears = Math.floor(diffInDays / 365);
-
-    if (diffInYears > 0) {
-      return `${diffInYears} ${diffInYears === 1 ? 'year' : 'years'} ago`;
-    } else if (diffInMonths > 0) {
-      return `${diffInMonths} ${diffInMonths === 1 ? 'month' : 'months'} ago`;
-    } else if (diffInDays > 0) {
-      return `${diffInDays} ${diffInDays === 1 ? 'day' : 'days'} ago`;
-    } else {
-      return 'Today';
-    }
-  };
-
-    setTimeAgo(calculateTimeAgo());
-
-    // Update every day
-    const interval = setInterval(calculateTimeAgo, 24 * 60 * 60 * 1000);
+    if (!completionDate) return undefined;
+    setTimeAgo(calculateTimeAgo(completionDate));
+    const interval = setInterval(() => {
+      setTimeAgo(calculateTimeAgo(completionDate));
+    }, 24 * 60 * 60 * 1000);
     return () => clearInterval(interval);
   }, [completionDate]);
 

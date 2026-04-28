@@ -66,6 +66,21 @@ function main() {
 
   REQUIRED.forEach((key) => {
     if (env[key]) {
+      // Refuse the obvious placeholder values — accepting them used to be
+      // possible because adminAuth fell back to a hardcoded string, which
+      // made session cookies forgeable on misconfigured deploys.
+      if (key === "ADMIN_SESSION_SECRET") {
+        if (env[key].length < 16) {
+          hasMissing = true;
+          log.error(`${key} is too short (need 16+ chars; recommend 32+)`);
+          return;
+        }
+        if (env[key] === "please-change-admin-session-secret") {
+          hasMissing = true;
+          log.error(`${key} is still the placeholder default — generate a random one`);
+          return;
+        }
+      }
       log.success(`${key} is set`);
     } else {
       hasMissing = true;

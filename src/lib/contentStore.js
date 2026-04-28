@@ -127,15 +127,22 @@ export async function readStore() {
 }
 
 export async function updateStore(mutator) {
-  writeQueue = writeQueue.then(async () => {
+  // Why the .catch(): without it, a single failure (R2 timeout, mutator
+  // throwing, JSON corruption) leaves writeQueue as a rejected promise.
+  // Every subsequent updateStore() does writeQueue.then(...) which on a
+  // rejected promise propagates the original rejection without ever running
+  // the new callback — so all admin saves stay broken until the process
+  // restarts. Catching here keeps the queue chain healthy while the
+  // returned promise still surfaces this call's error to its caller.
+  const next = writeQueue.then(async () => {
     const current = await readStoreInternal();
     const draft = structuredClone(current);
     const maybeUpdated = await mutator(draft);
     const nextStore = normalizeStore(maybeUpdated ?? draft);
     return writeStoreInternal(nextStore);
   });
-
-  return writeQueue;
+  writeQueue = next.catch(() => {});
+  return next;
 }
 
 export function slugify(value = "") {
@@ -170,7 +177,13 @@ export function normalizeCategories(input) {
 export function parseOptionalDate(input) {
   const value = String(input || "").trim();
   if (!value) return null;
+  // Match YYYY-MM-DD shape, then verify the date round-trips through Date()
+  // so impossible values like 2026-13-45 are rejected (regex alone passes
+  // them).
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  if (parsed.toISOString().slice(0, 10) !== value) return null;
   return value;
 }
 
@@ -181,6 +194,43 @@ export function sortByOrderThenId(items = []) {
     if (aOrder !== bOrder) return aOrder - bOrder;
     return Number(a.id) - Number(b.id);
   });
+}
+
+// Collect every R2 storage key referenced by a project/image-project/site
+// snapshot, so the route handlers can compute "old keys minus new keys" and
+// delete the leftovers when content is replaced. Missing/empty keys are
+// filtered out so callers can safely pass a partially-populated record.
+export function collectAssetKeysFromProject(project) {
+  if (!project) return [];
+  const keys = [];
+  if (project.media?.key) keys.push(project.media.key);
+  if (project.thumbnail?.key) keys.push(project.thumbnail.key);
+  return keys.filter(Boolean);
+}
+
+export function collectAssetKeysFromImageProject(project) {
+  if (!project) return [];
+  const keys = [];
+  if (Array.isArray(project.media)) {
+    for (const asset of project.media) {
+      if (asset?.key) keys.push(asset.key);
+    }
+  }
+  if (project.thumbnail?.key) keys.push(project.thumbnail.key);
+  return keys.filter(Boolean);
+}
+
+export function collectAssetKeysFromSite(site) {
+  if (!site || typeof site !== "object") return [];
+  const keys = [];
+  const strategicBrands = site.clients?.strategicBrands;
+  if (Array.isArray(strategicBrands)) {
+    for (const brand of strategicBrands) {
+      if (brand?.logoKey) keys.push(brand.logoKey);
+    }
+  }
+  if (site.services?.image?.key) keys.push(site.services.image.key);
+  return keys.filter(Boolean);
 }
 
 export function createAssetId(store) {

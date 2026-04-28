@@ -11,6 +11,7 @@ import Image from "next/image";
 import { FiX, FiChevronLeft, FiChevronRight } from "react-icons/fi";
 import SearchWithCategoryDropdown from "@/components/SearchWithCategoryDropdown";
 import { useSiteContent } from "@/components/SiteContentProvider";
+import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 
 const PAGE_SIZE = 20;
 
@@ -77,26 +78,16 @@ export default function ImageProjectsPage() {
   useEffect(() => {
     const fetchProjects = async () => {
       try {
-        console.log('🔍 Image Projects: Fetching image projects...');
         const response = await getImageProjects();
-        console.log('📊 Image Projects response:', response);
-        
         if (response.data && response.data.length > 0) {
           const formattedProjects = response.data.map(project => formatImageProject(project));
-          
-          console.log('📋 Formatted projects:', formattedProjects);
-          
-          // Sort by order or id
           formattedProjects.sort((a, b) => {
             const ao = a.order || a.id;
             const bo = b.order || b.id;
             return ao - bo;
           });
-          
           setProjects(formattedProjects);
         } else {
-          // No data from API
-          console.log('No data from API');
           setProjects([]);
         }
       } catch (error) {
@@ -159,33 +150,7 @@ export default function ImageProjectsPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [isOpen, selected]);
 
-  // Lock body scroll when modal open (mobile + desktop), but allow scrolling inside modal
-  useEffect(() => {
-    if (!isOpen) return;
-    const prev = {
-      overflow: document.body.style.overflow,
-      position: document.body.style.position,
-      top: document.body.style.top,
-      width: document.body.style.width,
-      overscrollBehaviorY: document.body.style.overscrollBehaviorY,
-    };
-    const scrollY = window.scrollY || window.pageYOffset || 0;
-    document.body.style.overflow = 'hidden';
-    document.body.style.position = 'fixed';
-    document.body.style.top = `-${scrollY}px`;
-    document.body.style.width = '100%';
-    document.body.style.overscrollBehaviorY = 'contain';
-    document.documentElement.classList.add('modal-open');
-    return () => {
-      document.body.style.overflow = prev.overflow;
-      document.body.style.position = prev.position;
-      document.body.style.top = prev.top;
-      document.body.style.width = prev.width;
-      document.body.style.overscrollBehaviorY = prev.overscrollBehaviorY;
-      document.documentElement.classList.remove('modal-open');
-      window.scrollTo(0, scrollY);
-    };
-  }, [isOpen]);
+  useBodyScrollLock(isOpen);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

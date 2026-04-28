@@ -10,6 +10,7 @@ import RichTextRenderer from "@/components/RichTextRenderer";
 import { MdChevronLeft, MdChevronRight } from "react-icons/md";
 import { getFeaturedProjects } from "@/lib/strapi";
 import { useSiteContent } from "@/components/SiteContentProvider";
+import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 
 const AUTOPLAY_INTERVAL_MS = 7000;
 const DESKTOP_BREAKPOINT_QUERY = "(min-width: 1024px)";
@@ -374,28 +375,7 @@ const ProjectsGallery = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, [isModalOpen]);
 
-  // Lock body scroll when modal open. Use overflow:hidden on <html> + scrollbar
-  // compensation — avoids the scroll-jump that the previous position:fixed approach
-  // caused when applying multiple style properties non-atomically.
-  useEffect(() => {
-    if (!isModalOpen) return;
-    const docEl = document.documentElement;
-    const prev = {
-      overflow: docEl.style.overflow,
-      paddingRight: docEl.style.paddingRight,
-    };
-    const scrollbarWidth = window.innerWidth - docEl.clientWidth;
-    docEl.style.overflow = 'hidden';
-    if (scrollbarWidth > 0) {
-      docEl.style.paddingRight = `${scrollbarWidth}px`;
-    }
-    docEl.classList.add('modal-open');
-    return () => {
-      docEl.style.overflow = prev.overflow;
-      docEl.style.paddingRight = prev.paddingRight;
-      docEl.classList.remove('modal-open');
-    };
-  }, [isModalOpen]);
+  useBodyScrollLock(isModalOpen);
   const [slide, setSlide] = useState(0);
   const [mobileSlide, setMobileSlide] = useState(0); // Separate state for mobile
   const [projects, setProjects] = useState([]);

@@ -22,7 +22,6 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     const fetchProject = async () => {
       try {
-        console.log('🔍 Fetching project with slug:', slug);
         const response = await getProjects();
         
         if (response.data) {

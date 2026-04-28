@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import Image from "next/image";
 import SearchWithCategoryDropdown from "@/components/SearchWithCategoryDropdown";
 import { useSiteContent } from "@/components/SiteContentProvider";
+import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 
 // Inline dropdown that turns the active category in the page heading into a
 // quick-switcher: click the yellow word to pick another category from the
@@ -114,72 +115,24 @@ const MasonryCard = ({ item, onOpen, index = 0 }) => {
   
   // Detect if media is video
   const isVideo = item.video && /\.(mp4|webm|ogg|mov|avi)$/i.test(item.video);
-  
-  // Debug log for missing projects
-  if ([4, 6, 7, 9].includes(item.id)) {
-    console.log(`🔍 Debug Project ${item.id} (${item.title}):`, {
-      isVideo,
-      video: item.video,
-      thumbnail: item.thumbnail,
-      orientation: item.orientationField,
-      order: item.order
-    });
-  }
-  
-  // Calculate orientation based on video dimensions or fallback to aspect ratio
+
   const orientation = useMemo(() => {
-    // Ưu tiên sử dụng orientation field từ Strapi nếu có
     if (item.orientationField && item.orientationField !== 'square') {
-      console.log(`Using orientationField for ${item.title}: ${item.orientationField}`);
       return item.orientationField;
     }
-    
-    // Detect từ video dimensions với ngưỡng chính xác hơn
     if (isVideo && item.width && item.height) {
       const ratio = item.width / item.height;
-      console.log(`Video ${item.title}: ${item.width}x${item.height}, ratio: ${ratio.toFixed(2)}`);
-      if (ratio >= 1.0) return 'landscape'; // Video có tỷ lệ >= 1.0 là landscape
-      return 'portrait'; // Video có tỷ lệ < 1.0 là portrait
+      return ratio >= 1.0 ? 'landscape' : 'portrait';
     }
-    
-    // Detect từ thumbnail dimensions với ngưỡng chính xác hơn
     if (item.thumbWidth && item.thumbHeight) {
       const ratio = item.thumbWidth / item.thumbHeight;
-      console.log(`Thumbnail ${item.title}: ${item.thumbWidth}x${item.thumbHeight}, ratio: ${ratio.toFixed(2)}`);
-      if (ratio >= 1.0) return 'landscape'; // Thumbnail có tỷ lệ >= 1.0 là landscape
-      return 'portrait'; // Thumbnail có tỷ lệ < 1.0 là portrait
+      return ratio >= 1.0 ? 'landscape' : 'portrait';
     }
-    
-    // Default fallback - ưu tiên portrait để tránh nhầm lẫn
-    console.log(`Default orientation for ${item.title}: portrait`);
     return 'portrait';
   }, [isVideo, item.width, item.height, item.thumbWidth, item.thumbHeight, item.orientationField]);
 
-  // Tính toán aspect ratio thực tế để quyết định kích thước
-  // Kết hợp aspect ratio + index để tạo layout bất đối xứng tự nhiên
-  const gridSpanClasses = useMemo(() => {
-    // Lấy kích thước thực tế
-    let aspectRatio = 1;
-    let width, height;
-    
-    if (item.thumbWidth && item.thumbHeight) {
-      width = item.thumbWidth;
-      height = item.thumbHeight;
-      aspectRatio = width / height;
-    } else if (item.width && item.height) {
-      width = item.width;
-      height = item.height;
-      aspectRatio = width / height;
-    }
-    
-    // Thêm một chút biến thể dựa trên index để tạo sự đa dạng
-    const variation = index % 4;
-    
-    console.log(`Item ${index} (${item.title}): ${width}x${height}, aspectRatio=${aspectRatio.toFixed(2)}, orientation=${orientation}, variation=${variation}`);
-    
-    // Masonry 3 cột: mọi item đều giữ 1 cột, vị trí set bằng style
-    return 'col-span-1 sm:col-span-1';
-  }, [item.thumbWidth, item.thumbHeight, item.width, item.height, orientation, index, item.title]);
+  // Masonry 3 cột: mọi item đều giữ 1 cột, vị trí thực tế set bằng inline style
+  const gridSpanClasses = 'col-span-1 sm:col-span-1';
 
   // Video metadata load handler (không cần auto-play nữa)
   useEffect(() => {
@@ -201,15 +154,8 @@ const MasonryCard = ({ item, onOpen, index = 0 }) => {
   // Handle video metadata load
   const handleVideoLoadedMetadata = (e) => {
     const video = e.currentTarget;
-    const ratio = video.videoWidth / video.videoHeight;
-    setVideoAspectRatio(ratio);
-    console.log(`Video ${item.title} loaded: ${video.videoWidth}x${video.videoHeight}, ratio: ${ratio.toFixed(2)}`);
+    setVideoAspectRatio(video.videoWidth / video.videoHeight);
   };
-
-  // Debug log for rendering
-  if ([4, 6, 7, 9].includes(item.id)) {
-    console.log(`🎨 Rendering Project ${item.id} (${item.title}) with classes: ${gridSpanClasses}`);
-  }
 
   // Aspect ratio để hiển thị đúng theo orientation Strapi
   const aspectRatioValue = useMemo(() => {
@@ -302,11 +248,7 @@ const MasonryCard = ({ item, onOpen, index = 0 }) => {
                   disablePictureInPicture
                   onContextMenu={(e) => e.preventDefault()}
                   onLoadedMetadata={handleVideoLoadedMetadata}
-                  onError={(e) => {
-                    console.error(`❌ Video playback error for Project ${item.id} (${item.title}):`, e);
-                    console.error('Video URL:', item.video);
-                    setIsVideoPlaying(false);
-                  }}
+                  onError={() => setIsVideoPlaying(false)}
                 />
                 {/* Fallback content if video fails to load */}
                 <div className="absolute inset-0 flex items-center justify-center bg-neutral-800 text-white text-sm">
@@ -393,10 +335,7 @@ export default function PortfolioPage() {
   useEffect(() => {
     const fetchProjects = async () => {
       try {
-        console.log('🔍 Portfolio: Fetching projects...');
         const response = await getProjects();
-        console.log('📊 Portfolio response:', response);
-        console.log('📊 Portfolio data length:', response.data?.length || 0);
         if (response.data) {
           const formattedProjects = response.data.map(project => {
             const attrs = project.attributes || {};
@@ -458,14 +397,11 @@ export default function PortfolioPage() {
             const bo = b.order || b.id;
             return ao - bo;
           });
-          
-          console.log('📊 Formatted projects count:', formattedProjects.length);
-          console.log('📊 Target projects in formatted:', formattedProjects.filter(p => [4, 6, 7, 9].includes(p.id)).map(p => ({ id: p.id, title: p.title, video: p.video, thumbnail: p.thumbnail })));
-          
+
           setProjects(formattedProjects);
         }
       } catch (error) {
-        console.error('Error fetching projects from Strapi:', error);
+        console.error('Error fetching projects:', error);
         setProjects([]);
       } finally {
         setLoading(false);
@@ -510,28 +446,7 @@ export default function PortfolioPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [isOpen]);
 
-  // Lock body scroll when modal open. Use overflow:hidden on <html> + scrollbar
-  // compensation to avoid the visible scroll jump that the previous position:fixed
-  // approach caused when applying multiple style properties non-atomically.
-  useEffect(() => {
-    if (!isOpen) return;
-    const docEl = document.documentElement;
-    const prev = {
-      overflow: docEl.style.overflow,
-      paddingRight: docEl.style.paddingRight,
-    };
-    const scrollbarWidth = window.innerWidth - docEl.clientWidth;
-    docEl.style.overflow = 'hidden';
-    if (scrollbarWidth > 0) {
-      docEl.style.paddingRight = `${scrollbarWidth}px`;
-    }
-    docEl.classList.add('modal-open');
-    return () => {
-      docEl.style.overflow = prev.overflow;
-      docEl.style.paddingRight = prev.paddingRight;
-      docEl.classList.remove('modal-open');
-    };
-  }, [isOpen]);
+  useBodyScrollLock(isOpen);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -554,10 +469,7 @@ export default function PortfolioPage() {
 
   const pageItems = useMemo(() => {
     const start = (page - 1) * pageSize;
-    const items = filtered.slice(start, start + pageSize);
-    console.log('📄 Page items count:', items.length);
-    console.log('📄 Target projects in page items:', items.filter(p => [4, 6, 7, 9].includes(p.id)).map(p => ({ id: p.id, title: p.title })));
-    return items;
+    return filtered.slice(start, start + pageSize);
   }, [filtered, page, pageSize]);
 
   // Chuẩn hóa orientation từ Strapi / kích thước để sắp xếp vào slot mong muốn
