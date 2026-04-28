@@ -47,25 +47,24 @@ const Footer = ({ content, social, minimal = false }) => {
           image carries the whole brand name — Link picks up its accessible
           name from alt instead of an explicit aria-label.
 
-          Click animation matches the header wordmark: ease-out-back curve
-          with a brief active:scale-[0.92] press. The .logo-shine-wrap span
-          paints an orange shine sweep across the image, masked to the
-          logo's alpha so the highlight only catches the ink — same
-          treatment as the homepage stats numbers. */}
+          Two animations, on different elements so their transforms don't
+          fight each other:
+          - Link: ease-out-back active:scale-[0.92] click press, matching
+            the header wordmark.
+          - Image: .logo-bounce, a slow 2.4s ease-in-out vertical
+            oscillation that keeps the mark gently alive at idle. */}
       <Link
         href={"/"}
         className="inline-flex transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.92]"
       >
-        <span className="logo-shine-wrap">
-          <Image
-            src="/logos/XUONGARTLOGODEN.png"
-            alt="XUONGART"
-            width={256}
-            height={256}
-            className="h-20 w-20 sm:h-28 sm:w-28 object-contain"
-            priority={false}
-          />
-        </span>
+        <Image
+          src="/logos/XUONGARTLOGODEN.png"
+          alt="XUONGART"
+          width={256}
+          height={256}
+          className="h-20 w-20 sm:h-28 sm:w-28 object-contain logo-bounce"
+          priority={false}
+        />
       </Link>
       <p className="text-xs sm:text-sm text-neutral-700">
         © {copyright} {new Date().getFullYear()}
