@@ -28,23 +28,75 @@ const Footer = ({ content, social, cta, minimal = false, showContact = false }) 
   const copyright = data?.copyright || DEFAULT_SITE_CONTENT.footer.copyright;
   const ctaData = cta || DEFAULT_SITE_CONTENT.cta;
 
-  // showContact also flips the footer to dark mode — the homepage gets one
-  // unified black surface (logo strip + contact band) instead of the
-  // earlier white-on-top / dark-on-bottom split. Logo, copyright text,
-  // and the divider border all swap to their inverse-friendly variants.
+  // showContact flips the footer to a unified dark layout for the homepage.
+  // Light footer (other pages) keeps the existing minimal/full structure
+  // further down so this branch only owns the redesigned dark variant.
   const dark = showContact;
 
-  // Contact info — heading + address/phone/email + social icons. Rendered
-  // inside the same dark outer footer so it visually merges with the
-  // bottom strip rather than reading as a separate band.
-  const contactBlock = showContact ? (
-    <Container className="pb-10 sm:pb-12">
-      <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <h3 className="font-display text-base font-semibold text-white">
-            {ctaData.contactsHeading || DEFAULT_SITE_CONTENT.cta.contactsHeading}
-          </h3>
-          <div className="mt-5 text-neutral-300">
+  // Light-theme logo strip used on /videos, /images, /whoweare and the
+  // full footer below. The dark homepage variant has its own layout
+  // upstream and never reaches this component.
+  const bottomStrip = (
+    <div
+      className={`mb-6 sm:mb-10 flex flex-col sm:flex-row flex-wrap items-start sm:items-center justify-between gap-3 sm:gap-x-6 gap-y-3 border-t border-neutral-950/10 ${
+        minimal ? "mt-0 pt-3 sm:pt-4" : "mt-12 sm:mt-16 md:mt-24 pt-4 sm:pt-6"
+      }`}
+    >
+      <Link
+        href={"/"}
+        className="inline-flex transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.92]"
+      >
+        <Image
+          src="/logos/XUONGARTLOGODEN.png"
+          alt="XUONGART"
+          width={256}
+          height={256}
+          className="h-20 w-20 sm:h-28 sm:w-28 object-contain"
+          priority={false}
+        />
+      </Link>
+      <p className="text-xs sm:text-sm text-neutral-700">
+        © {copyright} {new Date().getFullYear()}
+      </p>
+    </div>
+  );
+
+  // Homepage variant: one cohesive black footer. Top row pairs the logo
+  // with the copyright; second row pairs the contact heading with the
+  // social icons; the contact details (office, address, phone, email)
+  // sit underneath as a single column. No huge gap between the logo
+  // strip and the contact band the way the previous split layout had.
+  if (dark) {
+    return (
+      <footer className="w-full bg-neutral-950 text-white">
+        <Container className="py-10 sm:py-14">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <Link
+              href={"/"}
+              className="inline-flex transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.92]"
+            >
+              <Image
+                src="/logos/XUONGARTLOGOTRANG.png"
+                alt="XUONGART"
+                width={256}
+                height={256}
+                className="h-20 w-20 sm:h-28 sm:w-28 object-contain"
+                priority={false}
+              />
+            </Link>
+            <p className="text-xs sm:text-sm text-neutral-400">
+              © {copyright} {new Date().getFullYear()}
+            </p>
+          </div>
+
+          <div className="mt-8 flex flex-col gap-4 sm:mt-10 sm:flex-row sm:items-center sm:justify-between">
+            <h3 className="font-display text-base font-semibold text-white">
+              {ctaData.contactsHeading || DEFAULT_SITE_CONTENT.cta.contactsHeading}
+            </h3>
+            <SocialMedia className="shrink-0" invert content={social} />
+          </div>
+
+          <div className="mt-5 max-w-xl text-sm leading-relaxed text-neutral-300 sm:text-base">
             <p className="font-semibold text-white">
               {ctaData.officeName || DEFAULT_SITE_CONTENT.cta.officeName}
             </p>
@@ -58,53 +110,17 @@ const Footer = ({ content, social, cta, minimal = false, showContact = false }) 
               {ctaData.email || DEFAULT_SITE_CONTENT.cta.email}
             </p>
           </div>
-        </div>
-        <SocialMedia className="shrink-0 sm:mt-1" invert content={social} />
-      </div>
-    </Container>
-  ) : null;
-
-  // Logo strip: same shape on both themes, just swaps the PNG (TRANG = white
-  // on dark, DEN = black on light) and the copyright/border colours.
-  const bottomStrip = (
-    <div
-      className={`mb-6 sm:mb-10 flex flex-col sm:flex-row flex-wrap items-start sm:items-center justify-between gap-3 sm:gap-x-6 gap-y-3 border-t ${
-        dark ? "border-white/10" : "border-neutral-950/10"
-      } ${minimal ? "mt-0 pt-3 sm:pt-4" : "mt-12 sm:mt-16 md:mt-24 pt-4 sm:pt-6"}`}
-    >
-      <Link
-        href={"/"}
-        className="inline-flex transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.92]"
-      >
-        <Image
-          src={
-            dark
-              ? "/logos/XUONGARTLOGOTRANG.png"
-              : "/logos/XUONGARTLOGODEN.png"
-          }
-          alt="XUONGART"
-          width={256}
-          height={256}
-          className="h-20 w-20 sm:h-28 sm:w-28 object-contain"
-          priority={false}
-        />
-      </Link>
-      <p
-        className={`text-xs sm:text-sm ${
-          dark ? "text-neutral-400" : "text-neutral-700"
-        }`}
-      >
-        © {copyright} {new Date().getFullYear()}
-      </p>
-    </div>
-  );
+        </Container>
+      </footer>
+    );
+  }
 
   // FadeIn's whileInView shrinks the viewport by 200px at the bottom, which
   // means a short strip near the page bottom never crosses the threshold and
   // would stay at opacity:0 forever. The minimal footer is too thin for that
   // reveal, so we render it without FadeIn.
   return (
-    <footer className={`w-full ${dark ? "bg-neutral-950" : "bg-white"}`}>
+    <footer className="w-full bg-white">
       {minimal ? (
         <Container className="mt-16 sm:mt-24 md:mt-32 lg:mt-40">
           {bottomStrip}
@@ -122,7 +138,6 @@ const Footer = ({ content, social, cta, minimal = false, showContact = false }) 
           </FadeIn>
         </Container>
       )}
-      {contactBlock}
     </footer>
   );
 };
