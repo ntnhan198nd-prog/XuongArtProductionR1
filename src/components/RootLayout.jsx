@@ -315,15 +315,17 @@ const RootLayoutInner = ({ children, isHome, minimalFooter, footerContent, socia
 const RootLayout = ({ children, footerContent, socialContent }) => {
   const pathName = usePathname();
   const isHome = pathName === "/";
-  // Routes that show the minimal footer (logo + copyright only). Both
-  // gallery routes get this so the masonry/grid is the visual ending —
-  // the contact + nav columns are redundant on those pages.
+  // Routes that show the minimal footer (logo + copyright only). Gallery
+  // routes end with the masonry/grid as the visual closer; /contact already
+  // has the CTA banner with full contact info, so the footer's nav +
+  // "Liên hệ nhanh" columns would just repeat what's directly above.
   const minimalFooter =
     isHome ||
     pathName === "/portfolio" ||
     pathName.startsWith("/portfolio/") ||
     pathName === "/images" ||
-    pathName.startsWith("/images/");
+    pathName.startsWith("/images/") ||
+    pathName === "/contact";
   return (
     <RootLayoutInner
       key={pathName}
