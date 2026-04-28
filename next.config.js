@@ -48,6 +48,16 @@ const nextConfig = {
   env: {
     NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
   },
+  // Permanent redirects so bookmarks / inbound SEO links to the previous
+  // /portfolio and /contact paths land on the new /videos and /whoweare
+  // routes instead of 404ing.
+  async redirects() {
+    return [
+      { source: "/portfolio", destination: "/videos", permanent: true },
+      { source: "/portfolio/:slug*", destination: "/videos/:slug*", permanent: true },
+      { source: "/contact", destination: "/whoweare", permanent: true },
+    ];
+  },
 };
 
 module.exports = nextConfig;

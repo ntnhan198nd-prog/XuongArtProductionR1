@@ -17,14 +17,14 @@ import clsx from "clsx";
 import Footer from "./Footer";
 import { useState, useEffect } from "react";
 
-const isPortfolioVideoActive = (pathname) =>
-  pathname === "/portfolio" || pathname.startsWith("/portfolio/");
+const isVideosActive = (pathname) =>
+  pathname === "/videos" || pathname.startsWith("/videos/");
 
 const Header = ({ invert = false, mobileMenuOpen, setMobileMenuOpen }) => {
   const pathname = usePathname() || "";
-  const activeVideo = isPortfolioVideoActive(pathname);
+  const activeVideo = isVideosActive(pathname);
   const activeImages = pathname.startsWith("/images");
-  const activeContact = pathname === "/contact";
+  const activeWhoWeAre = pathname === "/whoweare";
 
   // Body scroll lock + close on Escape are handled at the layout level so the
   // menu can be portaled outside the fixed header stacking context.
@@ -39,7 +39,7 @@ const Header = ({ invert = false, mobileMenuOpen, setMobileMenuOpen }) => {
         <div className="flex items-center gap-x-8 h-full">
           <nav className="hidden md:flex items-center gap-x-6 h-full">
             <Link
-              href="/portfolio"
+              href="/videos"
               aria-current={activeVideo ? "page" : undefined}
               className={clsx(
                 "text-base font-medium transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.88] flex items-center h-full px-2.5",
@@ -70,12 +70,12 @@ const Header = ({ invert = false, mobileMenuOpen, setMobileMenuOpen }) => {
           <div className="flex items-center h-full gap-x-4">
             <div className="hidden md:block">
               <Button
-                href={"/contact"}
+                href={"/whoweare"}
                 invert={invert}
-                aria-current={activeContact ? "page" : undefined}
+                aria-current={activeWhoWeAre ? "page" : undefined}
                 className={clsx(
                   "text-sm sm:text-base px-4 sm:px-5 py-2",
-                  activeContact && "!text-accent-400"
+                  activeWhoWeAre && "!text-accent-400"
                 )}
               >
                 -whoweare
@@ -114,9 +114,9 @@ const Header = ({ invert = false, mobileMenuOpen, setMobileMenuOpen }) => {
 // which created a containing block that clipped a previously-nested menu).
 const MobileMenu = ({ open, onClose }) => {
   const pathname = usePathname() || "";
-  const activeVideo = isPortfolioVideoActive(pathname);
+  const activeVideo = isVideosActive(pathname);
   const activeImages = pathname.startsWith("/images");
-  const activeContact = pathname === "/contact";
+  const activeWhoWeAre = pathname === "/whoweare";
 
   // Body scroll lock + Escape to close.
   useEffect(() => {
@@ -163,7 +163,7 @@ const MobileMenu = ({ open, onClose }) => {
 
             <nav className="flex flex-col items-center gap-3">
               <Link
-                href="/portfolio"
+                href="/videos"
                 onClick={onClose}
                 aria-current={activeVideo ? "page" : undefined}
                 className={clsx(
@@ -187,12 +187,12 @@ const MobileMenu = ({ open, onClose }) => {
             </nav>
 
             <Button
-              href={"/contact"}
+              href={"/whoweare"}
               onClick={onClose}
-              aria-current={activeContact ? "page" : undefined}
+              aria-current={activeWhoWeAre ? "page" : undefined}
               className={clsx(
                 "text-base px-6 py-3",
-                activeContact && "!text-accent-400"
+                activeWhoWeAre && "!text-accent-400"
               )}
             >
               -whoweare
@@ -321,11 +321,11 @@ const RootLayout = ({ children, footerContent, socialContent }) => {
   // "Liên hệ nhanh" columns would just repeat what's directly above.
   const minimalFooter =
     isHome ||
-    pathName === "/portfolio" ||
-    pathName.startsWith("/portfolio/") ||
+    pathName === "/videos" ||
+    pathName.startsWith("/videos/") ||
     pathName === "/images" ||
     pathName.startsWith("/images/") ||
-    pathName === "/contact";
+    pathName === "/whoweare";
   return (
     <RootLayoutInner
       key={pathName}

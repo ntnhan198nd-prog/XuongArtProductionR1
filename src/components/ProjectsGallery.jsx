@@ -802,7 +802,7 @@ const ProjectsGallery = () => {
                 {/* View all projects button */}
                 <div className="mt-14 sm:mt-20 flex justify-center">
                   <Link
-                    href="/portfolio"
+                    href="/videos"
                     className="inline-flex items-center rounded-full bg-neutral-950 px-6 py-3 text-white text-sm font-medium shadow hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-neutral-400 transition"
                   >
                     Xem tất cả dự án

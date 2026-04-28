@@ -16,7 +16,7 @@ const ContactSection = ({ content, social }) => {
           </h2>
 
           <div className="mt-6 flex">
-            <Button href={"/contact"} invert>
+            <Button href={"/whoweare"} invert>
               {data?.buttonText || DEFAULT_SITE_CONTENT.cta.buttonText}
             </Button>
           </div>

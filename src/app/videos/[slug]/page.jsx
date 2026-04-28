@@ -93,13 +93,13 @@ export default function ProjectDetailPage() {
             <h1 className="text-2xl font-bold text-gray-900 mb-4">Dự án không tồn tại</h1>
             <p className="text-gray-600 mb-8">{error || 'Không tìm thấy dự án này'}</p>
             <Link 
-              href="/portfolio" 
+              href="/videos" 
               className="inline-flex items-center gap-2 px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors"
             >
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
               </svg>
-              Quay lại Portfolio
+              Quay lại danh sách
             </Link>
           </div>
         </Container>
@@ -113,13 +113,13 @@ export default function ProjectDetailPage() {
         {/* Back button */}
         <div className="mb-8">
           <Link 
-            href="/portfolio" 
+            href="/videos" 
             className="inline-flex items-center gap-2 text-gray-600 hover:text-black transition-colors"
           >
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
-            Quay lại Portfolio
+            Quay lại danh sách
           </Link>
         </div>
 

@@ -4,14 +4,14 @@ export const navigation = [
     links: [
       {
         title: "Xem tất cả",
-        href: "/portfolio",
+        href: "/videos",
       },
     ],
   },
   {
     title: "Công ty",
     links: [
-      { title: "Liên hệ", href: "/contact" },
+      { title: "Liên hệ", href: "/whoweare" },
     ],
   },
 ];
