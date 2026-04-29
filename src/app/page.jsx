@@ -36,8 +36,12 @@ export default async function Home() {
           </p>
         </FadeIn>
       </Container>
+      {/* Stats ("Why us") moved up before the clients marquee so the
+          homepage opens manifesto → numbers → partners → projects, with
+          the credibility hit landing right after the intro. */}
+      <Stats content={site.stats} />
       <Clients content={site.clients} />
-      {/* Featured projects below the intro */}
+      {/* Featured projects below the partners */}
       <div id="projects-section" className="scroll-mt-20">
         <div className="mx-auto mt-20 w-[92vw] sm:mt-28 lg:w-[80vw]">
           <FadeIn className="max-w-3xl">
@@ -57,10 +61,9 @@ export default async function Home() {
         </div>
         <ProjectsGallery />
       </div>
-      <Stats content={site.stats} />
-      {/* The Services section moved to /whoweare so the homepage now ends
-          on Stats. CTA banner also moved out — its contact info is in
-          the footer (rendered by RootLayout via showContactInFooter). */}
+      {/* The Services section moved to /whoweare; CTA banner also moved
+          out — its contact info now lives in the footer (rendered by
+          RootLayout via showContactInFooter). */}
     </main>
   );
 }
