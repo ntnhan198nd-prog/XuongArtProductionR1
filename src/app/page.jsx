@@ -22,26 +22,12 @@ export default async function Home() {
 
   return (
     <main className="text-black">
-      {/* Hero banner with showreel video loop */}
+      {/* New homepage flow: hero → featured projects (the work first) →
+          stats (credibility) → clients (partners) → intro (manifesto
+          closes the page). The CTA banner + Services moved to /whoweare;
+          contact info lives in the footer via showContactInFooter. */}
       <HeroShowreel videoSrc={showreelUrl} content={site.hero} />
-      {/* Intro — centered manifesto */}
-      <Container className="mt-20 sm:mt-28">
-        <FadeIn className="mx-auto max-w-3xl text-center">
-          <h2 className="font-display text-4xl font-medium tracking-tight text-neutral-950 [text-wrap:balance] sm:text-5xl md:text-6xl">
-            {site.intro.headingMain}{" "}
-            <span className="text-accent-400">{site.intro.headingAccent}</span>
-          </h2>
-          <p className="mx-auto mt-6 max-w-2xl text-base text-neutral-600 sm:text-lg">
-            {site.intro.description}
-          </p>
-        </FadeIn>
-      </Container>
-      {/* Stats ("Why us") moved up before the clients marquee so the
-          homepage opens manifesto → numbers → partners → projects, with
-          the credibility hit landing right after the intro. */}
-      <Stats content={site.stats} />
-      <Clients content={site.clients} />
-      {/* Featured projects below the partners */}
+
       <div id="projects-section" className="scroll-mt-20">
         <div className="mx-auto mt-20 w-[92vw] sm:mt-28 lg:w-[80vw]">
           <FadeIn className="max-w-3xl">
@@ -61,9 +47,21 @@ export default async function Home() {
         </div>
         <ProjectsGallery />
       </div>
-      {/* The Services section moved to /whoweare; CTA banner also moved
-          out — its contact info now lives in the footer (rendered by
-          RootLayout via showContactInFooter). */}
+
+      <Stats content={site.stats} />
+      <Clients content={site.clients} />
+
+      <Container className="mt-20 sm:mt-28">
+        <FadeIn className="mx-auto max-w-3xl text-center">
+          <h2 className="font-display text-4xl font-medium tracking-tight text-neutral-950 [text-wrap:balance] sm:text-5xl md:text-6xl">
+            {site.intro.headingMain}{" "}
+            <span className="text-accent-400">{site.intro.headingAccent}</span>
+          </h2>
+          <p className="mx-auto mt-6 max-w-2xl text-base text-neutral-600 sm:text-lg">
+            {site.intro.description}
+          </p>
+        </FadeIn>
+      </Container>
     </main>
   );
 }

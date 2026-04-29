@@ -9,21 +9,34 @@ const URL_REGEX = /^https?:\/\/[^\s]+$/i;
 // the form constantly flagging them as invalid.
 const EMAIL_PRESENCE_REGEX = /[^\s@]+@[^\s@]+\.[^\s@]+/;
 
+// BLOCKS grouped by which page they primarily drive. The sidebar
+// renders a header for each group so editors don't have to remember
+// which block belongs where.
 const BLOCKS = [
-  { key: "hero", label: "Hero / Showreel banner" },
-  { key: "intro", label: "Manifesto trang chủ" },
-  { key: "featuredHeader", label: "Header Dự án nổi bật" },
-  { key: "stats", label: "Stats trang chủ" },
-  { key: "clients", label: "Khách hàng (marquee)" },
-  { key: "services", label: "Dịch vụ (trang /whoweare)" },
-  { key: "cta", label: "CTA /whoweare + Footer trang chủ" },
-  { key: "about", label: "Trang Who We Are" },
-  { key: "cultures", label: "Văn hoá" },
-  { key: "footer", label: "Footer · Copyright" },
-  { key: "social", label: "Mạng xã hội (footer + CTA)" },
-  { key: "ui", label: "UI · Loading text" },
-  { key: "portfolio", label: "Bộ lọc tìm kiếm (-động + -tĩnh)" },
+  { key: "hero", label: "Hero / Showreel banner", group: "Trang chủ" },
+  { key: "featuredHeader", label: "Header Dự án nổi bật", group: "Trang chủ" },
+  { key: "stats", label: "Stats — Why us", group: "Trang chủ" },
+  { key: "clients", label: "Khách hàng (marquee)", group: "Trang chủ" },
+  { key: "intro", label: "Manifesto cuối trang", group: "Trang chủ" },
+
+  { key: "about", label: "PageIntro + Stats", group: "Trang /whoweare" },
+  { key: "cultures", label: "Văn hoá", group: "Trang /whoweare" },
+  { key: "services", label: "Dịch vụ", group: "Trang /whoweare" },
+  { key: "cta", label: "CTA banner + Footer trang chủ", group: "Trang /whoweare" },
+
+  { key: "portfolio", label: "Bộ lọc tìm kiếm theo category", group: "Trang /videos + /images" },
+
+  { key: "footer", label: "Footer · Copyright", group: "Footer + Global" },
+  { key: "social", label: "Mạng xã hội (footer + CTA)", group: "Footer + Global" },
+  { key: "ui", label: "UI · Loading text", group: "Footer + Global" },
 ];
+
+// Build the ordered list of groups, preserving the order they first
+// appear in BLOCKS. Used by the sidebar to print group headers.
+const BLOCK_GROUPS = BLOCKS.reduce((acc, block) => {
+  if (!acc.includes(block.group)) acc.push(block.group);
+  return acc;
+}, []);
 
 const inputCls =
   "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-black focus:border-black focus:outline-none";
@@ -1040,41 +1053,54 @@ export default function SiteContentAdminPanel({ onDirtyChange }) {
               onChange={(event) => setActiveBlock(event.target.value)}
               className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-black focus:outline-none"
             >
-              {BLOCKS.map((block) => (
-                <option key={block.key} value={block.key}>
-                  {dirtyByBlock[block.key] ? "● " : ""}
-                  {block.label}
-                </option>
+              {BLOCK_GROUPS.map((group) => (
+                <optgroup key={group} label={group}>
+                  {BLOCKS.filter((block) => block.group === group).map((block) => (
+                    <option key={block.key} value={block.key}>
+                      {dirtyByBlock[block.key] ? "● " : ""}
+                      {block.label}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </div>
-          <nav className="sticky top-6 hidden flex-col gap-1 rounded-2xl border border-gray-200 p-2 lg:flex">
-            {BLOCKS.map((block) => {
-              const isActive = activeBlock === block.key;
-              const isDirty = dirtyByBlock[block.key];
-              return (
-                <button
-                  key={block.key}
-                  type="button"
-                  onClick={() => setActiveBlock(block.key)}
-                  className={`flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${
-                    isActive
-                      ? "bg-black text-white"
-                      : "text-gray-700 hover:bg-gray-100"
-                  }`}
-                >
-                  <span className="truncate">{block.label}</span>
-                  {isDirty ? (
-                    <span
-                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                        isActive ? "bg-amber-300" : "bg-amber-500"
-                      }`}
-                      title="Có thay đổi chưa lưu"
-                    />
-                  ) : null}
-                </button>
-              );
-            })}
+          <nav className="sticky top-6 hidden flex-col rounded-2xl border border-gray-200 p-2 lg:flex">
+            {BLOCK_GROUPS.map((group, groupIdx) => (
+              <div key={group} className={groupIdx > 0 ? "mt-3" : ""}>
+                <div className="px-3 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-500">
+                  {group}
+                </div>
+                <div className="flex flex-col gap-1">
+                  {BLOCKS.filter((block) => block.group === group).map((block) => {
+                    const isActive = activeBlock === block.key;
+                    const isDirty = dirtyByBlock[block.key];
+                    return (
+                      <button
+                        key={block.key}
+                        type="button"
+                        onClick={() => setActiveBlock(block.key)}
+                        className={`flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${
+                          isActive
+                            ? "bg-black text-white"
+                            : "text-gray-700 hover:bg-gray-100"
+                        }`}
+                      >
+                        <span className="truncate">{block.label}</span>
+                        {isDirty ? (
+                          <span
+                            className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                              isActive ? "bg-amber-300" : "bg-amber-500"
+                            }`}
+                            title="Có thay đổi chưa lưu"
+                          />
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </nav>
         </aside>
 

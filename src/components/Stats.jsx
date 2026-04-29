@@ -41,14 +41,17 @@ const Counter = ({ to, suffix = "", decimals = 0 }) => {
 const Stats = ({ content }) => {
   const data = content || DEFAULT_SITE_CONTENT.stats;
   const items = Array.isArray(data?.items) && data.items.length > 0 ? data.items : DEFAULT_SITE_CONTENT.stats.items;
+  // Tightened spacing so Stats + the Clients marquee that follows it fit
+  // within roughly one desktop viewport. Top margin halved (mt-12/16 vs
+  // mt-20/24/32/40), grid gap and counter font scaled down a step.
   return (
-    <section className="mt-20 sm:mt-24 md:mt-32 lg:mt-40">
+    <section className="mt-12 sm:mt-16">
       <div className="mx-auto w-[92vw] lg:w-[80vw]">
         <FadeIn className="max-w-2xl">
           <span className="font-display text-sm font-semibold uppercase tracking-[0.25em] text-accent-400">
             {data?.eyebrow || DEFAULT_SITE_CONTENT.stats.eyebrow}
           </span>
-          <h2 className="mt-4 font-display text-3xl font-medium tracking-tight text-neutral-950 sm:text-4xl md:text-5xl [text-wrap:balance]">
+          <h2 className="mt-3 font-display text-2xl font-medium tracking-tight text-neutral-950 sm:text-3xl md:text-4xl [text-wrap:balance]">
             {data?.heading || DEFAULT_SITE_CONTENT.stats.heading}
           </h2>
         </FadeIn>
@@ -58,7 +61,7 @@ const Stats = ({ content }) => {
           whileInView="visible"
           viewport={{ once: true, margin: "0px 0px -120px" }}
           transition={{ staggerChildren: 0.12 }}
-          className="mt-12 grid grid-cols-2 gap-x-6 gap-y-10 sm:mt-16 lg:grid-cols-4"
+          className="mt-8 grid grid-cols-2 gap-x-6 gap-y-6 sm:mt-10 lg:grid-cols-4"
         >
           {items.map((s, i) => (
             <motion.div
@@ -68,12 +71,12 @@ const Stats = ({ content }) => {
                 visible: { opacity: 1, y: 0 },
               }}
               transition={{ duration: 0.5 }}
-              className="border-l border-neutral-200 pl-6 sm:pl-8"
+              className="border-l border-neutral-200 pl-5 sm:pl-6"
             >
-              <dd className="font-display text-4xl font-semibold tracking-tight text-neutral-950 sm:text-5xl md:text-6xl">
+              <dd className="font-display text-3xl font-semibold tracking-tight text-neutral-950 sm:text-4xl md:text-5xl">
                 <Counter to={s.value} suffix={s.suffix} decimals={s.decimals || 0} />
               </dd>
-              <dt className="mt-3 text-sm text-neutral-600 sm:text-base">
+              <dt className="mt-2 text-xs text-neutral-600 sm:text-sm">
                 {s.label}
               </dt>
             </motion.div>
