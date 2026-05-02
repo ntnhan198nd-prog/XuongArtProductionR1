@@ -172,7 +172,16 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
     let retryTimeoutId = null;
     let heartbeatId = null;
 
-    const canAutoplay = () => inView && !document.hidden;
+    // Gate playback on `eagerLoad` (= section-in-view, sticky once true)
+    // instead of per-card `inView`. Otherwise translateX-ing a card
+    // off-screen would flip inView=false and pause the video, then
+    // flip true on the next slide change and call play() again — that
+    // pause/resume cycle is exactly the "stutter then play" the user
+    // sees on every slide transition. Tied to `eagerLoad` instead, the
+    // 12 videos all keep running in the background once the gallery
+    // has been reached, so a slide change is just a translateX of an
+    // already-playing row.
+    const canAutoplay = () => eagerLoad && !document.hidden;
 
     const tryPlay = () => {
       if (!canAutoplay()) return;
@@ -216,10 +225,16 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
       tryPlay();
     };
 
+    // Don't programmatically pause on mount: the HTML <video autoPlay loop
+    // muted /> attributes already start playback the moment the element
+    // exists, and most browsers refuse to resume cleanly via play() once
+    // we've actively paused (Safari especially treats it like a "user
+    // paused" signal). We only retry-play here as a safety net for the
+    // canplay/stalled/buffering events further down. The visibility-
+    // change handler is the *only* place we call pause() — saves battery
+    // when the tab is hidden without breaking native autoplay.
     if (canAutoplay()) {
       scheduleRetry(0);
-    } else {
-      video.pause();
     }
 
     document.addEventListener("visibilitychange", onVisibilityChange);
@@ -248,7 +263,10 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
       video.removeEventListener("suspend", onBuffering);
       video.removeEventListener("ended", onEnded);
     };
-  }, [inView, isVideoCard, cardMediaUrl]);
+    // Deps drop `inView` deliberately — see canAutoplay above. The effect
+    // only needs to re-init when the source URL changes (different video)
+    // or when eagerLoad first flips on (kick off the initial play call).
+  }, [eagerLoad, isVideoCard, cardMediaUrl]);
 
   return (
     <motion.div
@@ -447,8 +465,15 @@ const ProjectsGallery = () => {
   // captured stale one.
   const slideRef = useRef(0);
   const mobileSlideRef = useRef(0);
+  // Carousel position refs are also mirrored so goToSlide can detect that
+  // we're currently sitting on the appended clone (mid-wrap, snap-back
+  // pending) — see the rapid-forward branch in goToSlide for why.
+  const carouselIdxRef = useRef(0);
+  const mobileCarouselIdxRef = useRef(0);
   useEffect(() => { slideRef.current = slide; }, [slide]);
   useEffect(() => { mobileSlideRef.current = mobileSlide; }, [mobileSlide]);
+  useEffect(() => { carouselIdxRef.current = carouselIdx; }, [carouselIdx]);
+  useEffect(() => { mobileCarouselIdxRef.current = mobileCarouselIdx; }, [mobileCarouselIdx]);
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isDesktopViewport, setIsDesktopViewport] = useState(false);
@@ -602,11 +627,31 @@ const ProjectsGallery = () => {
     if (N === 0) return;
     const target = ((next % N) + N) % N;
     const current = slideRef.current;
-    setEnableTransition(true);
     setSlide(target);
-    if (useClone && current === N - 1 && target === 0) {
+
+    // If we're already sitting on the appended clone (mid-wrap, snap-back
+    // still pending) and the user wants to keep going forward, just
+    // setting carouselIdx to `target` (e.g. 1) would translate the row
+    // *rightward* — from the clone's far-right position back toward the
+    // middle — which feels like "jumping to the start". Instead we snap
+    // to real slide 0 instantly (no transition; the clone is visually
+    // identical, so the jump is invisible) and then animate forward to
+    // the new target. This makes every forward click feel leftward,
+    // even when chained faster than the snap-back timeout.
+    if (useClone && carouselIdxRef.current === N) {
+      setEnableTransition(false);
+      setCarouselIdx(0);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setEnableTransition(true);
+          setCarouselIdx(target);
+        });
+      });
+    } else if (useClone && current === N - 1 && target === 0) {
+      setEnableTransition(true);
       setCarouselIdx(N); // animate onto the clone
     } else {
+      setEnableTransition(true);
       setCarouselIdx(target);
     }
     // Restart the 6 s autoplay countdown after every navigation (whether
@@ -622,11 +667,25 @@ const ProjectsGallery = () => {
     if (M === 0) return;
     const target = ((next % M) + M) % M;
     const current = mobileSlideRef.current;
-    setEnableMobileTransition(true);
     setMobileSlide(target);
-    if (useClone && current === M - 1 && target === 0) {
+
+    // Same rapid-forward fix as the desktop version: snap clone-to-real
+    // before animating onward, otherwise carouselIdx going from M back
+    // to 1 would translate the row rightward and feel like a jump back.
+    if (useClone && mobileCarouselIdxRef.current === M) {
+      setEnableMobileTransition(false);
+      setMobileCarouselIdx(0);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setEnableMobileTransition(true);
+          setMobileCarouselIdx(target);
+        });
+      });
+    } else if (useClone && current === M - 1 && target === 0) {
+      setEnableMobileTransition(true);
       setMobileCarouselIdx(M);
     } else {
+      setEnableMobileTransition(true);
       setMobileCarouselIdx(target);
     }
     if (scheduleAutoplayRef.current) scheduleAutoplayRef.current();
