@@ -88,23 +88,30 @@ const Footer = ({ content, social, cta, minimal = false, showContact = false }) 
               <SocialMedia invert content={social} />
             </div>
 
-            <div className="flex flex-col items-start gap-3 sm:items-end">
-              <Link
-                href={"/"}
-                className="inline-flex shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.92]"
-              >
-                <Image
-                  src="/logos/XUONGARTLOGOTRANG.png"
-                  alt="XUONGART"
-                  width={512}
-                  height={512}
-                  className="h-32 w-32 sm:h-40 sm:w-40 md:h-48 md:w-48 object-contain"
-                  priority={false}
-                />
-              </Link>
-              <p className="text-xs sm:text-sm text-neutral-400">
-                © {copyright} {new Date().getFullYear()}
-              </p>
+            <div className="flex flex-col items-start sm:items-end">
+              {/* Inner column groups the logo and copyright with their own
+                  centre alignment. Width auto-fits to the wider child
+                  (the copyright text), so the logo is horizontally
+                  centred relative to the copyright caption rather than
+                  hard-aligned to the column edge. */}
+              <div className="flex flex-col items-center gap-2">
+                <Link
+                  href={"/"}
+                  className="inline-flex shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.92]"
+                >
+                  <Image
+                    src="/logos/XUONGARTLOGOTRANG.png"
+                    alt="XUONGART"
+                    width={512}
+                    height={512}
+                    className="h-20 w-20 sm:h-24 sm:w-24 md:h-28 md:w-28 object-contain"
+                    priority={false}
+                  />
+                </Link>
+                <p className="text-xs sm:text-sm text-neutral-400 whitespace-nowrap">
+                  © {copyright} {new Date().getFullYear()}
+                </p>
+              </div>
             </div>
           </div>
         </Container>

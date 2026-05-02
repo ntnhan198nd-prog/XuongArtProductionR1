@@ -51,7 +51,7 @@ export default async function Home() {
       <Stats content={site.stats} />
       <Clients content={site.clients} />
 
-      <Container className="mt-20 sm:mt-28">
+      <Container className="mt-20 pb-24 sm:mt-28 sm:pb-32 md:pb-40">
         <FadeIn className="mx-auto max-w-3xl text-center">
           <h2 className="font-display text-4xl font-medium tracking-tight text-neutral-950 [text-wrap:balance] sm:text-5xl md:text-6xl">
             {site.intro.headingMain}{" "}
