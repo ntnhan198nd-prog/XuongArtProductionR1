@@ -133,18 +133,18 @@ const assignToPattern = (items, pattern, orientationMap = {}) => {
 const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillHeight = false, forceAspectRatio, eagerLoad = false }) => {
   const ref = useRef(null);
   const videoRef = useRef(null);
-  // `inView` toggles continuously — used to gate video playback (pause when
-  // the card scrolls off, resume when it comes back). `hasEnteredOnce` is
-  // set the first time the card is ever visible and stays true forever.
-  // The entry animation (opacity 0 → 1 with a per-index delay) only fires
-  // on that first reveal — without this, the carousel snap-back from the
-  // clone slide to the real first slide would re-fire the animation on
-  // every loop, producing a white-flash flash as the cards faded back in.
-  const inView = useInView(ref, { amount: 0.35, margin: "-5% 0px -5% 0px" });
-  const [hasEnteredOnce, setHasEnteredOnce] = useState(false);
-  useEffect(() => {
-    if (inView && !hasEnteredOnce) setHasEnteredOnce(true);
-  }, [inView, hasEnteredOnce]);
+  // We deliberately don't run a per-card entry animation any more. With
+  // the carousel architecture every card mounts upfront and stays mounted;
+  // off-screen slides are merely translated. Triggering an opacity 0→1
+  // fade the first time a slide-2 card crosses into view caused two
+  // visible bugs:
+  //   1. A white flash on first navigation to slide 2 (the staggered
+  //      delay × index made the fade-in last ~1.4 s).
+  //   2. The <video> sat at opacity:0 during the transition, and some
+  //      browsers suspend playback for fully-transparent media —
+  //      breaking the loop until the next heartbeat tick.
+  // Cards now render at their final state straight away (initial={false}
+  // on the motion.div below), so neither problem can recur.
   const cardMediaUrl = item?.previewMedia || item?.media || "";
   const isVideoCard = isVideoUrl(cardMediaUrl);
 
@@ -287,8 +287,8 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
   return (
     <motion.div
       ref={ref}
-      initial={{ opacity: 0, scale: 0.9, y: 20 }}
-      animate={hasEnteredOnce ? { opacity: 1, scale: 1, y: 0 } : { opacity: 0, scale: 0.9, y: 20 }}
+      initial={false}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
       transition={{
         // Default applies to opacity (the slow staggered reveal).
         duration: 0.8,
