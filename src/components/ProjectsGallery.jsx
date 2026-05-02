@@ -806,6 +806,36 @@ const ProjectsGallery = () => {
   const sectionRef = useRef(null);
   const sectionInView = useInView(sectionRef, { amount: 0.05, once: true });
 
+  // Force-play sweep: on every slide change (manual nav OR autoplay tick),
+  // walk all <video> elements inside the gallery and call play() on any
+  // that are paused. This catches two cases the per-card heartbeat is
+  // too slow for:
+  //   1. Browsers (Chrome / Safari) auto-suspend muted videos that have
+  //      been translated off-screen via translateX, even though we never
+  //      called pause() ourselves. Without this sweep there'd be a
+  //      visible "freeze then play" when a previously-off-screen card
+  //      slides into view.
+  //   2. The per-card heartbeat only ticks every 2.5 s, which would let
+  //      a stale paused state linger across multiple rapid clicks.
+  // Running on every carouselIdx / mobileCarouselIdx change means the
+  // play() call lands at the *start* of the slide animation, so by the
+  // time the spring settles all 12 are already running.
+  useEffect(() => {
+    if (!sectionInView || !sectionRef.current) return;
+    const videos = sectionRef.current.querySelectorAll("video");
+    videos.forEach((video) => {
+      if (video.paused && !video.ended) {
+        const promise = video.play();
+        if (promise && typeof promise.catch === "function") {
+          promise.catch(() => {
+            // Autoplay may be transiently blocked (e.g. mid-buffer) —
+            // the per-card heartbeat will pick it up on the next tick.
+          });
+        }
+      }
+    });
+  }, [carouselIdx, mobileCarouselIdx, sectionInView]);
+
   // ----- Infinite forward loop -----
   // Cloned data: append a copy of the first slide at the end of each rendered
   // row so the carousel can keep sliding leftward past the last real slide
