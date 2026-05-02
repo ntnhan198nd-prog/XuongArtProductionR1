@@ -153,16 +153,26 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
   // "metadata" to "auto" at runtime is a hint, and several browsers
   // (notably Safari + Firefox) keep the existing metadata-only fetch.
   // Calling load() resets the media element and re-applies the new
-  // preload value, so all 12 cards begin downloading in parallel the
-  // moment the user reaches the section.
+  // preload value.
+  //
+  // The call is staggered by `index * 120ms` to avoid the CPU spike of
+  // every card calling load() in the same paint frame — that spike was
+  // the root cause of the "playing video freezes" reports in modeB,
+  // where all 12 cards eagerLoad on mount and would otherwise hammer
+  // the decoder simultaneously. 120 ms × 6 cards = 720 ms total spread,
+  // imperceptible to the user but enough to keep the browser ahead.
   useEffect(() => {
     if (!eagerLoad || !videoRef.current || !isVideoCard) return;
-    try {
-      videoRef.current.load();
-    } catch {
-      // Some browsers throw if load() is called too early; ignore.
-    }
-  }, [eagerLoad, isVideoCard, cardMediaUrl]);
+    const delay = index * 120;
+    const id = window.setTimeout(() => {
+      try {
+        videoRef.current?.load();
+      } catch {
+        // Some browsers throw if load() is called too early; ignore.
+      }
+    }, delay);
+    return () => window.clearTimeout(id);
+  }, [eagerLoad, isVideoCard, cardMediaUrl, index]);
 
   // Keep thumbnail autoplay stable: resume when tab returns, when stream stalls, or when browser pauses unexpectedly.
   useEffect(() => {
@@ -262,11 +272,15 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
     // hand-off mis-fires. Resetting currentTime back to 0 here recovers
     // the latter case so the video starts looping again on the next tick
     // even if onEnded never fired.
+    // 1.5 s tick (was 2.5 s) — fast enough that a browser auto-suspend
+    // recovers before the user can perceive it as a freeze, slow enough
+    // that 12 simultaneous heartbeats per gallery don't dominate the main
+    // thread. 12 × ~0.7 ops every 1.5 s ≈ 5 lookups/s total.
     heartbeatId = window.setInterval(() => {
       if (!canAutoplay() || !video.paused) return;
       if (video.ended) video.currentTime = 0;
       tryPlay();
-    }, 2500);
+    }, 1500);
 
     return () => {
       if (retryTimeoutId) window.clearTimeout(retryTimeoutId);
