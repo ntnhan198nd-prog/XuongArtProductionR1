@@ -1,6 +1,6 @@
 "use client";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion, useInView } from "framer-motion";
+import { AnimatePresence, motion, useInView, useReducedMotion } from "framer-motion";
 import clsx from "clsx";
 import Link from "next/link";
 import Image from "next/image";
@@ -425,6 +425,11 @@ const ProjectsGallery = () => {
   //   modeA – inject preload links on mount, defer decode/play until view
   //   modeB – inject preload links + decode/play immediately on mount
   const preloadMode = gallery?.preloadMode || "modeB";
+  // OS-level "Reduce motion" preference. When true we replace the spring
+  // slide animation with an instant cut so vestibular-sensitive users
+  // don't get the horizontal sweep on every navigation.
+  const reduceMotion = useReducedMotion();
+  const slideTransition = reduceMotion ? { duration: 0 } : SLIDE_TRANSITION;
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
 
@@ -494,10 +499,15 @@ const ProjectsGallery = () => {
   // pending) — see the rapid-forward branch in goToSlide for why.
   const carouselIdxRef = useRef(0);
   const mobileCarouselIdxRef = useRef(0);
-  useEffect(() => { slideRef.current = slide; }, [slide]);
-  useEffect(() => { mobileSlideRef.current = mobileSlide; }, [mobileSlide]);
-  useEffect(() => { carouselIdxRef.current = carouselIdx; }, [carouselIdx]);
-  useEffect(() => { mobileCarouselIdxRef.current = mobileCarouselIdx; }, [mobileCarouselIdx]);
+  // Single effect mirrors all four state values into refs. Runs on every
+  // render but the body is four pointer assignments — cheaper than four
+  // separate useEffects each with their own cleanup/scheduling overhead.
+  useEffect(() => {
+    slideRef.current = slide;
+    mobileSlideRef.current = mobileSlide;
+    carouselIdxRef.current = carouselIdx;
+    mobileCarouselIdxRef.current = mobileCarouselIdx;
+  });
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isDesktopViewport, setIsDesktopViewport] = useState(false);
@@ -860,16 +870,22 @@ const ProjectsGallery = () => {
   const [loadPhase, setLoadPhase] = useState("phase1");
 
   // Helper: per-card eagerLoad gate, branched on the preloadMode chosen
-  // in the admin. modeB fires immediately on mount (no wait for scroll);
-  // modeA + lazy still wait for the section to come into view before the
-  // <video> elements switch to preload="auto" + load() (so we don't burn
-  // CPU decoding 12 streams while the user is still on the showreel).
-  // Defined here, after loadPhase is declared, so the useCallback dep
-  // array isn't TDZ-evaluated against an undeclared binding.
+  // in the admin.
+  //   modeB  — every card returns true on mount, *bypassing* the phase-1/2
+  //            split. The mode label is "Full eager play": the user
+  //            expects all 12 videos to start decoding/autoplaying
+  //            immediately, not to wait for phase-1 link-preload load
+  //            events (which several browsers don't reliably fire).
+  //   modeA  — gated on sectionInView AND the phase split, so the
+  //            <video> elements stay at preload="metadata" until the
+  //            user scrolls in. Bytes are pre-warmed via <link rel=preload>
+  //            elsewhere; CPU cost stays near zero in the meantime.
+  //   lazy   — same as modeA's gate; nothing fires until sectionInView.
+  // Defined after loadPhase so the useCallback dep array doesn't TDZ.
   const cardEagerLoad = useCallback(
     (item) => {
+      if (preloadMode === "modeB") return true;
       const phaseAllows = item?._isPhase1 || loadPhase === "phase2";
-      if (preloadMode === "modeB") return phaseAllows;
       return sectionInView && phaseAllows;
     },
     [preloadMode, sectionInView, loadPhase]
@@ -932,7 +948,14 @@ const ProjectsGallery = () => {
         document.head.appendChild(link);
         links.push(link);
       });
-      timeoutId = window.setTimeout(startPhase2, 15000);
+      // Safety fallback if no phase-1 link fires its `load` event:
+      // <link rel="preload"> reliably reports load on Chrome but Safari
+      // and Firefox sometimes never do, leaving the carousel stuck on
+      // phase 1 forever. 8 s is enough for 6 small videos on most
+      // residential connections; quicker than the original 15 s on
+      // every slow-fire browser, still long enough to almost always
+      // let the natural load events win on Chrome.
+      timeoutId = window.setTimeout(startPhase2, 8000);
     }
 
     return () => {
@@ -1140,7 +1163,7 @@ const ProjectsGallery = () => {
                     animate={{
                       x: `${-carouselIdx * (100 / desktopRendered.length)}%`,
                     }}
-                    transition={enableTransition ? SLIDE_TRANSITION : { duration: 0 }}
+                    transition={enableTransition ? slideTransition : { duration: 0 }}
                   >
                     {desktopRendered.map((assignedSlots, renderIdx) => {
                       // Clones reuse the source slide's grid template + items
@@ -1196,7 +1219,7 @@ const ProjectsGallery = () => {
                     animate={{
                       x: `${-mobileCarouselIdx * (100 / mobileRendered.length)}%`,
                     }}
-                    transition={enableMobileTransition ? SLIDE_TRANSITION : { duration: 0 }}
+                    transition={enableMobileTransition ? slideTransition : { duration: 0 }}
                   >
                     {mobileRendered.map((items, renderIdx) => {
                       // sourceIdx drives the layout-pick (1P+4L on the first
