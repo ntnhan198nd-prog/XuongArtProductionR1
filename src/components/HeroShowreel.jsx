@@ -67,14 +67,18 @@ const HeroShowreel = ({ videoSrc, posterSrc, scrollTargetId = "projects-section"
           </span>
         </div>
 
-        {/* Bottom-left: brand title + tagline */}
-        <div className="absolute inset-x-0 bottom-28 px-6 sm:bottom-32 sm:px-12 md:bottom-36 md:px-16">
+        {/* Bottom-left: brand title + tagline.
+            Mobile (text-3xl) intentionally smaller than the previous
+            text-4xl so the headline doesn't break awkwardly on
+            iPhone-SE-class screens (320 px) once the accent word
+            hyphenates. */}
+        <div className="absolute inset-x-0 bottom-28 px-5 sm:bottom-32 sm:px-12 md:bottom-36 md:px-16">
           <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
             <div>
-              <p className="font-display text-xs font-semibold uppercase tracking-[0.4em] text-white/60">
+              <p className="font-display text-[10px] sm:text-xs font-semibold uppercase tracking-[0.32em] sm:tracking-[0.4em] text-white/60">
                 {c("tagline")}
               </p>
-              <h1 className="mt-3 font-display text-4xl font-bold leading-[1.05] tracking-tight text-white sm:text-6xl md:text-7xl [text-wrap:balance]">
+              <h1 className="mt-3 font-display text-3xl font-bold leading-[1.05] tracking-tight text-white sm:text-6xl md:text-7xl [text-wrap:balance]">
                 {c("headingMain")} <span className="text-accent-400">{c("headingAccent")}</span>
               </h1>
             </div>
@@ -87,8 +91,14 @@ const HeroShowreel = ({ videoSrc, posterSrc, scrollTargetId = "projects-section"
           </div>
         </div>
 
-        {/* Centered scroll-to-projects hint */}
-        <div className="absolute inset-x-0 bottom-8 z-10 flex justify-center">
+        {/* Centered scroll-to-projects hint. The inline bottom uses
+            calc(2rem + safe-area-inset-bottom) so the hint clears the
+            home indicator on notched iPhones — pure bottom-8 collided
+            with the indicator strip on devices like iPhone 14 Pro. */}
+        <div
+          className="absolute inset-x-0 z-10 flex justify-center"
+          style={{ bottom: "calc(2rem + env(safe-area-inset-bottom))" }}
+        >
           <button
             type="button"
             onClick={handleScrollToProjects}

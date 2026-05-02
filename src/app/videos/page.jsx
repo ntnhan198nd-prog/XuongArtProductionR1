@@ -565,7 +565,7 @@ export default function PortfolioPage() {
               <button
                 key={n}
                 onClick={() => setPage(n)}
-                className={`min-w-[2rem] rounded-md px-3 py-2 text-sm transition ${
+                className={`min-h-[44px] min-w-[44px] rounded-md px-3 py-2 text-sm transition ${
                   active ? "bg-black text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                 }`}
               >
@@ -599,7 +599,7 @@ export default function PortfolioPage() {
               <div className="sm:hidden sticky top-0 z-20 bg-black/90 text-white px-4 py-3 flex justify-end">
                 <button
                   onClick={closeProject}
-                  className="p-2 rounded-full hover:bg-white/10 focus:outline-none"
+                  className="inline-flex items-center justify-center min-h-[44px] min-w-[44px] rounded-full hover:bg-white/10 focus:outline-none"
                   aria-label="Đóng"
                 >
                   ✕
@@ -608,7 +608,7 @@ export default function PortfolioPage() {
               {/* Desktop floating close button */}
               <button
                 onClick={closeProject}
-                className="hidden sm:flex absolute top-3 right-3 z-10 h-10 w-10 items-center justify-center rounded-full bg-white/20 border border-white/30 text-white hover:bg-white/30 focus:outline-none focus:ring-2 focus:ring-white/50"
+                className="hidden sm:flex absolute top-3 right-3 z-10 h-11 w-11 items-center justify-center rounded-full bg-white/20 border border-white/30 text-white hover:bg-white/30 focus:outline-none focus:ring-2 focus:ring-white/50"
                 aria-label="Đóng"
               >
                 ✕

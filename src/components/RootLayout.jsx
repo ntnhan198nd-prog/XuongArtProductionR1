@@ -86,7 +86,7 @@ const Header = ({ invert = false, mobileMenuOpen, setMobileMenuOpen }) => {
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               className={clsx(
-                "md:hidden p-2 rounded-md transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.85]",
+                "md:hidden inline-flex items-center justify-center min-h-[44px] min-w-[44px] rounded-md transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.85]",
                 invert ? "text-white hover:bg-white/10" : "text-neutral-950 hover:bg-neutral-100"
               )}
               aria-label="Toggle menu"

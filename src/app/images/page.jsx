@@ -284,7 +284,7 @@ export default function ImageProjectsPage() {
               <button
                 key={n}
                 onClick={() => setPage(n)}
-                className={`min-w-[2rem] rounded-md px-3 py-2 text-sm transition ${
+                className={`min-h-[44px] min-w-[44px] rounded-md px-3 py-2 text-sm transition ${
                   active ? "bg-black text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                 }`}
               >
@@ -334,7 +334,7 @@ export default function ImageProjectsPage() {
                   </div>
                   <button
                     onClick={closeProject}
-                    className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+                    className="inline-flex items-center justify-center min-h-[44px] min-w-[44px] hover:bg-gray-100 rounded-full transition-colors"
                     aria-label="Đóng"
                   >
                     <FiX className="w-6 h-6" />
