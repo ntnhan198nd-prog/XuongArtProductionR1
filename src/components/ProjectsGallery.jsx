@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useInView } from "framer-motion";
 import clsx from "clsx";
 import Link from "next/link";
@@ -12,8 +12,36 @@ import { getFeaturedProjects } from "@/lib/strapi";
 import { useSiteContent } from "@/components/SiteContentProvider";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 
-const AUTOPLAY_INTERVAL_MS = 7000;
+// 6 s of inactivity before the carousel auto-advances. The timer is
+// reset every time the user navigates manually (arrow / dot), so a
+// freshly-clicked slide always gets the full 6 s before the next
+// auto-advance — never a half-second residual fire from the previous
+// interval (which is what setInterval would do).
+const AUTOPLAY_INTERVAL_MS = 6000;
 const DESKTOP_BREAKPOINT_QUERY = "(min-width: 1024px)";
+
+// Apple-style carousel: every slide is rendered side-by-side in one wide
+// flex row, and we translateX the row so the active slide aligns with the
+// viewport. Pure x animation, no opacity, no remount on slide change —
+// every featured card (and its <video>) stays mounted forever, so the
+// browser never has to refetch or redecode when the user navigates.
+//
+// Spring (instead of a fixed-duration tween) gives the slide a bit of
+// velocity / momentum: it starts fast, decelerates smoothly, and when
+// the user clicks rapidly the new spring inherits the current velocity
+// rather than snapping to a fresh easing curve. damping is tuned just
+// over critical so it settles cleanly without an overshoot bounce.
+const SLIDE_TRANSITION = {
+  type: "spring",
+  stiffness: 280,
+  damping: 32,
+  mass: 1,
+};
+// Approximate time for the spring above to settle. Used by the snap-back
+// effect because spring transitions don't expose a deterministic duration
+// the way tween does. A 30 ms safety margin lets the spring fully come
+// to rest before we silently jump back to the real first slide.
+const SLIDE_SETTLE_MS = 650;
 
 // --- Helpers ---
 const isVideoUrl = (url) => /(mp4|webm|ogg|mov|avi)$/i.test(url || "");
@@ -30,32 +58,6 @@ const normalizeOrientation = (val) => {
   if (["portrait", "doc", "dọc", "vertical", "v", "p"].includes(s)) return "portrait";
   if (["landscape", "ngang", "horizontal", "h", "l"].includes(s)) return "landscape";
   return undefined;
-};
-
-// Convert Strapi Rich Text (Blocks) or unknown objects to plain text
-const blocksToPlainText = (value) => {
-  if (typeof value === 'string') return value;
-  if (!value) return '';
-  // Strapi v4 rich text blocks is usually an array of nodes
-  try {
-    const walk = (node) => {
-      if (!node) return '';
-      if (typeof node === 'string') return node;
-      if (Array.isArray(node)) return node.map(walk).join('');
-      const type = node.type || node.tag || '';
-      const children = node.children || node.content || [];
-      const text = node.text || '';
-      const inner = text || walk(children);
-      // Add line breaks for block-level nodes
-      if (['paragraph', 'p', 'heading', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'list', 'ul', 'ol', 'blockquote'].includes(type)) {
-        return `${inner}\n`;
-      }
-      return inner;
-    };
-    return walk(value).replace(/\n{3,}/g, '\n\n').trim();
-  } catch (e) {
-    return '';
-  }
 };
 
 // Grid pattern cố định theo layout trong ảnh
@@ -115,22 +117,52 @@ const assignToPattern = (items, pattern, orientationMap = {}) => {
   });
 };
 
-// Individual project card component
-const FeaturedCard = ({ areaName, slotShape, item, onOpen, index = 0, fillHeight = false, forceAspectRatio }) => {
+// Individual project card component.
+// `eagerLoad` (gallery-level IntersectionObserver) flips the inner <video>
+// from preload="metadata" (just duration/dimensions) to preload="auto"
+// (full bytes) once the user scrolls near the gallery. Combined with the
+// carousel keeping every card mounted forever, this means a slide change
+// hits the already-decoded buffer instead of starting a fresh download.
+//
+// Wrapped in React.memo because the carousel renders 13 cards (12 real +
+// 1 clone) and the parent re-renders on every slide change, autoplay
+// tick, and hover. Props are stable (item from useMemo, onOpen identity
+// from parent, eagerLoad from a once-true useInView), so default shallow
+// comparison reliably skips re-renders that would otherwise hit every
+// card on each navigation.
+const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillHeight = false, forceAspectRatio, eagerLoad = false }) => {
   const ref = useRef(null);
   const videoRef = useRef(null);
+  // `inView` toggles continuously — used to gate video playback (pause when
+  // the card scrolls off, resume when it comes back). `hasEnteredOnce` is
+  // set the first time the card is ever visible and stays true forever.
+  // The entry animation (opacity 0 → 1 with a per-index delay) only fires
+  // on that first reveal — without this, the carousel snap-back from the
+  // clone slide to the real first slide would re-fire the animation on
+  // every loop, producing a white-flash flash as the cards faded back in.
   const inView = useInView(ref, { amount: 0.35, margin: "-5% 0px -5% 0px" });
-  const [videoAspectRatio, setVideoAspectRatio] = useState(16/9); // Aspect ratio của video
+  const [hasEnteredOnce, setHasEnteredOnce] = useState(false);
+  useEffect(() => {
+    if (inView && !hasEnteredOnce) setHasEnteredOnce(true);
+  }, [inView, hasEnteredOnce]);
   const cardMediaUrl = item?.previewMedia || item?.media || "";
   const isVideoCard = isVideoUrl(cardMediaUrl);
-  
-  // Ép các media vuông thành hình chữ nhật (ưu tiên 16:9)
-  const normalizeRectRatio = (ratio) => {
-    if (!ratio || !isFinite(ratio)) return 16/9;
-    // Nếu gần vuông (0.95 - 1.05) thì ép thành 16:9
-    if (ratio > 0.95 && ratio < 1.05) return 16/9;
-    return ratio;
-  };
+
+  // Force the browser to start fetching the full video as soon as the
+  // gallery scrolls into view. Just flipping the `preload` attribute from
+  // "metadata" to "auto" at runtime is a hint, and several browsers
+  // (notably Safari + Firefox) keep the existing metadata-only fetch.
+  // Calling load() resets the media element and re-applies the new
+  // preload value, so all 12 cards begin downloading in parallel the
+  // moment the user reaches the section.
+  useEffect(() => {
+    if (!eagerLoad || !videoRef.current || !isVideoCard) return;
+    try {
+      videoRef.current.load();
+    } catch {
+      // Some browsers throw if load() is called too early; ignore.
+    }
+  }, [eagerLoad, isVideoCard, cardMediaUrl]);
 
   // Keep thumbnail autoplay stable: resume when tab returns, when stream stalls, or when browser pauses unexpectedly.
   useEffect(() => {
@@ -218,33 +250,32 @@ const FeaturedCard = ({ areaName, slotShape, item, onOpen, index = 0, fillHeight
     };
   }, [inView, isVideoCard, cardMediaUrl]);
 
-  const handleImageLoad = (img) => {
-    // Không cần orientation detection nữa vì đã cố định trong pattern
-    const ratio = (img.naturalWidth || 1) / (img.naturalHeight || 1);
-    setVideoAspectRatio(normalizeRectRatio(ratio));
-  };
-
-  const handleVideoLoadedMetadata = (e) => {
-    const v = e.currentTarget;
-    const ratio = (v.videoWidth || 1) / (v.videoHeight || 1);
-    
-    // Chỉ lưu aspect ratio, không thay đổi orientation (nhưng ép vuông -> chữ nhật)
-    setVideoAspectRatio(normalizeRectRatio(ratio));
-  };
-
   return (
     <motion.div
       ref={ref}
       initial={{ opacity: 0, scale: 0.9, y: 20 }}
-      animate={inView ? { opacity: 1, scale: 1, y: 0 } : { opacity: 0, scale: 0.9, y: 20 }}
-      transition={{ 
-        duration: 0.8, 
+      animate={hasEnteredOnce ? { opacity: 1, scale: 1, y: 0 } : { opacity: 0, scale: 0.9, y: 20 }}
+      transition={{
+        // Default applies to opacity (the slow staggered reveal).
+        duration: 0.8,
         ease: [0.43, 0.13, 0.23, 0.96],
-        delay: index * 0.1 // Stagger animation based on index
+        delay: index * 0.1, // Stagger fade-in based on index
+        // Per-property overrides for scale and y. These properties are
+        // also driven by whileHover; without an override here, leaving
+        // the hover state would animate scale/y back to their resting
+        // values using the slow default above (0.8s + per-card delay) —
+        // making hover-out drag well behind hover-in. Forcing both to
+        // 0.18s with no delay means hover in and out feel symmetrical.
+        scale: { duration: 0.18, ease: [0.32, 0.72, 0, 1], delay: 0 },
+        y: { duration: 0.18, ease: [0.32, 0.72, 0, 1], delay: 0 },
       }}
       className={clsx(
         "relative group overflow-hidden rounded-2xl bg-transparent text-white shadow-xl cursor-pointer",
-        "hover:shadow-2xl transition-all duration-300",
+        // transition-shadow only — transition-all also animates transform,
+        // which would double-animate (and slow down) the lift/scale that
+        // framer-motion's whileHover already drives. Restricting to shadow
+        // keeps box-shadow easing without fighting framer.
+        "hover:shadow-2xl transition-shadow duration-200 ease-[cubic-bezier(0.32,0.72,0,1)]",
         // Sử dụng slotShape từ pattern thay vì orientation state
         slotShape === 'portrait'
           ? 'col-span-2 row-span-2'
@@ -261,19 +292,20 @@ const FeaturedCard = ({ areaName, slotShape, item, onOpen, index = 0, fillHeight
         ...(fillHeight
           ? {}
           : {
+              // slotShape is always set by assignToPattern (portrait/landscape),
+              // so 16/9 is just a defensive fallback that never executes.
               aspectRatio:
                 forceAspectRatio ||
-                (slotShape === 'portrait'
-                  ? 9 / 16
-                  : slotShape === 'landscape'
-                  ? 16 / 9
-                  : videoAspectRatio || 16 / 9),
+                (slotShape === 'portrait' ? 9 / 16 : 16 / 9),
             })
       }}
-      whileHover={{ 
+      whileHover={{
         scale: 1.03,
         y: -5,
-        transition: { duration: 0.3, ease: "easeOut" }
+        // Snappier hover — Apple's signature ease-out curve at 0.18s feels
+        // immediate without snapping. The previous easeOut at 0.3s lagged
+        // behind the cursor and felt sluggish on rapid pointer crossings.
+        transition: { duration: 0.18, ease: [0.32, 0.72, 0, 1] },
       }}
       onClick={() => onOpen && onOpen(item)}
     >
@@ -296,13 +328,12 @@ const FeaturedCard = ({ areaName, slotShape, item, onOpen, index = 0, fillHeight
               loop={true}
               playsInline
               controls={false}
-              preload="metadata"
+              preload={eagerLoad ? "auto" : "metadata"}
               poster={item.poster || ''}
               webkit-playsinline="true"
               disablePictureInPicture
               controlsList="nodownload nofullscreen noremoteplayback"
               onContextMenu={(e) => e.preventDefault()}
-              onLoadedMetadata={handleVideoLoadedMetadata}
               onError={(e) => {
                 console.error('Video playback error:', e);
               }}
@@ -314,9 +345,8 @@ const FeaturedCard = ({ areaName, slotShape, item, onOpen, index = 0, fillHeight
             alt={item.title}
             fill
             sizes="(max-width: 640px) 90vw, (max-width: 1024px) 50vw, 33vw"
-            className={fillHeight ? "object-cover" : "object-cover"}
+            className="object-cover"
             loading="lazy"
-            onLoad={handleImageLoad}
           />
         ) : (
           <div className="h-full w-full bg-neutral-800 flex items-center justify-center">
@@ -345,7 +375,8 @@ const FeaturedCard = ({ areaName, slotShape, item, onOpen, index = 0, fillHeight
       </div>
     </motion.div>
   );
-};
+});
+FeaturedCard.displayName = "FeaturedCard";
 
 // Modal component removed - no more black overlay
 
@@ -355,15 +386,38 @@ const ProjectsGallery = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
 
-  const openProject = (project) => {
+  // closeProject defers clearing `selectedProject` by 200 ms so the modal can
+  // play its exit animation. If the user re-opens (clicks another card)
+  // before that 200 ms is up, the pending timer would otherwise fire and
+  // wipe out the freshly-set selection — making the new modal disappear
+  // moments after it appeared. Tracking the timer in a ref lets openProject
+  // cancel any in-flight clear, and the unmount effect prevents leaks.
+  const closeTimerRef = useRef(null);
+
+  // useCallback so the FeaturedCard memo's shallow prop check keeps the
+  // onOpen reference stable across re-renders — without it, every render
+  // would hand each card a brand-new function and bust the memo.
+  const openProject = useCallback((project) => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
     setSelectedProject(project);
     setIsModalOpen(true);
-  };
+  }, []);
 
-  const closeProject = () => {
+  const closeProject = useCallback(() => {
     setIsModalOpen(false);
-    setTimeout(() => setSelectedProject(null), 200);
-  };
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = setTimeout(() => {
+      setSelectedProject(null);
+      closeTimerRef.current = null;
+    }, 200);
+  }, []);
+
+  useEffect(() => () => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+  }, []);
   
   // Close on ESC
   useEffect(() => {
@@ -373,11 +427,28 @@ const ProjectsGallery = () => {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isModalOpen]);
+  }, [isModalOpen, closeProject]);
 
   useBodyScrollLock(isModalOpen);
+  // `slide` is the *real* slide index (0..N-1) used for dot highlighting and
+  // autoplay accounting. `carouselIdx` is the *carousel position* (0..N) —
+  // when it lands on N (the clone of slide 0 appended to the rendered row)
+  // we let the animation run, then snap carouselIdx back to 0 with the
+  // transition disabled. Visually the user just keeps sliding leftward
+  // forever, no rightward "back to start" jump.
   const [slide, setSlide] = useState(0);
-  const [mobileSlide, setMobileSlide] = useState(0); // Separate state for mobile
+  const [carouselIdx, setCarouselIdx] = useState(0);
+  const [enableTransition, setEnableTransition] = useState(true);
+  const [mobileSlide, setMobileSlide] = useState(0);
+  const [mobileCarouselIdx, setMobileCarouselIdx] = useState(0);
+  const [enableMobileTransition, setEnableMobileTransition] = useState(true);
+  // Refs mirror the latest slide indices so closures (autoplay tick, button
+  // handlers built once at mount) read the current value instead of a
+  // captured stale one.
+  const slideRef = useRef(0);
+  const mobileSlideRef = useRef(0);
+  useEffect(() => { slideRef.current = slide; }, [slide]);
+  useEffect(() => { mobileSlideRef.current = mobileSlide; }, [mobileSlide]);
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isDesktopViewport, setIsDesktopViewport] = useState(false);
@@ -414,15 +485,10 @@ const ProjectsGallery = () => {
             const fullMediaUrl = toAbsoluteAssetUrl(mediaUrl, apiBaseUrl);
             const fullMediaPreviewUrl = toAbsoluteAssetUrl(mediaPreviewUrl, apiBaseUrl);
             
-            // Prefer new fields if available, fallback to legacy 'description'
+            // Prefer new field, fallback to legacy 'description'. Description
+            // is kept as raw rich-text (modal renders via RichTextRenderer).
             const rawFull = project.attributes?.fullDescription || project.attributes?.description || '';
-            const rawShort = project.attributes?.shortDescription || project.attributes?.description || '';
-            const fullDescription = blocksToPlainText(rawFull);
-            const shortDescription = blocksToPlainText(rawShort);
-            const excerpt = shortDescription
-              ? (shortDescription.length > 160 ? shortDescription.slice(0, 160).trim() + '…' : shortDescription)
-              : '';
-            
+
             // Orientation: prefer Strapi field, fallback to media dimensions
             const mediaW = mediaAttributes?.width;
             const mediaH = mediaAttributes?.height;
@@ -433,7 +499,6 @@ const ProjectsGallery = () => {
               id: project.id,
               title: project.attributes?.title || 'Untitled',
               client: project.attributes?.client || '',
-              tagline: excerpt,
               description: rawFull, // Giữ nguyên rich text format
               category: project.attributes?.category || '',
               categories: Array.isArray(project.attributes?.categories)
@@ -520,66 +585,213 @@ const ProjectsGallery = () => {
     return slidesArr;
   }, [allItems]);
 
-  // Keep slide indexes in bounds when data changes.
+  // Navigation helpers, hoisted above the autoplay/onFocus effects that
+  // reference them in their dependency arrays — defining them later would
+  // TDZ-error on the first render. Wrapping forward (last → first) animates
+  // onto the appended clone first; the snap-back effect (further down)
+  // resets carouselIdx to 0 once the animation lands.
+  // useClone=true is the "forward direction" hint — only the right arrow
+  // and the autoplay tick set it. When the caller is moving forward AND
+  // we're wrapping last→first, we animate onto the appended clone so the
+  // row keeps translating leftward. Anything else (left arrow, dot click,
+  // refocus clamp) animates straight to the target index, which means a
+  // backward step from slide 1 → slide 0 produces a clean rightward
+  // animation instead of being mistaken for a forward wrap.
+  const goToSlide = useCallback((next, useClone = false) => {
+    const N = slides.length;
+    if (N === 0) return;
+    const target = ((next % N) + N) % N;
+    const current = slideRef.current;
+    setEnableTransition(true);
+    setSlide(target);
+    if (useClone && current === N - 1 && target === 0) {
+      setCarouselIdx(N); // animate onto the clone
+    } else {
+      setCarouselIdx(target);
+    }
+    // Restart the 6 s autoplay countdown after every navigation (whether
+    // it came from the user clicking arrow/dot or from the autoplay tick
+    // itself). Going through a ref keeps this independent of where
+    // scheduleAutoplay is defined, so we don't get into a circular
+    // useCallback dependency.
+    if (scheduleAutoplayRef.current) scheduleAutoplayRef.current();
+  }, [slides.length]);
+
+  const goToMobileSlide = useCallback((next, useClone = false) => {
+    const M = mobileSlides.length;
+    if (M === 0) return;
+    const target = ((next % M) + M) % M;
+    const current = mobileSlideRef.current;
+    setEnableMobileTransition(true);
+    setMobileSlide(target);
+    if (useClone && current === M - 1 && target === 0) {
+      setMobileCarouselIdx(M);
+    } else {
+      setMobileCarouselIdx(target);
+    }
+    if (scheduleAutoplayRef.current) scheduleAutoplayRef.current();
+  }, [mobileSlides.length]);
+
+  // Keep slide indexes in bounds when data changes. Both `slide` (the real
+  // slide for dot highlighting) and `carouselIdx` (the carousel position)
+  // need to be clamped — otherwise a stale carouselIdx that exceeds the
+  // new rendered length would translate the row off-screen until the
+  // next navigation.
   useEffect(() => {
     setSlide((current) => (slides.length > 0 ? current % slides.length : 0));
+    setCarouselIdx((current) => (slides.length > 0 ? Math.min(current, slides.length) : 0));
   }, [slides.length]);
 
   useEffect(() => {
     setMobileSlide((current) => (mobileSlides.length > 0 ? current % mobileSlides.length : 0));
+    setMobileCarouselIdx((current) => (mobileSlides.length > 0 ? Math.min(current, mobileSlides.length) : 0));
   }, [mobileSlides.length]);
 
-  // Autoplay only for the active viewport to avoid timer contention.
-  useEffect(() => {
-    const activeLength = isDesktopViewport ? slides.length : mobileSlides.length;
-    if (activeLength <= 1) return undefined;
+  // Autoplay: self-rescheduling setTimeout instead of setInterval so the
+  // 6 s countdown can be reset every time the user navigates manually
+  // (arrow / dot). With setInterval the next tick would fire at whatever
+  // residual time was left in the cycle — clicking arrow at 5 s into the
+  // cycle would auto-advance again 1 s later, which felt jumpy.
+  const autoplayTimerRef = useRef(null);
+  const scheduleAutoplay = useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (autoplayTimerRef.current) {
+      window.clearTimeout(autoplayTimerRef.current);
+      autoplayTimerRef.current = null;
+    }
+    const length = isDesktopViewport ? slides.length : mobileSlides.length;
+    if (length <= 1) return;
 
-    let intervalId;
-    const tick = () => {
-      if (document.hidden) return;
+    autoplayTimerRef.current = window.setTimeout(() => {
+      autoplayTimerRef.current = null;
+      if (typeof document !== "undefined" && document.hidden) {
+        // Visibility-change handler will re-arm when the tab returns.
+        return;
+      }
+      // Auto-advance leftward (forward); goToSlide internally calls
+      // scheduleAutoplayRef.current() so the next tick is automatically
+      // scheduled — no need to call it again here. useClone=true so the
+      // forward wrap from last → first uses the appended clone instead
+      // of a rightward jump.
       if (isDesktopViewport) {
-        setSlide((current) => (current + 1) % slides.length);
+        if (slides.length > 0) goToSlide(slideRef.current + 1, true);
       } else {
-        setMobileSlide((current) => (current + 1) % mobileSlides.length);
+        if (mobileSlides.length > 0) goToMobileSlide(mobileSlideRef.current + 1, true);
+      }
+    }, AUTOPLAY_INTERVAL_MS);
+  }, [isDesktopViewport, slides.length, mobileSlides.length, goToSlide, goToMobileSlide]);
+
+  // Mirror scheduleAutoplay into a ref so goToSlide / goToMobileSlide can
+  // reset the timer without taking it as a dependency (and dragging the
+  // whole autoplay graph into their useCallback deps).
+  const scheduleAutoplayRef = useRef(null);
+  useEffect(() => {
+    scheduleAutoplayRef.current = scheduleAutoplay;
+  }, [scheduleAutoplay]);
+
+  // Initial schedule + cleanup.
+  useEffect(() => {
+    scheduleAutoplay();
+    return () => {
+      if (autoplayTimerRef.current) {
+        window.clearTimeout(autoplayTimerRef.current);
+        autoplayTimerRef.current = null;
       }
     };
+  }, [scheduleAutoplay]);
 
-    const start = () => {
-      if (intervalId) window.clearInterval(intervalId);
-      intervalId = window.setInterval(tick, AUTOPLAY_INTERVAL_MS);
+  // Re-arm when the tab becomes visible (the timer is paused while hidden
+  // because the timeout callback bails on document.hidden).
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const onVis = () => {
+      if (!document.hidden) scheduleAutoplay();
     };
-
-    start();
-
-    const onVisibilityChange = () => {
-      if (!document.hidden) start();
-    };
-
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      if (intervalId) window.clearInterval(intervalId);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [isDesktopViewport, slides.length, mobileSlides.length]);
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [scheduleAutoplay]);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
     const onFocus = () => {
+      // Re-clamp into range; the carouselIdx is also clamped by the helper.
       if (isDesktopViewport) {
-        setSlide((current) => (slides.length > 0 ? current % slides.length : 0));
+        if (slides.length > 0) goToSlide(slideRef.current);
       } else {
-        setMobileSlide((current) => (mobileSlides.length > 0 ? current % mobileSlides.length : 0));
+        if (mobileSlides.length > 0) goToMobileSlide(mobileSlideRef.current);
       }
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [isDesktopViewport, slides.length, mobileSlides.length]);
+  }, [isDesktopViewport, slides.length, mobileSlides.length, goToSlide, goToMobileSlide]);
 
-  const desktopAssignedSlots = useMemo(() => {
-    const currentSlideItems = slides[slide] || [];
-    const pattern = SLIDE_PATTERNS[slide % SLIDE_PATTERNS.length];
-    return assignToPattern(currentSlideItems, pattern);
-  }, [slides, slide]);
+  // Pre-assign every slide to its grid pattern (not just the active one)
+  // because the carousel renders all slides simultaneously. Memoised on
+  // `slides` so the heavy pattern→item mapping doesn't re-run on each
+  // slide change (only the translateX changes).
+  const allDesktopSlideAssignments = useMemo(() => {
+    return slides.map((slideItems, slideIdx) => {
+      const pattern = SLIDE_PATTERNS[slideIdx % SLIDE_PATTERNS.length];
+      return assignToPattern(slideItems, pattern);
+    });
+  }, [slides]);
+
+  // Section-level IntersectionObserver. Once the gallery scrolls into the
+  // viewport, eagerLoad flips true and every <video> bumps from
+  // preload="metadata" to preload="auto" — the browser starts pulling the
+  // full bytes for all 12 featured videos in parallel. The carousel keeps
+  // them mounted, so the loaded state survives slide changes.
+  // amount=0.05 fires as soon as a sliver of the gallery is visible;
+  // once=true keeps it stuck on after first reveal so quickly scrolling
+  // past doesn't cancel the preload.
+  const sectionRef = useRef(null);
+  const sectionInView = useInView(sectionRef, { amount: 0.05, once: true });
+
+  // ----- Infinite forward loop -----
+  // Cloned data: append a copy of the first slide at the end of each rendered
+  // row so the carousel can keep sliding leftward past the last real slide
+  // and land on a frame that *looks* identical to slide 0. The snap-back
+  // effects below then reset carouselIdx to 0 silently.
+  const desktopRendered = useMemo(() => {
+    if (!allDesktopSlideAssignments.length) return [];
+    return [...allDesktopSlideAssignments, allDesktopSlideAssignments[0]];
+  }, [allDesktopSlideAssignments]);
+
+  const mobileRendered = useMemo(() => {
+    if (!mobileSlides.length) return [];
+    return [...mobileSlides, mobileSlides[0]];
+  }, [mobileSlides]);
+
+  // Snap-back: once the carousel finishes animating to the clone position,
+  // disable the transition for one frame, set carouselIdx back to 0, then
+  // re-enable transitions. Two requestAnimationFrame hops are needed so
+  // framer-motion sees the transition prop flip *before* the new x value
+  // — otherwise it would animate the snap.
+  useEffect(() => {
+    const N = slides.length;
+    if (N === 0 || carouselIdx !== N) return undefined;
+    const timeout = setTimeout(() => {
+      setEnableTransition(false);
+      setCarouselIdx(0);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => setEnableTransition(true));
+      });
+    }, SLIDE_SETTLE_MS + 30);
+    return () => clearTimeout(timeout);
+  }, [carouselIdx, slides.length]);
+
+  useEffect(() => {
+    const M = mobileSlides.length;
+    if (M === 0 || mobileCarouselIdx !== M) return undefined;
+    const timeout = setTimeout(() => {
+      setEnableMobileTransition(false);
+      setMobileCarouselIdx(0);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => setEnableMobileTransition(true));
+      });
+    }, SLIDE_SETTLE_MS + 30);
+    return () => clearTimeout(timeout);
+  }, [mobileCarouselIdx, mobileSlides.length]);
 
 
   // Show loading state
@@ -658,182 +870,259 @@ const ProjectsGallery = () => {
         }}>
           {/* Slider */}
           <div className="relative pb-12 sm:pb-16 md:pb-20 sm:mt-24">
-            <AnimatePresence initial={false} mode="wait">
-              <motion.div
-                key={isDesktopViewport ? slide : mobileSlide}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ 
-                  duration: 0.8, 
-                  ease: [0.43, 0.13, 0.23, 0.96],
-                  staggerChildren: 0.1
-                }}
-                className="overflow-visible"
-              >
-                {/* Desktop dynamic grid với kích thước cố định - chỉ hiển thị trên desktop */}
-                <div
-                  className="hidden lg:grid gap-3 px-4 lg:px-6 projects-grid"
-                  style={{
-                    // Mở rộng cột 1 và 4 (portrait) để thẻ a và c to hơn
-                    gridTemplateColumns: '1.35fr 1fr 1fr 1.35fr 1fr 1fr',
-                    gridTemplateRows: 'repeat(2, auto)',
-                    gridTemplateAreas: generateGridTemplateAreas(slide, slides[slide]?.length || 0).join(' '),
-                    height: 'auto',
-                    gap: 'clamp(8px, 1vw, 16px)',
-                    willChange: 'transform',
-                    alignItems: 'stretch',
-                    justifyItems: 'stretch',
-                    maxWidth: '100%',
-                    margin: '0 auto'
-                  }}
-                >
-                  {desktopAssignedSlots.map((slot, idx) => (
-                    <FeaturedCard
-                      key={`${slide}-${slot.item.id}-${idx}`}
-                      areaName={slot.area}
-                      slotShape={slot.shape}
-                      item={slot.item}
-                      onOpen={openProject}
-                      index={idx}
-                    />
-                  ))}
-                </div>
-
-                {/* Mobile grids: pages 0-1 use 1P+4L, last page shows 2P */}
-                <div className="px-4 lg:hidden">
-                  {(() => {
-                    const items = mobileSlides[mobileSlide] || [];
-                    if (mobileSlide <= 1 && items.length >= 3) {
-                      const a = items[0];
-                      const b = items[1];
-                      const c = items[2];
-                      const d = items[3];
-                      const e = items[4];
+            {/* Apple-style horizontal carousel viewport.
+                Every slide stays mounted inside the inner flex row, even
+                the off-screen ones. We translateX the whole row (not each
+                slide) so the active page lines up with the viewport. The
+                key win is that <video> elements never unmount, so the
+                browser doesn't have to re-fetch or re-decode when the
+                user navigates between slides — autoplay resumes the moment
+                the slide enters view.
+                The desktop and mobile carousels are siblings (both always
+                in the DOM) because the `slides[]` and `mobileSlides[]`
+                arrays slice the same projects differently. Tailwind's
+                `hidden lg:flex` / `lg:hidden flex` drives which one is
+                visible per breakpoint.
+                py-3 leaves room for the per-card hover lift; overflow-x
+                cannot be `hidden` here without also clipping the lift
+                vertically (CSS forces overflow-y to auto when only one
+                axis is hidden), so we accept a small horizontal clip
+                from `overflow-hidden`. */}
+            {/* The arrows are siblings of the viewport inside this `relative`
+                wrapper so `top-1/2 -translate-y-1/2` aligns them with the
+                vertical centre of the gallery cards (not the section, which
+                also covers the dots and CTA below). */}
+            <div ref={sectionRef} className="relative">
+              {/* overflow-hidden clips the off-screen clone slide; py-3
+                  leaves headroom for the per-card hover lift. */}
+              <div className="relative overflow-hidden py-3">
+                {/* Desktop carousel — visible on lg+ only.
+                    Renders N+1 slides (real slides plus a clone of slide 0
+                    appended). carouselIdx may transiently equal N (clone),
+                    after which the snap-back effect resets it to 0 with
+                    the transition disabled — so pressing "next" past the
+                    last slide visually keeps sliding leftward, never
+                    snaps right. */}
+                {slides.length > 0 ? (
+                  <motion.div
+                    className="hidden lg:flex"
+                    style={{
+                      width: `${desktopRendered.length * 100}%`,
+                      willChange: "transform",
+                    }}
+                    animate={{
+                      x: `${-carouselIdx * (100 / desktopRendered.length)}%`,
+                    }}
+                    transition={enableTransition ? SLIDE_TRANSITION : { duration: 0 }}
+                  >
+                    {desktopRendered.map((assignedSlots, renderIdx) => {
+                      // Clones reuse the source slide's grid template + items
+                      // — they're visually identical to the slide they clone.
+                      const sourceIdx = renderIdx >= slides.length ? 0 : renderIdx;
                       return (
-                        <div className="grid grid-cols-2 grid-rows-3 gap-3">
-                          {a && (
-                            <div className="row-span-2">
-                              <FeaturedCard item={a} onOpen={openProject} index={0} fillHeight forceAspectRatio={9/16} />
-                            </div>
-                          )}
-                          {b && (
-                            <div>
-                              <FeaturedCard item={b} onOpen={openProject} index={1} fillHeight forceAspectRatio={16/9} />
-                            </div>
-                          )}
-                          {c && (
-                            <div>
-                              <FeaturedCard item={c} onOpen={openProject} index={2} fillHeight forceAspectRatio={16/9} />
-                            </div>
-                          )}
-                          <div className="col-span-2 grid grid-cols-2 gap-3">
-                            {d && (
-                              <div>
-                                <FeaturedCard item={d} onOpen={openProject} index={3} fillHeight forceAspectRatio={16/9} />
-                              </div>
-                            )}
-                            {e && (
-                              <div>
-                                <FeaturedCard item={e} onOpen={openProject} index={4} fillHeight forceAspectRatio={16/9} />
-                              </div>
-                            )}
+                        <div
+                          key={`d-slide-${renderIdx}`}
+                          className="shrink-0"
+                          style={{ width: `${100 / desktopRendered.length}%` }}
+                        >
+                          <div
+                            className="grid gap-3 px-4 lg:px-6 projects-grid"
+                            style={{
+                              // Mở rộng cột 1 và 4 (portrait) để thẻ a và c to hơn
+                              gridTemplateColumns: '1.35fr 1fr 1fr 1.35fr 1fr 1fr',
+                              gridTemplateRows: 'repeat(2, auto)',
+                              gridTemplateAreas: generateGridTemplateAreas(sourceIdx, slides[sourceIdx]?.length || 0).join(' '),
+                              height: 'auto',
+                              gap: 'clamp(8px, 1vw, 16px)',
+                              alignItems: 'stretch',
+                              justifyItems: 'stretch',
+                              maxWidth: '100%',
+                              margin: '0 auto'
+                            }}
+                          >
+                            {assignedSlots.map((slot, idx) => (
+                              <FeaturedCard
+                                key={`d-${renderIdx}-${slot.item.id}-${idx}`}
+                                areaName={slot.area}
+                                slotShape={slot.shape}
+                                item={slot.item}
+                                onOpen={openProject}
+                                index={idx}
+                                eagerLoad={sectionInView}
+                              />
+                            ))}
                           </div>
                         </div>
                       );
-                    }
-                    // Last page: 2 portraits side-by-side
-                    return (
-                      <div className="grid grid-cols-2 gap-3">
-                        {items.map((it, i) => (
-                          <div key={i}>
-                            <FeaturedCard item={it} onOpen={openProject} index={i} fillHeight forceAspectRatio={9/16} />
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  })()}
-                </div>
+                    })}
+                  </motion.div>
+                ) : null}
 
-                {/* Navigation indicators - inside motion div to stay with content */}
-                <>
-                  {/* Mobile - show horizontal dot indicators */}
-                  {mobileSlides.length > 1 && (
-                    <div className="md:hidden mt-8 flex flex-row justify-center items-center gap-2.5">
-                      {mobileSlides.map((_, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => setMobileSlide(idx)}
-                          className={clsx(
-                            "block h-2 w-2 min-h-0 min-w-0 rounded-full border-0 p-0 transition-colors duration-300 ease-out",
-                            "focus:outline-none focus:ring-2 focus:ring-neutral-900/50",
-                            idx === mobileSlide
-                              ? "bg-neutral-900"
-                              : "bg-neutral-900/30 hover:bg-neutral-900/50"
-                          )}
-                          style={{ minHeight: 0, minWidth: 0 }}
-                          aria-label={`Trang ${idx + 1}`}
-                        />
-                      ))}
-                    </div>
-                  )}
-                  
-                  {/* Desktop - show dots based on desktop slides */}
-                  {slides.length > 1 && (
-                    <div className="hidden md:flex mt-8 sm:mt-10 justify-center items-center gap-3">
-                      {slides.map((_, idx) => (
-                        <button
-                          key={idx}
-                          onClick={() => setSlide(idx)}
-                          className={clsx(
-                            "rounded-full transition-all duration-500 ease-out",
-                            "hover:scale-110 focus:outline-none focus:ring-2 focus:ring-white/50",
-                            idx === slide 
-                              ? "w-10 md:w-12 h-2 bg-neutral-900" 
-                              : "w-2 h-2 bg-neutral-900/40 hover:bg-neutral-900/60"
-                          )}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </>
-
-                {/* View all projects button */}
-                <div className="mt-14 sm:mt-20 flex justify-center">
-                  <Link
-                    href="/videos"
-                    className="inline-flex items-center rounded-full bg-neutral-950 px-6 py-3 text-white text-sm font-medium shadow hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-neutral-400 transition"
+                {/* Mobile carousel — visible below lg. Same clone strategy. */}
+                {mobileSlides.length > 0 ? (
+                  <motion.div
+                    className="lg:hidden flex"
+                    style={{
+                      width: `${mobileRendered.length * 100}%`,
+                      willChange: "transform",
+                    }}
+                    animate={{
+                      x: `${-mobileCarouselIdx * (100 / mobileRendered.length)}%`,
+                    }}
+                    transition={enableMobileTransition ? SLIDE_TRANSITION : { duration: 0 }}
                   >
-                    Xem tất cả dự án
-                  </Link>
-                </div>
-              </motion.div>
-            </AnimatePresence>
+                    {mobileRendered.map((items, renderIdx) => {
+                      // sourceIdx drives the layout-pick (1P+4L on the first
+                      // two real pages, 2P after) so the clone of slide 0
+                      // mimics slide 0's layout, not the layout of "the next
+                      // index" which would mis-render the clone as a 2P page.
+                      const sourceIdx = renderIdx >= mobileSlides.length ? 0 : renderIdx;
+                      return (
+                        <div
+                          key={`m-slide-${renderIdx}`}
+                          className="shrink-0 px-4"
+                          style={{ width: `${100 / mobileRendered.length}%` }}
+                        >
+                          {(() => {
+                            if (sourceIdx <= 1 && items.length >= 3) {
+                              const a = items[0];
+                              const b = items[1];
+                              const c = items[2];
+                              const d = items[3];
+                              const e = items[4];
+                              return (
+                                <div className="grid grid-cols-2 grid-rows-3 gap-3">
+                                  {a && (
+                                    <div className="row-span-2">
+                                      <FeaturedCard item={a} onOpen={openProject} index={0} fillHeight forceAspectRatio={9/16} eagerLoad={sectionInView} />
+                                    </div>
+                                  )}
+                                  {b && (
+                                    <div>
+                                      <FeaturedCard item={b} onOpen={openProject} index={1} fillHeight forceAspectRatio={16/9} eagerLoad={sectionInView} />
+                                    </div>
+                                  )}
+                                  {c && (
+                                    <div>
+                                      <FeaturedCard item={c} onOpen={openProject} index={2} fillHeight forceAspectRatio={16/9} eagerLoad={sectionInView} />
+                                    </div>
+                                  )}
+                                  <div className="col-span-2 grid grid-cols-2 gap-3">
+                                    {d && (
+                                      <div>
+                                        <FeaturedCard item={d} onOpen={openProject} index={3} fillHeight forceAspectRatio={16/9} eagerLoad={sectionInView} />
+                                      </div>
+                                    )}
+                                    {e && (
+                                      <div>
+                                        <FeaturedCard item={e} onOpen={openProject} index={4} fillHeight forceAspectRatio={16/9} eagerLoad={sectionInView} />
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            }
+                            return (
+                              <div className="grid grid-cols-2 gap-3">
+                                {items.map((it, i) => (
+                                  <div key={i}>
+                                    <FeaturedCard item={it} onOpen={openProject} index={i} fillHeight forceAspectRatio={9/16} eagerLoad={sectionInView} />
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      );
+                    })}
+                  </motion.div>
+                ) : null}
+              </div>
+
+              {/* Arrows: positioned relative to the viewport-wrapper so
+                  top-1/2 lines them up with the cards (not the section,
+                  which also covers the dots and CTA below). hidden on
+                  mobile because the dot indicators below already serve
+                  as touch nav. */}
+              {slides.length > 1 ? (
+                <button
+                  type="button"
+                  onClick={() => goToSlide(slideRef.current - 1)}
+                  className="hidden sm:flex items-center justify-center absolute left-2 md:left-4 top-1/2 -translate-y-1/2 z-[55] h-8 w-8 md:h-10 md:w-10 lg:h-12 lg:w-12 rounded-full bg-white/10 backdrop-blur-md border border-white/30 text-neutral-900 hover:bg-white/20 transition-all focus:outline-none focus:ring-2 focus:ring-white/50 shadow-lg"
+                  aria-label="Trang trước"
+                >
+                  <MdChevronLeft className="h-5 w-5 md:h-6 md:w-6 lg:h-7 lg:w-7" />
+                </button>
+              ) : null}
+              {slides.length > 1 ? (
+                <button
+                  type="button"
+                  onClick={() => goToSlide(slideRef.current + 1, /* useClone */ true)}
+                  className="hidden sm:flex items-center justify-center absolute right-2 md:right-4 top-1/2 -translate-y-1/2 z-[55] h-8 w-8 md:h-10 md:w-10 lg:h-12 lg:w-12 rounded-full bg-white/10 backdrop-blur-md border border-white/30 text-neutral-900 hover:bg-white/20 transition-all focus:outline-none focus:ring-2 focus:ring-white/50 shadow-lg"
+                  aria-label="Trang tiếp theo"
+                >
+                  <MdChevronRight className="h-5 w-5 md:h-6 md:w-6 lg:h-7 lg:w-7" />
+                </button>
+              ) : null}
+            </div>
+
+            {/* Navigation indicators stay outside the carousel viewport so
+                they remain anchored — only their active state updates as
+                the gallery translates. */}
+            {/* Mobile - show horizontal dot indicators */}
+            {mobileSlides.length > 1 && (
+              <div className="md:hidden mt-8 flex flex-row justify-center items-center gap-2.5">
+                {mobileSlides.map((_, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => goToMobileSlide(idx)}
+                    className={clsx(
+                      "block h-2 w-2 min-h-0 min-w-0 rounded-full border-0 p-0 transition-colors duration-300 ease-out",
+                      "focus:outline-none focus:ring-2 focus:ring-neutral-900/50",
+                      idx === mobileSlide
+                        ? "bg-neutral-900"
+                        : "bg-neutral-900/30 hover:bg-neutral-900/50"
+                    )}
+                    style={{ minHeight: 0, minWidth: 0 }}
+                    aria-label={`Trang ${idx + 1}`}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Desktop - show dots based on desktop slides */}
+            {slides.length > 1 && (
+              <div className="hidden md:flex mt-8 sm:mt-10 justify-center items-center gap-3">
+                {slides.map((_, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => goToSlide(idx)}
+                    className={clsx(
+                      "rounded-full transition-all duration-500 ease-out",
+                      "hover:scale-110 focus:outline-none focus:ring-2 focus:ring-white/50",
+                      idx === slide
+                        ? "w-10 md:w-12 h-2 bg-neutral-900"
+                        : "w-2 h-2 bg-neutral-900/40 hover:bg-neutral-900/60"
+                    )}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* View all projects button */}
+            <div className="mt-14 sm:mt-20 flex justify-center">
+              <Link
+                href="/videos"
+                className="inline-flex items-center rounded-full bg-neutral-950 px-6 py-3 text-white text-sm font-medium shadow hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-neutral-400 transition"
+              >
+                Xem tất cả dự án
+              </Link>
+            </div>
           </div>
 
         </div>
         
-      {/* Navigation arrows - only show for desktop */}
-        {slides.length > 1 && (
-          <>
-            <button
-              onClick={() => setSlide((s) => (s - 1 + slides.length) % slides.length)}
-              className="hidden sm:flex items-center justify-center absolute left-2 md:left-4 top-1/2 -translate-y-1/2 z-[55] h-8 w-8 md:h-10 md:w-10 lg:h-12 lg:w-12 rounded-full bg-white/10 backdrop-blur-md border border-white/30 text-neutral-900 hover:bg-white/20 transition-all focus:outline-none focus:ring-2 focus:ring-white/50 shadow-lg"
-              aria-label="Trang trước"
-            >
-              <MdChevronLeft className="h-5 w-5 md:h-6 md:w-6 lg:h-7 lg:w-7" />
-            </button>
-
-            <button
-              onClick={() => setSlide((s) => (s + 1) % slides.length)}
-              className="hidden sm:flex items-center justify-center absolute right-2 md:right-4 top-1/2 -translate-y-1/2 z-[55] h-8 w-8 md:h-10 md:w-10 lg:h-12 lg:w-12 rounded-full bg-white/10 backdrop-blur-md border border-white/30 text-neutral-900 hover:bg-white/20 transition-all focus:outline-none focus:ring-2 focus:ring-white/50 shadow-lg"
-              aria-label="Trang tiếp theo"
-            >
-              <MdChevronRight className="h-5 w-5 md:h-6 md:w-6 lg:h-7 lg:w-7" />
-            </button>
-          </>
-        )}
       </section>
 
       {/* Modal overlay - đặt bên ngoài section để che phủ toàn bộ màn hình */}
