@@ -833,12 +833,12 @@ function PortfolioBlock({ value, onChange }) {
 }
 
 function GalleryBlock({ value, onChange }) {
-  const safe = value || { preloadMode: "lazy" };
+  const safe = value || { preloadMode: "modeB" };
   const set = (k, v) => onChange({ ...safe, [k]: v });
   const options = [
     {
       key: "lazy",
-      title: "Lazy (mặc định)",
+      title: "Lazy",
       desc:
         "Chỉ preload + decode/play 12 video khi user lướt tới gallery. Tiết kiệm băng thông & CPU cho user không bao giờ scroll xuống.",
     },
@@ -850,9 +850,9 @@ function GalleryBlock({ value, onChange }) {
     },
     {
       key: "modeB",
-      title: "Mode B — Full eager play",
+      title: "Mode B — Full eager play (mặc định)",
       desc:
-        "Như Mode A + flip eagerLoad ngay lúc mount → 12 video decode/autoplay ngầm trong khi user xem showreel. Zero-latency khi scroll tới gallery, nhưng tốn CPU/battery.",
+        "Như Mode A + flip eagerLoad ngay lúc mount → 12 video decode/autoplay ngầm khi user vào trang chủ. Loop liên tục cho tới khi user navigate sang /videos, /images, /whoweare (gallery unmount → stop). Quay lại trang chủ thì resume autoplay.",
     },
   ];
   return (

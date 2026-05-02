@@ -417,12 +417,14 @@ FeaturedCard.displayName = "FeaturedCard";
 // Main ProjectsGallery component
 const ProjectsGallery = () => {
   const { ui, gallery } = useSiteContent();
-  // A/B-testable preload strategy. Defaults to "lazy" so legacy content
-  // (no `gallery` block saved) keeps the original behavior.
+  // A/B-testable preload strategy. Defaults to "modeB" so the homepage
+  // gallery autoplays its 12 videos for the entire time the user stays
+  // on /. Switching to /videos, /images, /whoweare etc. unmounts this
+  // component → playback stops; coming back remounts and resumes.
   //   lazy  – preload + decode only when section scrolls into view
   //   modeA – inject preload links on mount, defer decode/play until view
   //   modeB – inject preload links + decode/play immediately on mount
-  const preloadMode = gallery?.preloadMode || "lazy";
+  const preloadMode = gallery?.preloadMode || "modeB";
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
 
