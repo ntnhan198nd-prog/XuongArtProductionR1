@@ -26,6 +26,8 @@ const BLOCKS = [
 
   { key: "portfolio", label: "Bộ lọc tìm kiếm theo category", group: "Trang /videos + /images" },
 
+  { key: "gallery", label: "Gallery — Preload mode (A/B test)", group: "Hiệu năng" },
+
   { key: "footer", label: "Footer · Copyright", group: "Footer + Global" },
   { key: "social", label: "Mạng xã hội (footer + CTA)", group: "Footer + Global" },
   { key: "ui", label: "UI · Loading text", group: "Footer + Global" },
@@ -830,6 +832,76 @@ function PortfolioBlock({ value, onChange }) {
   );
 }
 
+function GalleryBlock({ value, onChange }) {
+  const safe = value || { preloadMode: "lazy" };
+  const set = (k, v) => onChange({ ...safe, [k]: v });
+  const options = [
+    {
+      key: "lazy",
+      title: "Lazy (mặc định)",
+      desc:
+        "Chỉ preload + decode/play 12 video khi user lướt tới gallery. Tiết kiệm băng thông & CPU cho user không bao giờ scroll xuống.",
+    },
+    {
+      key: "modeA",
+      title: "Mode A — Cache-only preload",
+      desc:
+        "Inject <link rel=preload> ngay khi page mount để 12 video xuống cache song song với showreel. Decode/play vẫn chỉ kick in khi user lướt tới (gallery instant ready, không tốn CPU ngầm).",
+    },
+    {
+      key: "modeB",
+      title: "Mode B — Full eager play",
+      desc:
+        "Như Mode A + flip eagerLoad ngay lúc mount → 12 video decode/autoplay ngầm trong khi user xem showreel. Zero-latency khi scroll tới gallery, nhưng tốn CPU/battery.",
+    },
+  ];
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-xs text-gray-600">
+        <p className="font-semibold uppercase tracking-wider text-gray-700">
+          A/B test — Hiệu năng preload trang chủ
+        </p>
+        <p className="mt-1.5">
+          Đổi cách 12 video Dự án nổi bật được tải. Sau khi save, hard-reload
+          trang (Cmd/Ctrl+Shift+R) và mở DevTools &gt; Network &gt; lọc Media
+          để so sánh thời điểm các video bắt đầu request, hoặc Performance để
+          đo CPU.
+        </p>
+      </div>
+      <div className="space-y-3">
+        {options.map((opt) => {
+          const isActive = safe.preloadMode === opt.key;
+          return (
+            <label
+              key={opt.key}
+              className={`flex cursor-pointer gap-3 rounded-xl border p-3 transition-colors ${
+                isActive
+                  ? "border-black bg-gray-50"
+                  : "border-gray-200 hover:border-gray-400"
+              }`}
+            >
+              <input
+                type="radio"
+                name="gallery-preload-mode"
+                value={opt.key}
+                checked={isActive}
+                onChange={() => set("preloadMode", opt.key)}
+                className="mt-1 shrink-0"
+              />
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-gray-900">
+                  {opt.title}
+                </div>
+                <div className="mt-1 text-xs text-gray-600">{opt.desc}</div>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 const BLOCK_RENDERERS = {
   hero: HeroBlock,
   intro: IntroBlock,
@@ -844,6 +916,7 @@ const BLOCK_RENDERERS = {
   social: SocialBlock,
   ui: UiBlock,
   portfolio: PortfolioBlock,
+  gallery: GalleryBlock,
 };
 
 export default function SiteContentAdminPanel({ onDirtyChange }) {

@@ -400,7 +400,13 @@ FeaturedCard.displayName = "FeaturedCard";
 
 // Main ProjectsGallery component
 const ProjectsGallery = () => {
-  const { ui } = useSiteContent();
+  const { ui, gallery } = useSiteContent();
+  // A/B-testable preload strategy. Defaults to "lazy" so legacy content
+  // (no `gallery` block saved) keeps the original behavior.
+  //   lazy  – preload + decode only when section scrolls into view
+  //   modeA – inject preload links on mount, defer decode/play until view
+  //   modeB – inject preload links + decode/play immediately on mount
+  const preloadMode = gallery?.preloadMode || "lazy";
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
 
@@ -558,8 +564,17 @@ const ProjectsGallery = () => {
     fetchProjects();
   }, []);
 
+  // _isPhase1 flag rides on each item so any FeaturedCard renderer (desktop
+  // grid, mobile 1P+4L, mobile 2P) can decide whether to fire eagerLoad
+  // immediately or wait for the phase-2 hand-off — without needing to know
+  // the item's absolute index in `projects` from inside the carousel
+  // mapping, which doesn't always preserve project order on mobile.
   const allItems = useMemo(
-    () => projects.map((p) => ({ ...p, medias: p.medias.length > 0 ? p.medias : [{ url: p.media }] })),
+    () => projects.map((p, idx) => ({
+      ...p,
+      medias: p.medias.length > 0 ? p.medias : [{ url: p.media }],
+      _isPhase1: idx < 6,
+    })),
     [projects]
   );
 
@@ -806,6 +821,108 @@ const ProjectsGallery = () => {
   const sectionRef = useRef(null);
   const sectionInView = useInView(sectionRef, { amount: 0.05, once: true });
 
+  // Two-phase preload. The first 6 videos (projects[0..5] = slide-1 grid)
+  // get fetchpriority="high" link preloads + per-card eagerLoad=true so
+  // their <video> elements call load() and start autoPlay immediately.
+  // The remaining 6 (slide-2 onwards) stay at preload="metadata" with
+  // eagerLoad=false until every phase-1 link fires its `load` event —
+  // at that point we flip loadPhase to "phase2", inject the next batch
+  // of preload links (fetchpriority="auto" so they don't compete with
+  // any newly-loading page resources), and the slide-2 cards' video
+  // elements pick up the new eagerLoad=true and start autoPlay too.
+  // Net result: visible row plays first; off-screen row catches up next;
+  // once both phases are done, all 12 keep playing continuously.
+  // 15 s safety fallback so a single stalled video can't block phase 2.
+  //
+  // The trigger condition depends on preloadMode:
+  //   lazy  – wait for sectionInView (gallery scrolled into viewport)
+  //   modeA / modeB – fire on mount (as soon as projects array is ready),
+  //                   so the bytes warm in HTTP cache while the user is
+  //                   still on the hero showreel above the gallery.
+  const [loadPhase, setLoadPhase] = useState("phase1");
+
+  // Helper: per-card eagerLoad gate, branched on the preloadMode chosen
+  // in the admin. modeB fires immediately on mount (no wait for scroll);
+  // modeA + lazy still wait for the section to come into view before the
+  // <video> elements switch to preload="auto" + load() (so we don't burn
+  // CPU decoding 12 streams while the user is still on the showreel).
+  // Defined here, after loadPhase is declared, so the useCallback dep
+  // array isn't TDZ-evaluated against an undeclared binding.
+  const cardEagerLoad = useCallback(
+    (item) => {
+      const phaseAllows = item?._isPhase1 || loadPhase === "phase2";
+      if (preloadMode === "modeB") return phaseAllows;
+      return sectionInView && phaseAllows;
+    },
+    [preloadMode, sectionInView, loadPhase]
+  );
+
+  useEffect(() => {
+    const shouldStart = preloadMode === "lazy" ? sectionInView : true;
+    if (!shouldStart) return undefined;
+    if (typeof document === "undefined") return undefined;
+    if (projects.length === 0) return undefined;
+
+    const phase1Urls = [];
+    const phase2Urls = [];
+    projects.forEach((p, idx) => {
+      const url = p?.previewMedia || p?.media;
+      if (!url || !isVideoUrl(url)) return;
+      if (idx < 6) phase1Urls.push(url);
+      else phase2Urls.push(url);
+    });
+
+    const links = [];
+    let phase2Triggered = false;
+    let timeoutId = null;
+
+    const startPhase2 = () => {
+      if (phase2Triggered) return;
+      phase2Triggered = true;
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      setLoadPhase("phase2");
+      phase2Urls.forEach((url) => {
+        const link = document.createElement("link");
+        link.rel = "preload";
+        link.as = "video";
+        link.href = url;
+        link.setAttribute("fetchpriority", "auto");
+        document.head.appendChild(link);
+        links.push(link);
+      });
+    };
+
+    if (phase1Urls.length === 0) {
+      startPhase2();
+    } else {
+      let pending = phase1Urls.length;
+      const onSettle = () => {
+        pending -= 1;
+        if (pending <= 0) startPhase2();
+      };
+      phase1Urls.forEach((url) => {
+        const link = document.createElement("link");
+        link.rel = "preload";
+        link.as = "video";
+        link.href = url;
+        link.setAttribute("fetchpriority", "high");
+        link.addEventListener("load", onSettle, { once: true });
+        link.addEventListener("error", onSettle, { once: true });
+        document.head.appendChild(link);
+        links.push(link);
+      });
+      timeoutId = window.setTimeout(startPhase2, 15000);
+    }
+
+    return () => {
+      if (timeoutId) window.clearTimeout(timeoutId);
+      links.forEach((link) => link.remove());
+    };
+  }, [sectionInView, projects, preloadMode]);
+
   // Force-play sweep: on every slide change (manual nav OR autoplay tick),
   // walk all <video> elements inside the gallery and call play() on any
   // that are paused. This catches two cases the per-card heartbeat is
@@ -1037,7 +1154,7 @@ const ProjectsGallery = () => {
                                 item={slot.item}
                                 onOpen={openProject}
                                 index={idx}
-                                eagerLoad={sectionInView}
+                                eagerLoad={cardEagerLoad(slot.item)}
                               />
                             ))}
                           </div>
@@ -1083,28 +1200,28 @@ const ProjectsGallery = () => {
                                 <div className="grid grid-cols-2 grid-rows-3 gap-3">
                                   {a && (
                                     <div className="row-span-2">
-                                      <FeaturedCard item={a} onOpen={openProject} index={0} fillHeight forceAspectRatio={9/16} eagerLoad={sectionInView} />
+                                      <FeaturedCard item={a} onOpen={openProject} index={0} fillHeight forceAspectRatio={9/16} eagerLoad={cardEagerLoad(a)} />
                                     </div>
                                   )}
                                   {b && (
                                     <div>
-                                      <FeaturedCard item={b} onOpen={openProject} index={1} fillHeight forceAspectRatio={16/9} eagerLoad={sectionInView} />
+                                      <FeaturedCard item={b} onOpen={openProject} index={1} fillHeight forceAspectRatio={16/9} eagerLoad={cardEagerLoad(b)} />
                                     </div>
                                   )}
                                   {c && (
                                     <div>
-                                      <FeaturedCard item={c} onOpen={openProject} index={2} fillHeight forceAspectRatio={16/9} eagerLoad={sectionInView} />
+                                      <FeaturedCard item={c} onOpen={openProject} index={2} fillHeight forceAspectRatio={16/9} eagerLoad={cardEagerLoad(c)} />
                                     </div>
                                   )}
                                   <div className="col-span-2 grid grid-cols-2 gap-3">
                                     {d && (
                                       <div>
-                                        <FeaturedCard item={d} onOpen={openProject} index={3} fillHeight forceAspectRatio={16/9} eagerLoad={sectionInView} />
+                                        <FeaturedCard item={d} onOpen={openProject} index={3} fillHeight forceAspectRatio={16/9} eagerLoad={cardEagerLoad(d)} />
                                       </div>
                                     )}
                                     {e && (
                                       <div>
-                                        <FeaturedCard item={e} onOpen={openProject} index={4} fillHeight forceAspectRatio={16/9} eagerLoad={sectionInView} />
+                                        <FeaturedCard item={e} onOpen={openProject} index={4} fillHeight forceAspectRatio={16/9} eagerLoad={cardEagerLoad(e)} />
                                       </div>
                                     )}
                                   </div>
@@ -1115,7 +1232,7 @@ const ProjectsGallery = () => {
                               <div className="grid grid-cols-2 gap-3">
                                 {items.map((it, i) => (
                                   <div key={i}>
-                                    <FeaturedCard item={it} onOpen={openProject} index={i} fillHeight forceAspectRatio={9/16} eagerLoad={sectionInView} />
+                                    <FeaturedCard item={it} onOpen={openProject} index={i} fillHeight forceAspectRatio={9/16} eagerLoad={cardEagerLoad(it)} />
                                   </div>
                                 ))}
                               </div>
