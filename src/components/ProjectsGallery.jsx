@@ -220,9 +220,21 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
     };
 
     const onEnded = () => {
-      if (!canAutoplay()) return;
+      // Always reset + replay on ended, even if canAutoplay() is currently
+      // false. Some browsers DO fire `ended` for loop=true videos (the
+      // native loop is best-effort), and if our handler bailed out the
+      // video would stay frozen on the last frame forever — visible as
+      // "no loop" in the gallery. Resetting unconditionally and asking
+      // the browser to play matches the user's expectation of native
+      // looping; the play() promise rejects silently if autoplay is
+      // genuinely blocked.
       video.currentTime = 0;
-      tryPlay();
+      const promise = video.play();
+      if (promise && typeof promise.catch === "function") {
+        promise.catch(() => {
+          // Autoplay blocked — heartbeat will retry on next tick.
+        });
+      }
     };
 
     // Don't programmatically pause on mount: the HTML <video autoPlay loop
@@ -245,11 +257,15 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
     video.addEventListener("suspend", onBuffering);
     video.addEventListener("ended", onEnded);
 
-    // Safety net: some browsers pause muted background videos silently.
+    // Safety net: some browsers pause muted background videos silently,
+    // and a small minority freeze on the last frame when the native loop
+    // hand-off mis-fires. Resetting currentTime back to 0 here recovers
+    // the latter case so the video starts looping again on the next tick
+    // even if onEnded never fired.
     heartbeatId = window.setInterval(() => {
-      if (canAutoplay() && video.paused && !video.ended) {
-        tryPlay();
-      }
+      if (!canAutoplay() || !video.paused) return;
+      if (video.ended) video.currentTime = 0;
+      tryPlay();
     }, 2500);
 
     return () => {
@@ -941,14 +957,17 @@ const ProjectsGallery = () => {
     if (!sectionInView || !sectionRef.current) return;
     const videos = sectionRef.current.querySelectorAll("video");
     videos.forEach((video) => {
-      if (video.paused && !video.ended) {
-        const promise = video.play();
-        if (promise && typeof promise.catch === "function") {
-          promise.catch(() => {
-            // Autoplay may be transiently blocked (e.g. mid-buffer) —
-            // the per-card heartbeat will pick it up on the next tick.
-          });
-        }
+      if (!video.paused) return;
+      // Recover videos stuck on the last frame too: rewinding to 0 here
+      // matches what the per-card heartbeat does and means a slide change
+      // also doubles as a "kick the loop again" signal.
+      if (video.ended) video.currentTime = 0;
+      const promise = video.play();
+      if (promise && typeof promise.catch === "function") {
+        promise.catch(() => {
+          // Autoplay may be transiently blocked (e.g. mid-buffer) —
+          // the per-card heartbeat will pick it up on the next tick.
+        });
       }
     });
   }, [carouselIdx, mobileCarouselIdx, sectionInView]);
