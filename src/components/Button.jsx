@@ -4,7 +4,7 @@ import clsx from "clsx";
 const Button = ({ invert, href, className, children, ...props }) => {
   className = clsx(
     className,
-    "inline-flex rounded-full px-4 py-1.5 text-sm font-semibold transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.9] border-none outline-none",
+    "inline-flex rounded-full px-4 py-1.5 text-sm font-semibold transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] hover:scale-105 active:scale-[0.9] border-none outline-none",
     invert
       ? "bg-white text-neutral-950 hover:bg-neutral-200"
       : "bg-neutral-950 text-white hover:bg-neutral-800"

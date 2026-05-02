@@ -26,6 +26,20 @@ const Header = ({ invert = false, mobileMenuOpen, setMobileMenuOpen }) => {
   const activeImages = pathname.startsWith("/images");
   const activeWhoWeAre = pathname === "/whoweare";
 
+  // Cross-component "the user is hinting at this nav target" channel.
+  // FeaturedCtaLink (homepage) dispatches `nav-hint` on hover/focus with
+  // its href; the header lights up the matching link in accent so the
+  // visitor sees that the on-page CTA leads to the same place as the
+  // top nav. null payload clears the highlight.
+  const [hintedHref, setHintedHref] = useState(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handler = (event) => setHintedHref(event.detail || null);
+    window.addEventListener("nav-hint", handler);
+    return () => window.removeEventListener("nav-hint", handler);
+  }, []);
+  const hintedVideo = hintedHref === "/videos";
+
   // Body scroll lock + close on Escape are handled at the layout level so the
   // menu can be portaled outside the fixed header stacking context.
 
@@ -33,7 +47,11 @@ const Header = ({ invert = false, mobileMenuOpen, setMobileMenuOpen }) => {
     <Container>
       <div className="flex items-center justify-between h-20">
         {/* Logo */}
-        <Link href={"/"} aria-label="Home" className="flex items-center h-full">
+        <Link
+          href={"/"}
+          aria-label="Home"
+          className="flex items-center h-full transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] hover:scale-105 active:scale-95"
+        >
           <Logo invert={invert} className="text-xl sm:text-2xl">XUONGART</Logo>
         </Link>
         <div className="flex items-center gap-x-8 h-full">
@@ -41,9 +59,16 @@ const Header = ({ invert = false, mobileMenuOpen, setMobileMenuOpen }) => {
             <Link
               href="/videos"
               aria-current={activeVideo ? "page" : undefined}
+              // The `hintedVideo` branch reacts to the FeaturedCtaLink
+              // hover/focus event so this link previews its target state
+              // (accent colour + 1.05 scale) at the exact moment the
+              // homepage CTA is being considered. hover:scale-105 still
+              // covers the case where the user is actually pointing at
+              // -động itself.
               className={clsx(
-                "text-base font-medium transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.88] flex items-center h-full px-2.5",
-                activeVideo
+                "text-base font-medium transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] hover:scale-105 active:scale-[0.88] flex items-center h-full px-2.5",
+                hintedVideo && "scale-105",
+                activeVideo || hintedVideo
                   ? "text-accent-400"
                   : invert
                   ? "text-white hover:text-accent-400"
@@ -56,7 +81,7 @@ const Header = ({ invert = false, mobileMenuOpen, setMobileMenuOpen }) => {
               href="/images"
               aria-current={activeImages ? "page" : undefined}
               className={clsx(
-                "text-base font-medium transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] active:scale-[0.88] flex items-center h-full px-2.5",
+                "text-base font-medium transition duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] hover:scale-105 active:scale-[0.88] flex items-center h-full px-2.5",
                 activeImages
                   ? "text-accent-400"
                   : invert

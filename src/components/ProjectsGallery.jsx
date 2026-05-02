@@ -2,7 +2,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useInView, useReducedMotion } from "framer-motion";
 import clsx from "clsx";
-import Link from "next/link";
 import Image from "next/image";
 import AuthorAvatar from "@/components/AuthorAvatar";
 import TimeAgo from "@/components/TimeAgo";
@@ -1133,7 +1132,7 @@ const ProjectsGallery = () => {
           margin: "0 auto"
         }}>
           {/* Slider */}
-          <div className="relative pb-12 sm:pb-16 md:pb-20 sm:mt-24">
+          <div className="relative pb-12 sm:pb-16 md:pb-20 sm:mt-10">
             {/* Apple-style horizontal carousel viewport.
                 Every slide stays mounted inside the inner flex row, even
                 the off-screen ones. We translateX the whole row (not each
@@ -1379,15 +1378,9 @@ const ProjectsGallery = () => {
               </div>
             )}
 
-            {/* View all projects button */}
-            <div className="mt-14 sm:mt-20 flex justify-center">
-              <Link
-                href="/videos"
-                className="inline-flex items-center rounded-full bg-neutral-950 px-6 py-3 text-white text-sm font-medium shadow hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-neutral-400 transition"
-              >
-                Xem tất cả dự án
-              </Link>
-            </div>
+            {/* "Xem tất cả dự án" CTA moved up to the heading row in
+                src/app/page.jsx so it sits top-right of the gallery
+                instead of below the dots. */}
           </div>
 
         </div>
