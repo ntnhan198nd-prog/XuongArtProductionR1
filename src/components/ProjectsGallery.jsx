@@ -1310,7 +1310,7 @@ const ProjectsGallery = () => {
                     snaps right. */}
                 {slides.length > 0 && viewportMode !== "mobile" ? (
                   <motion.div
-                    className={viewportMode === "desktop" ? "flex" : "hidden lg:flex"}
+                    className={viewportMode === "desktop" ? "flex flex-nowrap" : "hidden lg:flex flex-nowrap"}
                     style={{
                       width: `${desktopRendered.length * 100}%`,
                       willChange: "transform",
@@ -1330,16 +1330,14 @@ const ProjectsGallery = () => {
                           className="shrink-0 overflow-hidden"
                           style={{
                             width: `${100 / desktopRendered.length}%`,
-                            // `contain: paint` alone clips descendant
-                            // GPU layers (the cards' mask-image layers,
-                            // the <video> compositor layers) to this
-                            // slide's box. translateZ was previously
-                            // here as belt-and-braces, but stacking it
-                            // on top of the carousel's translate + the
-                            // card's own layers caused Chrome on
-                            // Windows to subpixel-recompose the result
-                            // and make the gallery look scaled.
-                            contain: "paint",
+                            // overflow: hidden is enough; previous
+                            // attempts also added contain: paint /
+                            // translateZ here, but on Chrome Windows
+                            // those properties affected layout side
+                            // effects (slide 2's grid bled into slide
+                            // 1's row) without the Mac compositor ever
+                            // tripping. Plain overflow gives a clean
+                            // clip on every platform.
                           }}
                         >
                           <div
@@ -1379,7 +1377,7 @@ const ProjectsGallery = () => {
                 {/* Mobile carousel — visible below lg. Same clone strategy. */}
                 {mobileSlides.length > 0 && viewportMode !== "desktop" ? (
                   <motion.div
-                    className={viewportMode === "mobile" ? "flex" : "lg:hidden flex"}
+                    className={viewportMode === "mobile" ? "flex flex-nowrap" : "lg:hidden flex flex-nowrap"}
                     style={{
                       width: `${mobileRendered.length * 100}%`,
                       willChange: "transform",
@@ -1401,7 +1399,6 @@ const ProjectsGallery = () => {
                           className="shrink-0 overflow-hidden px-4"
                           style={{
                             width: `${100 / mobileRendered.length}%`,
-                            contain: "paint",
                           }}
                         >
                           {(() => {
