@@ -459,17 +459,20 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
                 console.error('Video playback error:', e);
               }}
             >
-              {/* Source mounts as soon as the card's phase unlocks via
-                  eagerLoad. WebM-only when uploaded: the small VP9
-                  file is what the gallery loops; modal click-to-play
-                  still uses the MP4 directly via cardMediaUrl. */}
-              {eagerLoad ? (
-                galleryWebmUrl ? (
-                  <source src={galleryWebmUrl} type={galleryWebmMime} />
-                ) : (
-                  <source src={cardMediaUrl} type="video/mp4" />
-                )
-              ) : null}
+              {/* Source is always rendered; the only thing that
+                  changes between sleep and active is the preload
+                  attribute. Mounting <source> conditionally (the
+                  earlier approach) raced with the <video> element's
+                  resource-selection state machine and occasionally
+                  left the element stuck without a fetch.
+                  WebM-only when uploaded: the small VP9 file is what
+                  the gallery loops; modal click-to-play still uses
+                  the MP4 directly via cardMediaUrl. */}
+              {galleryWebmUrl ? (
+                <source src={galleryWebmUrl} type={galleryWebmMime} />
+              ) : (
+                <source src={cardMediaUrl} type="video/mp4" />
+              )}
             </video>
           </div>
         ) : cardMediaUrl ? (
