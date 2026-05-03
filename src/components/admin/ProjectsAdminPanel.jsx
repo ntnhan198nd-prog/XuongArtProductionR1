@@ -89,6 +89,141 @@ function StarRatingInput({ value = 0, onChange }) {
   );
 }
 
+// Drag-drop multi-upload UI for image projects. Wraps the native
+// <input type=file multiple> so users can either click the box to open
+// the OS picker or drop a folder of images straight in. Newly dropped
+// files are appended to the existing selection (legacy single-input
+// replaced the entire array on each pick), and each file gets an
+// inline preview thumbnail + remove button so accidental adds are easy
+// to undo before save.
+function ImageDropzone({ files = [], onChange, existingCount = 0 }) {
+  const [dragActive, setDragActive] = useState(false);
+  const inputRef = useRef(null);
+
+  // Object URLs for the preview thumbnails. Created on each render of
+  // the file list and revoked when the file changes / unmounts to avoid
+  // leaking blob URLs over the lifetime of a long admin session.
+  const previewUrls = useMemo(
+    () => files.map((f) => (f ? URL.createObjectURL(f) : "")),
+    [files]
+  );
+  useEffect(() => {
+    return () => {
+      previewUrls.forEach((url) => {
+        if (url) URL.revokeObjectURL(url);
+      });
+    };
+  }, [previewUrls]);
+
+  const handleFilesAdded = (incoming) => {
+    const arr = Array.from(incoming || []).filter((f) =>
+      f.type?.startsWith("image/")
+    );
+    if (arr.length === 0) return;
+    onChange([...(files || []), ...arr]);
+  };
+
+  return (
+    <div className="space-y-3">
+      <div
+        onDragOver={(event) => {
+          event.preventDefault();
+          setDragActive(true);
+        }}
+        onDragLeave={() => setDragActive(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragActive(false);
+          handleFilesAdded(event.dataTransfer.files);
+        }}
+        onClick={() => inputRef.current?.click()}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            inputRef.current?.click();
+          }
+        }}
+        className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors ${
+          dragActive
+            ? "border-black bg-gray-50"
+            : "border-gray-300 bg-white hover:border-gray-400 hover:bg-gray-50"
+        }`}
+      >
+        <span className="text-2xl">⬆️</span>
+        <p className="mt-2 text-sm font-medium text-gray-800">
+          Kéo-thả ảnh vào đây
+        </p>
+        <p className="mt-1 text-xs text-gray-500">
+          hoặc bấm để chọn nhiều file. Hỗ trợ PNG, JPG, WebP.
+        </p>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(event) => {
+            handleFilesAdded(event.target.files);
+            event.target.value = "";
+          }}
+        />
+      </div>
+
+      <div className="flex items-center justify-between text-xs text-gray-600">
+        <span>
+          {files.length > 0
+            ? `${files.length} file mới · sẽ thay toàn bộ ${existingCount} ảnh hiện có khi lưu`
+            : `Hiện có ${existingCount} ảnh — kéo file mới sẽ thay thế danh sách này.`}
+        </span>
+        {files.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            className="rounded-md border border-gray-300 px-2 py-0.5 text-[11px] hover:bg-gray-50"
+          >
+            Xoá hết
+          </button>
+        ) : null}
+      </div>
+
+      {files.length > 0 ? (
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
+          {files.map((file, idx) => (
+            <div
+              key={`${file.name}-${idx}`}
+              className="relative aspect-square overflow-hidden rounded-lg border border-gray-200 bg-gray-100"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={previewUrls[idx]}
+                alt={file.name}
+                className="h-full w-full object-cover"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const next = [...files];
+                  next.splice(idx, 1);
+                  onChange(next);
+                }}
+                className="absolute right-1 top-1 rounded-full bg-black/70 px-1.5 py-0.5 text-[10px] text-white hover:bg-black"
+                aria-label={`Xoá ${file.name}`}
+              >
+                ✕
+              </button>
+              <div className="absolute inset-x-0 bottom-0 truncate bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
+                {file.name}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function StarRatingDisplay({ value = 0 }) {
   const safeValue = Math.max(0, Math.min(5, Number(value) || 0));
   if (safeValue === 0) return null;
@@ -624,35 +759,39 @@ export default function ProjectsAdminPanel({ mode } = {}) {
         </div>
       ) : null}
 
-      <div className="mt-8 flex flex-wrap gap-2">
-        {showSubTabs
-          ? TABS.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                onClick={() => {
-                  setTab(item.key);
-                  resetEditor();
-                  setListFilter("");
-                }}
-                className={`rounded-full px-4 py-2 text-sm transition-colors ${
-                  tab === item.key
-                    ? "bg-black text-white"
-                    : "border border-gray-300 text-gray-700 hover:bg-gray-50"
-                }`}
-              >
-                {item.label}
-              </button>
-            ))
-          : null}
-        <button
-          type="button"
-          onClick={startCreate}
-          className="rounded-full border border-gray-300 px-4 py-2 text-sm transition-colors hover:bg-gray-50"
-        >
-          + New {tabLabel}
-        </button>
-      </div>
+      {/* Sub-tabs row only shows in legacy mode; in the four-tab admin
+          shell the outer page handles tab switching, and the "+ Tạo mới"
+          button has been moved to the list panel toolbar where it's
+          contextual to the list. */}
+      {showSubTabs ? (
+        <div className="mt-8 flex flex-wrap gap-2">
+          {TABS.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => {
+                setTab(item.key);
+                resetEditor();
+                setListFilter("");
+              }}
+              className={`rounded-full px-4 py-2 text-sm transition-colors ${
+                tab === item.key
+                  ? "bg-black text-white"
+                  : "border border-gray-300 text-gray-700 hover:bg-gray-50"
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={startCreate}
+            className="rounded-full border border-gray-300 px-4 py-2 text-sm transition-colors hover:bg-gray-50"
+          >
+            + New {tabLabel}
+          </button>
+        </div>
+      ) : null}
 
       {error ? (
         <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -929,17 +1068,17 @@ export default function ProjectsAdminPanel({ mode } = {}) {
             ) : (
               <div className="space-y-3 rounded-xl border border-gray-200 p-4">
                 <div>
-                  <label className="mb-2 block text-sm font-medium">Media images (multiple)</label>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    onChange={(event) => setMediaFiles(Array.from(event.target.files || []))}
+                  <label className="mb-2 block text-sm font-medium">
+                    Media images (multiple)
+                  </label>
+                  <ImageDropzone
+                    files={mediaFiles}
+                    onChange={setMediaFiles}
+                    existingCount={
+                      Array.isArray(form.mediaList) ? form.mediaList.length : 0
+                    }
                   />
                 </div>
-                <p className="text-xs text-gray-600">
-                  Current images: {Array.isArray(form.mediaList) ? form.mediaList.length : 0}
-                </p>
               </div>
             )}
 
@@ -959,13 +1098,13 @@ export default function ProjectsAdminPanel({ mode } = {}) {
               )}
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="sticky bottom-0 -mx-5 -mb-5 flex flex-wrap items-center gap-2 border-t border-gray-200 bg-white/95 px-5 py-3 backdrop-blur">
               <button
                 type="submit"
                 disabled={saving}
                 className="rounded-lg bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {saving ? "Saving..." : isEditing ? "Update" : "Create"}
+                {saving ? "Đang lưu..." : isEditing ? "Cập nhật" : "Tạo mới"}
               </button>
 
               <button
@@ -973,8 +1112,14 @@ export default function ProjectsAdminPanel({ mode } = {}) {
                 onClick={resetEditor}
                 className="rounded-lg border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50"
               >
-                Clear
+                Xoá form
               </button>
+
+              {saving ? (
+                <span className="text-xs text-gray-500" aria-live="polite">
+                  Đang upload + lưu thông tin…
+                </span>
+              ) : null}
             </div>
           </form>
         </motion.div>
@@ -1012,6 +1157,24 @@ export default function ProjectsAdminPanel({ mode } = {}) {
                   </option>
                 ))}
               </select>
+              {/* Mode-specific "+ Tạo mới" button. Sits in the list
+                  toolbar where the user is already managing items, so
+                  they don't need to scroll back up to the legacy top
+                  row to add a new one. */}
+              {!showSubTabs ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    startCreate();
+                    if (typeof window !== "undefined") {
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }
+                  }}
+                  className="rounded-lg bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
+                >
+                  + Tạo mới
+                </button>
+              ) : null}
             </div>
           </div>
 
