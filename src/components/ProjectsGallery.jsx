@@ -76,7 +76,13 @@ const GALLERY_FLUID = {
   cardOverlayPad: "clamp(0.75rem, 1.2vw, 1.25rem)",
   cardClientFont: "clamp(0.625rem, 0.4vw + 0.5rem, 0.875rem)",
   cardTitleFont: "clamp(0.875rem, 0.4vw + 0.7rem, 1.125rem)",
-  gridPadX: "clamp(0.75rem, 1.5vw, 1.5rem)",
+  // Grid horizontal padding stays at a flat 1rem (not fluid clamp).
+  // The vw-based version produced subpixel-different paddings per
+  // slide on Chrome Windows, which made each slide's effective grid
+  // width slightly different — and that mismatch was what let slide
+  // N+1's GPU layers paint over slide N during the carousel
+  // translate.
+  gridPadX: "1rem",
   arrowSize: "clamp(2rem, 3vw, 3rem)",
   arrowIcon: "clamp(1.25rem, 1.6vw + 0.7rem, 1.75rem)",
   arrowOffset: "clamp(0.5rem, 1.5vw, 1.5rem)",
@@ -1312,7 +1318,17 @@ const ProjectsGallery = () => {
                         <div
                           key={`d-slide-${renderIdx}`}
                           className="shrink-0 overflow-hidden"
-                          style={{ width: `${100 / desktopRendered.length}%` }}
+                          style={{
+                            width: `${100 / desktopRendered.length}%`,
+                            // contain: paint + translateZ(0) lock GPU
+                            // composition to the slide's own box, so a
+                            // card's mask-image layer (needed to clip
+                            // <video> on Windows) can't paint outside
+                            // its own slide while the carousel
+                            // translates.
+                            contain: "paint",
+                            transform: "translateZ(0)",
+                          }}
                         >
                           <div
                             className="grid projects-grid"
@@ -1371,7 +1387,11 @@ const ProjectsGallery = () => {
                         <div
                           key={`m-slide-${renderIdx}`}
                           className="shrink-0 overflow-hidden px-4"
-                          style={{ width: `${100 / mobileRendered.length}%` }}
+                          style={{
+                            width: `${100 / mobileRendered.length}%`,
+                            contain: "paint",
+                            transform: "translateZ(0)",
+                          }}
                         >
                           {(() => {
                             if (sourceIdx <= 1 && items.length >= 3) {
