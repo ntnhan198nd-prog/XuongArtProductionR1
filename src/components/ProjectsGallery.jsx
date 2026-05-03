@@ -424,18 +424,31 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
       }}
       onClick={() => onOpen && onOpen(item)}
     >
-      <div className="relative h-full w-full">
+      {/* `isolation: isolate` forces a new stacking context on the
+          card; combined with the rounded class on this element it
+          stops Chrome on Windows from compositing the GPU-accelerated
+          <video> child outside the parent's clip path. Without it the
+          rounded corners look square only on Windows — Mac / iOS clip
+          GPU layers to the parent border-radius transparently. */}
+      <div
+        className="relative h-full w-full overflow-hidden rounded-2xl"
+        style={{ isolation: "isolate" }}
+      >
         {isVideoCard ? (
-          <div className="relative h-full w-full overflow-hidden">
+          <div className="relative h-full w-full overflow-hidden rounded-2xl">
             <video
               ref={videoRef}
-              className="h-full w-full"
+              className="h-full w-full rounded-2xl"
               style={{
                 objectFit: 'cover',
                 objectPosition: 'center center',
                 width: '100%',
                 height: '100%',
-                position: 'static'
+                position: 'static',
+                // Belt-and-braces: also clip via mask so the video's
+                // own compositor layer is shaped to the rounded box on
+                // Chrome Windows even before isolation kicks in.
+                clipPath: 'inset(0 round 1rem)',
               }}
               autoPlay={true}
               muted={true}
