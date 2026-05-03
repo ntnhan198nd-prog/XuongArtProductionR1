@@ -27,6 +27,10 @@ const EMPTY_FORM = {
   featured: false,
   media: null,
   mediaList: [],
+  // `preview` mirrors `media` for featured videos but holds the small
+  // WebM (VP9, no audio) used by the homepage gallery. Modal click-to-play
+  // still uses `media` (full-quality MP4).
+  preview: null,
   thumbnail: null,
 };
 
@@ -182,12 +186,29 @@ function toForm(item, tab) {
     featured: Boolean(item?.featured),
     media: tab === "projects" ? item?.media || null : null,
     mediaList: tab === "image-projects" ? item?.media || [] : [],
+    preview: tab === "projects" ? item?.preview || null : null,
     thumbnail: item?.thumbnail || null,
   };
 }
 
-export default function ProjectsAdminPanel() {
-  const [tab, setTab] = useState(TABS[0].key);
+// `mode` prop locks the panel into one of four admin shells:
+//   - undefined          → legacy combined panel (kept for backwards compat)
+//   - "showreel-featured" → Showreel + FeaturedLayoutPanel + only featured videos
+//   - "other-videos"     → only non-featured videos, no showreel/featured layout
+//   - "images"           → image projects only
+// When mode is set, the inner sub-tabs UI is hidden because the outer
+// admin shell drives the section choice.
+export default function ProjectsAdminPanel({ mode } = {}) {
+  // Resolve the current data domain ("projects" or "image-projects") from
+  // the mode prop. Without a mode prop, the legacy behaviour kicks in: the
+  // user picks the sub-tab.
+  const resolvedTabFromMode = mode === "images" ? "image-projects" : "projects";
+  const [tab, setTab] = useState(mode ? resolvedTabFromMode : TABS[0].key);
+  // Re-sync tab when mode prop changes at runtime (defensive — admin shell
+  // remounts panels on tab switch, but this guards against future re-use).
+  useEffect(() => {
+    if (mode) setTab(resolvedTabFromMode);
+  }, [mode, resolvedTabFromMode]);
 
   const [items, setItems] = useState([]);
   const [loadingItems, setLoadingItems] = useState(false);
@@ -198,6 +219,7 @@ export default function ProjectsAdminPanel() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [mediaFile, setMediaFile] = useState(null);
   const [mediaFiles, setMediaFiles] = useState([]);
+  const [previewFile, setPreviewFile] = useState(null);
   const [thumbnailFile, setThumbnailFile] = useState(null);
 
   const isEditing = editingId !== null;
@@ -237,10 +259,23 @@ export default function ProjectsAdminPanel() {
     );
   }, [items]);
 
+  // Mode-based pre-filter: showreel-featured shows only featured videos,
+  // other-videos shows only non-featured. Other modes pass everything
+  // through and let the search box do the work.
+  const modeFilteredItems = useMemo(() => {
+    if (mode === "showreel-featured") {
+      return items.filter((item) => Boolean(item?.featured));
+    }
+    if (mode === "other-videos") {
+      return items.filter((item) => !item?.featured);
+    }
+    return items;
+  }, [items, mode]);
+
   const filteredItems = useMemo(() => {
     const query = listFilter.trim().toLowerCase();
-    if (!query) return items;
-    return items.filter((item) => {
+    if (!query) return modeFilteredItems;
+    return modeFilteredItems.filter((item) => {
       const haystack = [
         item.title,
         item.client,
@@ -253,13 +288,14 @@ export default function ProjectsAdminPanel() {
         .toLowerCase();
       return haystack.includes(query);
     });
-  }, [items, listFilter]);
+  }, [modeFilteredItems, listFilter]);
 
   const resetEditor = () => {
     setEditingId(null);
     setForm(EMPTY_FORM);
     setMediaFile(null);
     setMediaFiles([]);
+    setPreviewFile(null);
     setThumbnailFile(null);
     setError("");
   };
@@ -295,6 +331,7 @@ export default function ProjectsAdminPanel() {
     setForm(toForm(item, tab));
     setMediaFile(null);
     setMediaFiles([]);
+    setPreviewFile(null);
     setThumbnailFile(null);
     setError("");
   };
@@ -399,10 +436,14 @@ export default function ProjectsAdminPanel() {
 
       if (tab === "projects") {
         let media = form.media;
+        let preview = form.preview;
         let thumbnail = form.thumbnail;
 
         if (mediaFile) {
           media = await uploadAsset(mediaFile, "projects");
+        }
+        if (previewFile) {
+          preview = await uploadAsset(previewFile, "projects");
         }
         if (thumbnailFile) {
           thumbnail = await uploadAsset(thumbnailFile, "thumbnails");
@@ -412,6 +453,7 @@ export default function ProjectsAdminPanel() {
           ...payload,
           duration: form.duration,
           media,
+          preview,
           thumbnail,
         };
       } else {
@@ -467,31 +509,43 @@ export default function ProjectsAdminPanel() {
     }
   };
 
+  // Section visibility derived from mode prop. The legacy combined panel
+  // (mode === undefined) keeps its original behaviour so anything still
+  // importing ProjectsAdminPanel without a mode renders unchanged.
+  const showShowreelSection = !mode || mode === "showreel-featured";
+  const showFeaturedLayoutSection =
+    (!mode && tab === "projects") || mode === "showreel-featured";
+  const showSubTabs = !mode;
+
   return (
     <div>
-      <div className="mt-6">
-        <ShowreelPanel />
-      </div>
+      {showShowreelSection ? (
+        <div className="mt-6">
+          <ShowreelPanel />
+        </div>
+      ) : null}
 
       <div className="mt-8 flex flex-wrap gap-2">
-        {TABS.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            onClick={() => {
-              setTab(item.key);
-              resetEditor();
-              setListFilter("");
-            }}
-            className={`rounded-full px-4 py-2 text-sm transition-colors ${
-              tab === item.key
-                ? "bg-black text-white"
-                : "border border-gray-300 text-gray-700 hover:bg-gray-50"
-            }`}
-          >
-            {item.label}
-          </button>
-        ))}
+        {showSubTabs
+          ? TABS.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => {
+                  setTab(item.key);
+                  resetEditor();
+                  setListFilter("");
+                }}
+                className={`rounded-full px-4 py-2 text-sm transition-colors ${
+                  tab === item.key
+                    ? "bg-black text-white"
+                    : "border border-gray-300 text-gray-700 hover:bg-gray-50"
+                }`}
+              >
+                {item.label}
+              </button>
+            ))
+          : null}
         <button
           type="button"
           onClick={startCreate}
@@ -507,7 +561,7 @@ export default function ProjectsAdminPanel() {
         </div>
       ) : null}
 
-      {tab === "projects" && !loadingItems ? (
+      {showFeaturedLayoutSection && !loadingItems ? (
         <div className="mt-8">
           <FeaturedLayoutPanel items={items} onSaved={() => loadItems(tab)} />
         </div>
@@ -692,23 +746,64 @@ export default function ProjectsAdminPanel() {
             ) : null}
 
             {tab === "projects" ? (
-              <div className="space-y-3 rounded-xl border border-gray-200 p-4">
-                <div>
-                  <label className="mb-2 block text-sm font-medium">
-                    Media file (video/image)
-                  </label>
-                  <input
-                    type="file"
-                    accept="video/*,image/*"
-                    onChange={(event) => setMediaFile(event.target.files?.[0] || null)}
-                  />
+              <>
+                <div className="space-y-3 rounded-xl border border-gray-200 p-4">
+                  <div>
+                    <label className="mb-2 block text-sm font-medium">
+                      Media file (video/image)
+                    </label>
+                    <p className="mb-2 text-xs text-gray-500">
+                      File chính (MP4 chất lượng cao). Người xem click xem trong modal sẽ phát file này.
+                    </p>
+                    <input
+                      type="file"
+                      accept="video/*,image/*"
+                      onChange={(event) => setMediaFile(event.target.files?.[0] || null)}
+                    />
+                  </div>
+                  {form.media?.url ? (
+                    <p className="text-xs text-gray-600">Current media: {form.media.url}</p>
+                  ) : (
+                    <p className="text-xs text-gray-500">No media selected yet.</p>
+                  )}
                 </div>
-                {form.media?.url ? (
-                  <p className="text-xs text-gray-600">Current media: {form.media.url}</p>
-                ) : (
-                  <p className="text-xs text-gray-500">No media selected yet.</p>
-                )}
-              </div>
+                {/* Preview WebM is featured-only — the homepage gallery
+                    plays this small VP9 file instead of the full MP4 to
+                    free decoder bandwidth across 12 looping cards. */}
+                {form.featured ? (
+                  <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                    <div>
+                      <label className="mb-2 block text-sm font-medium">
+                        Preview WebM (gallery loop)
+                      </label>
+                      <p className="mb-2 text-xs text-gray-600">
+                        File <span className="font-semibold">.webm</span> nén nhỏ (VP9 + Opus, không tiếng).
+                        Trang chủ sẽ phát file này trong gallery 12 video.
+                        Khuyến nghị: ≤ 3 MB, &lt; 12 s, 720p. Nếu để trống,
+                        gallery fallback về file MP4 chính.
+                      </p>
+                      <input
+                        type="file"
+                        accept="video/webm,.webm"
+                        onChange={(event) => setPreviewFile(event.target.files?.[0] || null)}
+                      />
+                    </div>
+                    {previewFile ? (
+                      <p className="text-xs text-amber-800">
+                        Sẽ upload: {previewFile.name} ({Math.round(previewFile.size / 1024)} KB)
+                      </p>
+                    ) : form.preview?.url ? (
+                      <p className="text-xs text-gray-700">
+                        Current preview: {form.preview.url}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-gray-500">
+                        Chưa có preview WebM — gallery sẽ phát file MP4 chính.
+                      </p>
+                    )}
+                  </div>
+                ) : null}
+              </>
             ) : (
               <div className="space-y-3 rounded-xl border border-gray-200 p-4">
                 <div>

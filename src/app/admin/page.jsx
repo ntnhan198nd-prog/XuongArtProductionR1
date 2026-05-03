@@ -6,15 +6,31 @@ import Container from "@/components/Container";
 import ProjectsAdminPanel from "@/components/admin/ProjectsAdminPanel";
 import SiteContentAdminPanel from "@/components/admin/SiteContentAdminPanel";
 
+// Tab order is fixed by the user's spec: Site Content first, then video
+// admin sections grouped by purpose. The "projects" key from the previous
+// 2-tab layout is kept as a soft alias so old bookmarks (?tab=projects)
+// land on the showreel+featured tab instead of 404-ing.
 const MAIN_TABS = [
-  { key: "projects", label: "Projects & Showreel" },
   { key: "content", label: "Site Content" },
+  { key: "showreel-featured", label: "Video Showreel + Nổi Bật" },
+  { key: "other-videos", label: "Video Khác" },
+  { key: "images", label: "Dự Án Ảnh" },
 ];
 
-const DEFAULT_TAB = "projects";
+const DEFAULT_TAB = "content";
+
+const LEGACY_TAB_ALIASES = {
+  projects: "showreel-featured",
+};
 
 function isValidTab(key) {
   return MAIN_TABS.some((t) => t.key === key);
+}
+
+function resolveTabKey(rawKey) {
+  if (!rawKey) return null;
+  const aliased = LEGACY_TAB_ALIASES[rawKey] || rawKey;
+  return isValidTab(aliased) ? aliased : null;
 }
 
 export default function AdminPage() {
@@ -27,9 +43,9 @@ export default function AdminPage() {
   const [loginError, setLoginError] = useState("");
 
   // Sync the active tab with the ?tab= query param so direct links and
-  // back/forward navigation both work. Default to "projects" on mount.
+  // back/forward navigation both work. Default to Site Content on mount.
   const tabFromUrl = searchParams?.get("tab");
-  const initialTab = isValidTab(tabFromUrl) ? tabFromUrl : DEFAULT_TAB;
+  const initialTab = resolveTabKey(tabFromUrl) || DEFAULT_TAB;
   const [tab, setTab] = useState(initialTab);
   const [contentDirty, setContentDirty] = useState(false);
   // Lazy-mount each panel on first visit, then keep it mounted (just hidden)
@@ -43,8 +59,8 @@ export default function AdminPage() {
   // If the URL changes (e.g. /admin-content redirected here, or back nav),
   // pick that up.
   useEffect(() => {
-    const next = searchParams?.get("tab");
-    if (isValidTab(next) && next !== tab) {
+    const next = resolveTabKey(searchParams?.get("tab"));
+    if (next && next !== tab) {
       setTab(next);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -224,14 +240,24 @@ export default function AdminPage() {
         </div>
 
         <div className="mt-2">
-          {visitedTabs.has("projects") ? (
-            <div hidden={tab !== "projects"}>
-              <ProjectsAdminPanel />
-            </div>
-          ) : null}
           {visitedTabs.has("content") ? (
             <div hidden={tab !== "content"}>
               <SiteContentAdminPanel onDirtyChange={setContentDirty} />
+            </div>
+          ) : null}
+          {visitedTabs.has("showreel-featured") ? (
+            <div hidden={tab !== "showreel-featured"}>
+              <ProjectsAdminPanel mode="showreel-featured" />
+            </div>
+          ) : null}
+          {visitedTabs.has("other-videos") ? (
+            <div hidden={tab !== "other-videos"}>
+              <ProjectsAdminPanel mode="other-videos" />
+            </div>
+          ) : null}
+          {visitedTabs.has("images") ? (
+            <div hidden={tab !== "images"}>
+              <ProjectsAdminPanel mode="images" />
             </div>
           ) : null}
         </div>

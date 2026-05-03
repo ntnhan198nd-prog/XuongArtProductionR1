@@ -80,6 +80,10 @@ export function normalizeProjectPayload(payload, store, currentItem = null) {
     fullDescription: normalizeText(payload.fullDescription, currentItem?.fullDescription || ""),
     completionDate: parseOptionalDate(payload.completionDate ?? currentItem?.completionDate),
     media: normalizeAssetInput(payload.media ?? currentItem?.media, store, now),
+    // `preview` is the optional WebM (VP9, no audio) used in the homepage
+    // featured gallery. Falls back to `media` at render time so existing
+    // projects without a preview keep working unchanged.
+    preview: normalizeAssetInput(payload.preview ?? currentItem?.preview, store, now),
     thumbnail: normalizeAssetInput(payload.thumbnail ?? currentItem?.thumbnail, store, now),
     createdAt: currentItem?.createdAt || now,
     updatedAt: now,

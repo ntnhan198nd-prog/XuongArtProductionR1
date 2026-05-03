@@ -196,6 +196,12 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
   // on the motion.div below), so neither problem can recur.
   const cardMediaUrl = item?.previewMedia || item?.media || "";
   const isVideoCard = isVideoUrl(cardMediaUrl);
+  // Featured-only WebM gallery preview. When present, the gallery loops
+  // this small VP9 file (no audio) instead of the full MP4 — frees
+  // hardware decoder bandwidth across 12 simultaneous cards. Click the
+  // card to open the modal and the full MP4 (`cardMediaUrl`) is used.
+  const galleryWebmUrl = item?.galleryVideoUrl || "";
+  const galleryWebmMime = item?.galleryVideoMime || "video/webm";
 
   // Force the browser to start fetching the full video as soon as the
   // gallery scrolls into view. Just flipping the `preload` attribute from
@@ -411,7 +417,6 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
           <div className="relative h-full w-full overflow-hidden">
             <video
               ref={videoRef}
-              src={cardMediaUrl}
               className="h-full w-full"
               style={{
                 objectFit: 'cover',
@@ -434,7 +439,16 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
               onError={(e) => {
                 console.error('Video playback error:', e);
               }}
-            />
+            >
+              {/* WebM source first so VP9-capable browsers pick it; the
+                  MP4 fallback covers Safari < 14.1 and any other UA that
+                  can't decode VP9. When `galleryWebmUrl` is empty the
+                  WebM <source> simply isn't rendered. */}
+              {galleryWebmUrl ? (
+                <source src={galleryWebmUrl} type={galleryWebmMime} />
+              ) : null}
+              <source src={cardMediaUrl} type="video/mp4" />
+            </video>
           </div>
         ) : cardMediaUrl ? (
           <Image
@@ -573,13 +587,26 @@ const ProjectsGallery = () => {
   });
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [isDesktopViewport, setIsDesktopViewport] = useState(false);
+  // viewportMode is the load-bearing piece for video decoder budget.
+  //   "loading"  — initial SSR + first paint, render BOTH carousels via
+  //                Tailwind hidden classes so server / client markup match.
+  //   "desktop"  — only the desktop carousel mounts → mobile's 12 <video>
+  //                elements are removed from the DOM, freeing their
+  //                hardware decoder slots.
+  //   "mobile"   — symmetric: only mobile carousel mounts.
+  // Without this, on Chrome Windows we ship 24 simultaneous <video>
+  // elements (12 desktop + 12 mobile, both mounted via CSS `hidden`).
+  // The browser's hardware decoder pool caps around 6–8, so the surplus
+  // get silently rejected and render as blank cards.
+  const [viewportMode, setViewportMode] = useState("loading");
+  const isDesktopViewport = viewportMode === "desktop";
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
 
     const mediaQuery = window.matchMedia(DESKTOP_BREAKPOINT_QUERY);
-    const updateViewport = () => setIsDesktopViewport(mediaQuery.matches);
+    const updateViewport = () =>
+      setViewportMode(mediaQuery.matches ? "desktop" : "mobile");
 
     updateViewport();
 
@@ -616,6 +643,14 @@ const ProjectsGallery = () => {
             const apiBaseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
             const fullMediaUrl = toAbsoluteAssetUrl(mediaUrl, apiBaseUrl);
             const fullMediaPreviewUrl = toAbsoluteAssetUrl(mediaPreviewUrl, apiBaseUrl);
+            // Featured card gallery loop uses the small WebM if uploaded;
+            // otherwise it falls back to the full MP4. Click-to-play in
+            // the modal always uses the MP4 (`media`).
+            const previewAttributes = project.attributes?.preview?.data?.attributes;
+            const galleryVideoUrl = previewAttributes?.url
+              ? toAbsoluteAssetUrl(previewAttributes.url, apiBaseUrl)
+              : "";
+            const galleryVideoMime = previewAttributes?.mime || "";
             
             // Prefer new field, fallback to legacy 'description'. Description
             // is kept as raw rich-text (modal renders via RichTextRenderer).
@@ -641,6 +676,8 @@ const ProjectsGallery = () => {
               order: project.attributes?.order || project.id,
               media: fullMediaUrl,
               previewMedia: fullMediaPreviewUrl || fullMediaUrl,
+              galleryVideoUrl,
+              galleryVideoMime,
               completionDate: project.attributes?.completionDate,
               orientation,
               medias: project.attributes?.media?.data ? [{
@@ -963,7 +1000,10 @@ const ProjectsGallery = () => {
     const phase1Urls = [];
     const phase2Urls = [];
     projects.forEach((p, idx) => {
-      const url = p?.previewMedia || p?.media;
+      // Prefer the WebM gallery preview when present — that's what the
+      // <video> elements actually play, so warming the MP4 cache here
+      // would burn bandwidth on bytes the gallery never streams.
+      const url = p?.galleryVideoUrl || p?.previewMedia || p?.media;
       if (!url || !isVideoUrl(url)) return;
       if (idx < 6) phase1Urls.push(url);
       else phase2Urls.push(url);
@@ -1204,9 +1244,9 @@ const ProjectsGallery = () => {
                     the transition disabled — so pressing "next" past the
                     last slide visually keeps sliding leftward, never
                     snaps right. */}
-                {slides.length > 0 ? (
+                {slides.length > 0 && viewportMode !== "mobile" ? (
                   <motion.div
-                    className="hidden lg:flex"
+                    className={viewportMode === "desktop" ? "flex" : "hidden lg:flex"}
                     style={{
                       width: `${desktopRendered.length * 100}%`,
                       willChange: "transform",
@@ -1260,9 +1300,9 @@ const ProjectsGallery = () => {
                 ) : null}
 
                 {/* Mobile carousel — visible below lg. Same clone strategy. */}
-                {mobileSlides.length > 0 ? (
+                {mobileSlides.length > 0 && viewportMode !== "desktop" ? (
                   <motion.div
-                    className="lg:hidden flex"
+                    className={viewportMode === "mobile" ? "flex" : "lg:hidden flex"}
                     style={{
                       width: `${mobileRendered.length * 100}%`,
                       willChange: "transform",

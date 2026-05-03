@@ -289,6 +289,7 @@ function serializeAsset(asset) {
 
 export function serializeProject(project) {
   const mediaData = project.media ? serializeAsset(project.media) : null;
+  const previewData = project.preview ? serializeAsset(project.preview) : null;
   const thumbnailData = project.thumbnail ? serializeAsset(project.thumbnail) : null;
 
   return {
@@ -309,6 +310,12 @@ export function serializeProject(project) {
       completionDate: project.completionDate || null,
       media: {
         data: mediaData,
+      },
+      // `preview` mirrors `media` shape; rendered by the homepage gallery
+      // when present (small WebM looped to free decoder bandwidth) and
+      // falls back to `media` when absent.
+      preview: {
+        data: previewData,
       },
       thumbnail: {
         data: thumbnailData,
