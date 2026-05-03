@@ -396,7 +396,17 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
     <motion.div
       ref={ref}
       initial={false}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
+      // `scale` is intentionally absent from animate (only opacity + y).
+      // Including `scale: 1` made framer-motion attach a permanent
+      // `transform: scale(1)` to the element which, on Chrome Windows,
+      // promoted the card to its own GPU layer; combined with the
+      // slide-level translateZ and the carousel translateX it stacked
+      // three nested layers and the resulting subpixel composition
+      // made the gallery look slightly zoomed compared to macOS.
+      // Hover scale (1.03) still works — whileHover sets it
+      // temporarily, and the override below keeps the hover-out
+      // animation snappy.
+      animate={{ opacity: 1, y: 0 }}
       transition={{
         // Default applies to opacity (the slow staggered reveal).
         duration: 0.8,
@@ -1320,14 +1330,16 @@ const ProjectsGallery = () => {
                           className="shrink-0 overflow-hidden"
                           style={{
                             width: `${100 / desktopRendered.length}%`,
-                            // contain: paint + translateZ(0) lock GPU
-                            // composition to the slide's own box, so a
-                            // card's mask-image layer (needed to clip
-                            // <video> on Windows) can't paint outside
-                            // its own slide while the carousel
-                            // translates.
+                            // `contain: paint` alone clips descendant
+                            // GPU layers (the cards' mask-image layers,
+                            // the <video> compositor layers) to this
+                            // slide's box. translateZ was previously
+                            // here as belt-and-braces, but stacking it
+                            // on top of the carousel's translate + the
+                            // card's own layers caused Chrome on
+                            // Windows to subpixel-recompose the result
+                            // and make the gallery look scaled.
                             contain: "paint",
-                            transform: "translateZ(0)",
                           }}
                         >
                           <div
@@ -1390,7 +1402,6 @@ const ProjectsGallery = () => {
                           style={{
                             width: `${100 / mobileRendered.length}%`,
                             contain: "paint",
-                            transform: "translateZ(0)",
                           }}
                         >
                           {(() => {
