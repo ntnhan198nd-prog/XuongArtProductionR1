@@ -448,20 +448,36 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
       }}
       onClick={() => onOpen && onOpen(item)}
     >
-      {/* `isolation: isolate` forces a new stacking context on the
-          card; combined with the rounded class on this element it
-          stops Chrome on Windows from compositing the GPU-accelerated
-          <video> child outside the parent's clip path. Without it the
-          rounded corners look square only on Windows — Mac / iOS clip
-          GPU layers to the parent border-radius transparently. */}
+      {/* Chrome on Windows composites <video> on its own GPU layer that
+          ignores ancestor `overflow: hidden` + `border-radius`. Two
+          previous attempts (clip-path inset, isolation: isolate) helped
+          on some Chrome builds but not all. The reliable fix is to
+          force the wrapper into its own paint layer with `mask-image`:
+          a fully-opaque radial gradient mask is a no-op visually but
+          tells Chrome's compositor to clip everything inside (incl. the
+          video layer) to the element's geometry, which respects the
+          border-radius. `-webkit-mask-image` covers older Chromium
+          renderers that ignore the unprefixed property in this role.
+          See: https://stackoverflow.com/q/49066011 + Chrome bug 157218. */}
       <div
         className="relative h-full w-full overflow-hidden"
-        style={{ isolation: "isolate", borderRadius: GALLERY_FLUID.cardRadius }}
+        style={{
+          isolation: "isolate",
+          borderRadius: GALLERY_FLUID.cardRadius,
+          WebkitMaskImage: "-webkit-radial-gradient(white, black)",
+          maskImage: "radial-gradient(white, black)",
+          transform: "translateZ(0)",
+          willChange: "transform",
+        }}
       >
         {isVideoCard ? (
           <div
             className="relative h-full w-full overflow-hidden"
-            style={{ borderRadius: GALLERY_FLUID.cardRadius }}
+            style={{
+              borderRadius: GALLERY_FLUID.cardRadius,
+              WebkitMaskImage: "-webkit-radial-gradient(white, black)",
+              maskImage: "radial-gradient(white, black)",
+            }}
           >
             <video
               ref={videoRef}
