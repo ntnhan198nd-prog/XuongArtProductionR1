@@ -509,7 +509,14 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
               loop={true}
               playsInline
               controls={false}
-              preload={eagerLoad ? "auto" : "metadata"}
+              // preload="none" on inactive slides means the browser
+              // doesn't even fetch metadata or allocate a decoder slot
+              // for those <video> elements — pause() alone wasn't enough
+              // on Chrome Windows, which holds the slot for any element
+              // it has touched. Going to "none" until the slide becomes
+              // active drops every off-screen card out of the decoder
+              // pool, leaving the full ~6–8 slots for the active 6.
+              preload={isActiveSlide && eagerLoad ? "auto" : "none"}
               poster={item.poster || ''}
               webkit-playsinline="true"
               disablePictureInPicture
@@ -519,14 +526,21 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
                 console.error('Video playback error:', e);
               }}
             >
-              {/* WebM source first so VP9-capable browsers pick it; the
-                  MP4 fallback covers Safari < 14.1 and any other UA that
-                  can't decode VP9. When `galleryWebmUrl` is empty the
-                  WebM <source> simply isn't rendered. */}
+              {/* When a featured project has uploaded its WebM gallery
+                  preview, render *only* that source — the small VP9
+                  file is what we want the gallery to play, and adding
+                  an MP4 fallback alongside it would let the browser
+                  pull the heavy MP4 on UAs that report partial WebM
+                  support but really shouldn't be served the small file.
+                  Click-to-play in the modal still uses the MP4 directly
+                  via cardMediaUrl, so the high-quality file isn't
+                  wasted. Cards without a WebM upload fall through to
+                  the MP4 source as before. */}
               {galleryWebmUrl ? (
                 <source src={galleryWebmUrl} type={galleryWebmMime} />
-              ) : null}
-              <source src={cardMediaUrl} type="video/mp4" />
+              ) : (
+                <source src={cardMediaUrl} type="video/mp4" />
+              )}
             </video>
           </div>
         ) : cardMediaUrl ? (
