@@ -110,24 +110,34 @@ const normalizeOrientation = (val) => {
 // pattern keeps the wide 2-portrait + 4-landscape layout. Pattern picked
 // at slide-assignment time based on item composition (see
 // pickPatternForSlide below).
+// Each area now ships explicit `column` / `row` line numbers
+// (`{ start, end }`) instead of the previous named-template approach.
+// The named-area version produced a weird Chrome-Windows-only bug
+// where the grid auto-row solver let a portrait card span beyond its
+// row range, pushing the second slide's first card into the visual
+// space below slide 1. Explicit line numbers don't go through the
+// named-template solver at all and behave identically on every
+// browser we test.
 const SLIDE_PATTERNS = {
   // 2 portraits framing 4 landscapes — the original featured layout.
   // Used for any slide that isn't 100% square.
   mixed: {
     desktop: {
       columns: '1.35fr 1fr 1fr 1.35fr 1fr 1fr',
-      rows: 'repeat(2, auto)',
-      template: [
-        '"a b b c d d"',
-        '"a e e c f f"',
-      ],
+      rows: 'repeat(2, minmax(0, 1fr))',
       areas: [
-        { name: 'a', shape: 'portrait' },
-        { name: 'b', shape: 'landscape' },
-        { name: 'c', shape: 'portrait' },
-        { name: 'd', shape: 'landscape' },
-        { name: 'e', shape: 'landscape' },
-        { name: 'f', shape: 'landscape' },
+        // Col 1 portrait spans rows 1–2.
+        { shape: 'portrait',  column: { start: 1, end: 2 }, row: { start: 1, end: 3 } },
+        // Cols 2–3 landscape, row 1.
+        { shape: 'landscape', column: { start: 2, end: 4 }, row: { start: 1, end: 2 } },
+        // Col 4 portrait spans rows 1–2.
+        { shape: 'portrait',  column: { start: 4, end: 5 }, row: { start: 1, end: 3 } },
+        // Cols 5–6 landscape, row 1.
+        { shape: 'landscape', column: { start: 5, end: 7 }, row: { start: 1, end: 2 } },
+        // Cols 2–3 landscape, row 2.
+        { shape: 'landscape', column: { start: 2, end: 4 }, row: { start: 2, end: 3 } },
+        // Cols 5–6 landscape, row 2.
+        { shape: 'landscape', column: { start: 5, end: 7 }, row: { start: 2, end: 3 } },
       ],
     },
   },
@@ -137,18 +147,14 @@ const SLIDE_PATTERNS = {
   squares: {
     desktop: {
       columns: 'repeat(3, 1fr)',
-      rows: 'repeat(2, 1fr)',
-      template: [
-        '"a b c"',
-        '"d e f"',
-      ],
+      rows: 'repeat(2, minmax(0, 1fr))',
       areas: [
-        { name: 'a', shape: 'square' },
-        { name: 'b', shape: 'square' },
-        { name: 'c', shape: 'square' },
-        { name: 'd', shape: 'square' },
-        { name: 'e', shape: 'square' },
-        { name: 'f', shape: 'square' },
+        { shape: 'square', column: { start: 1, end: 2 }, row: { start: 1, end: 2 } },
+        { shape: 'square', column: { start: 2, end: 3 }, row: { start: 1, end: 2 } },
+        { shape: 'square', column: { start: 3, end: 4 }, row: { start: 1, end: 2 } },
+        { shape: 'square', column: { start: 1, end: 2 }, row: { start: 2, end: 3 } },
+        { shape: 'square', column: { start: 2, end: 3 }, row: { start: 2, end: 3 } },
+        { shape: 'square', column: { start: 3, end: 4 }, row: { start: 2, end: 3 } },
       ],
     },
   },
@@ -187,8 +193,9 @@ const assignToPattern = (items, pattern) => {
     const finalOrientation = area.shape;
 
     return {
-      area: area.name,
       shape: finalOrientation,
+      gridColumn: `${area.column.start} / ${area.column.end}`,
+      gridRow: `${area.row.start} / ${area.row.end}`,
       item: {
         ...item,
         orientation: finalOrientation
@@ -210,7 +217,7 @@ const assignToPattern = (items, pattern) => {
 // from parent, eagerLoad from a once-true useInView), so default shallow
 // comparison reliably skips re-renders that would otherwise hit every
 // card on each navigation.
-const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillHeight = false, forceAspectRatio, eagerLoad = false }) => {
+const FeaturedCard = memo(({ gridColumn, gridRow, slotShape, item, onOpen, index = 0, fillHeight = false, forceAspectRatio, eagerLoad = false }) => {
   const ref = useRef(null);
   const videoRef = useRef(null);
   // We deliberately don't run a per-card entry animation any more. With
@@ -439,7 +446,8 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
       )}
               style={{
         borderRadius: GALLERY_FLUID.cardRadius,
-        ...(areaName ? { gridArea: areaName } : {}),
+        ...(gridColumn ? { gridColumn } : {}),
+        ...(gridRow ? { gridRow } : {}),
         width: '100%',
         height: fillHeight ? '100%' : 'auto',
         // Aspect ratio bám theo shape của ô (slot), không lấy từ media gốc —
@@ -1345,8 +1353,6 @@ const ProjectsGallery = () => {
                             style={{
                               gridTemplateColumns: pattern.desktop.columns,
                               gridTemplateRows: pattern.desktop.rows,
-                              gridTemplateAreas: pattern.desktop.template.join(' '),
-                              height: 'auto',
                               gap: 'clamp(8px, 1vw, 16px)',
                               paddingLeft: GALLERY_FLUID.gridPadX,
                               paddingRight: GALLERY_FLUID.gridPadX,
@@ -1359,7 +1365,8 @@ const ProjectsGallery = () => {
                             {slots.map((slot, idx) => (
                               <FeaturedCard
                                 key={`d-${renderIdx}-${slot.item.id}-${idx}`}
-                                areaName={slot.area}
+                                gridColumn={slot.gridColumn}
+                                gridRow={slot.gridRow}
                                 slotShape={slot.shape}
                                 item={slot.item}
                                 onOpen={openProject}
