@@ -153,24 +153,6 @@ export const DEFAULT_SITE_CONTENT = {
     searchCategories: ["Commercial", "TVC", "Recap", "MV", "Social Media"],
     imageSearchCategories: ["Fashion", "Product", "Event", "Portrait"],
   },
-  gallery: {
-    // A/B-testing the preload strategy for the homepage featured gallery.
-    //   "lazy"  – preload + decode/play start when the user scrolls into
-    //             the gallery (IntersectionObserver). Saves bandwidth for
-    //             visitors who never reach the section.
-    //   "modeA" – inject <link rel=preload as=video> on page mount so the
-    //             12 video files are warmed in HTTP cache while the user is
-    //             still on the hero showreel. <video> elements stay at
-    //             preload="metadata" until the gallery scrolls in, so
-    //             nothing extra decodes/plays in the background.
-    //   "modeB" – default: Mode A + flip eagerLoad on every card immediately
-    //             so the 12 videos also decode/autoplay in the background
-    //             from the moment the homepage mounts. Continues looping
-    //             for the entire time the user stays on /, stops when the
-    //             gallery component unmounts (navigation to /videos,
-    //             /images, /whoweare, etc.) and resumes on return.
-    preloadMode: "modeB",
-  },
 };
 
 const isString = (v) => typeof v === "string";
@@ -364,13 +346,6 @@ export function normalizeSiteContent(input) {
           return v || null;
         }
       ),
-    },
-    gallery: {
-      // Whitelist the mode strings — anything else (legacy data, typo,
-      // garbage) falls back to "lazy" so the gallery never breaks.
-      preloadMode: ["lazy", "modeA", "modeB"].includes(src.gallery?.preloadMode)
-        ? src.gallery.preloadMode
-        : d.gallery.preloadMode,
     },
   };
 }

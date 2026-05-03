@@ -429,15 +429,16 @@ FeaturedCard.displayName = "FeaturedCard";
 
 // Main ProjectsGallery component
 const ProjectsGallery = () => {
-  const { ui, gallery } = useSiteContent();
-  // A/B-testable preload strategy. Defaults to "modeB" so the homepage
-  // gallery autoplays its 12 videos for the entire time the user stays
-  // on /. Switching to /videos, /images, /whoweare etc. unmounts this
-  // component → playback stops; coming back remounts and resumes.
-  //   lazy  – preload + decode only when section scrolls into view
-  //   modeA – inject preload links on mount, defer decode/play until view
-  //   modeB – inject preload links + decode/play immediately on mount
-  const preloadMode = gallery?.preloadMode || "modeB";
+  const { ui } = useSiteContent();
+  // Cache-only preload strategy ("Mode A"): inject <link rel="preload"
+  // as="video"> for the 12 featured videos as soon as the homepage
+  // mounts so the bytes warm in the HTTP cache while the user is still
+  // on the hero showreel, but each <video> element stays at
+  // preload="metadata" until the gallery scrolls into view. Decode/play
+  // only kicks in once sectionInView fires, so Windows / mobile / older
+  // browsers never have to handle 12 simultaneous decode jobs in the
+  // background — that simultaneity was producing blank cards on
+  // Windows.
   // OS-level "Reduce motion" preference. When true we replace the spring
   // slide animation with an instant cut so vestibular-sensitive users
   // don't get the horizontal sweep on every navigation.
@@ -873,40 +874,34 @@ const ProjectsGallery = () => {
   // elements pick up the new eagerLoad=true and start autoPlay too.
   // Net result: visible row plays first; off-screen row catches up next;
   // once both phases are done, all 12 keep playing continuously.
-  // 15 s safety fallback so a single stalled video can't block phase 2.
+  // 8 s safety fallback so a single stalled video can't block phase 2.
   //
-  // The trigger condition depends on preloadMode:
-  //   lazy  – wait for sectionInView (gallery scrolled into viewport)
-  //   modeA / modeB – fire on mount (as soon as projects array is ready),
-  //                   so the bytes warm in HTTP cache while the user is
-  //                   still on the hero showreel above the gallery.
+  // Mode A behaviour: link preloads fire on mount (as soon as projects is
+  // ready) so bytes warm in cache while the user is on the showreel; the
+  // <video> elements only flip to preload="auto" + autoPlay after the
+  // section scrolls into view.
   const [loadPhase, setLoadPhase] = useState("phase1");
 
-  // Helper: per-card eagerLoad gate, branched on the preloadMode chosen
-  // in the admin.
-  //   modeB  — every card returns true on mount, *bypassing* the phase-1/2
-  //            split. The mode label is "Full eager play": the user
-  //            expects all 12 videos to start decoding/autoplaying
-  //            immediately, not to wait for phase-1 link-preload load
-  //            events (which several browsers don't reliably fire).
-  //   modeA  — gated on sectionInView AND the phase split, so the
-  //            <video> elements stay at preload="metadata" until the
-  //            user scrolls in. Bytes are pre-warmed via <link rel=preload>
-  //            elsewhere; CPU cost stays near zero in the meantime.
-  //   lazy   — same as modeA's gate; nothing fires until sectionInView.
-  // Defined after loadPhase so the useCallback dep array doesn't TDZ.
+  // Helper: per-card eagerLoad gate. Cards stay at preload="metadata"
+  // until the gallery scrolls into view (sectionInView) AND the card's
+  // phase has been unlocked. Phase 1 cards (slide 0) unlock immediately
+  // when sectionInView fires; phase 2 cards (slide 1+) unlock once the
+  // phase-1 preload links have all reported `load` (or the safety
+  // timeout fires). Defined after loadPhase so the useCallback dep
+  // array doesn't TDZ.
   const cardEagerLoad = useCallback(
     (item) => {
-      if (preloadMode === "modeB") return true;
       const phaseAllows = item?._isPhase1 || loadPhase === "phase2";
       return sectionInView && phaseAllows;
     },
-    [preloadMode, sectionInView, loadPhase]
+    [sectionInView, loadPhase]
   );
 
   useEffect(() => {
-    const shouldStart = preloadMode === "lazy" ? sectionInView : true;
-    if (!shouldStart) return undefined;
+    // Mode A: kick off the link preloads on mount so the bytes warm in
+    // the cache while the user is still on the hero showreel. We don't
+    // gate on sectionInView here — the cardEagerLoad helper is what
+    // defers actual <video> decode/play until the gallery scrolls in.
     if (typeof document === "undefined") return undefined;
     if (projects.length === 0) return undefined;
 
@@ -975,7 +970,7 @@ const ProjectsGallery = () => {
       if (timeoutId) window.clearTimeout(timeoutId);
       links.forEach((link) => link.remove());
     };
-  }, [sectionInView, projects, preloadMode]);
+  }, [projects]);
 
   // Force-play sweep: on every slide change (manual nav OR autoplay tick),
   // walk all <video> elements inside the gallery and call play() on any
