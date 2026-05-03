@@ -1258,9 +1258,14 @@ const ProjectsGallery = () => {
                 vertical centre of the gallery cards (not the section, which
                 also covers the dots and CTA below). */}
             <div ref={sectionRef} className="relative">
-              {/* overflow-hidden clips the off-screen clone slide; py-3
-                  leaves headroom for the per-card hover lift. */}
-              <div className="relative overflow-hidden py-3">
+              {/* overflow-hidden clips the off-screen clone slide; py-6
+                  leaves headroom for the per-card hover lift+scale.
+                  py-3 was insufficient on Chrome Windows: a portrait
+                  card at ~600px scaled 1.03 + lifted -5px extends ~14px
+                  above its origin, which the 12px buffer hard-clipped
+                  (Mac's compositor anti-aliased the small overflow so
+                  the artifact only showed on Windows). */}
+              <div className="relative overflow-hidden py-6">
                 {/* Desktop carousel — visible on lg+ only.
                     Renders N+1 slides (real slides plus a clone of slide 0
                     appended). carouselIdx may transiently equal N (clone),
@@ -1287,17 +1292,20 @@ const ProjectsGallery = () => {
                       return (
                         <div
                           key={`d-slide-${renderIdx}`}
-                          className="shrink-0 overflow-hidden"
+                          className="shrink-0"
                           style={{
                             width: `${100 / desktopRendered.length}%`,
-                            // overflow: hidden is enough; previous
-                            // attempts also added contain: paint /
-                            // translateZ here, but on Chrome Windows
-                            // those properties affected layout side
-                            // effects (slide 2's grid bled into slide
-                            // 1's row) without the Mac compositor ever
-                            // tripping. Plain overflow gives a clean
-                            // clip on every platform.
+                            // No overflow-hidden here: the per-card
+                            // whileHover scale+lift extends a few px
+                            // beyond the slide-cell box, and clipping
+                            // at this level chopped the visible edge
+                            // on Chrome Windows. Off-screen clone
+                            // slides are still clipped by the
+                            // overflow-hidden on the parent viewport
+                            // wrapper above. Earlier attempts at
+                            // `contain: paint` / `translateZ` here
+                            // caused slide 2's grid to bleed into
+                            // slide 1's row on Chrome Windows.
                           }}
                         >
                           <div
@@ -1354,7 +1362,7 @@ const ProjectsGallery = () => {
                       return (
                         <div
                           key={`m-slide-${renderIdx}`}
-                          className="shrink-0 overflow-hidden px-4"
+                          className="shrink-0 px-4"
                           style={{
                             width: `${100 / mobileRendered.length}%`,
                           }}
