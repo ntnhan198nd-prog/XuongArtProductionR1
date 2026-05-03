@@ -16,7 +16,7 @@ import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 // freshly-clicked slide always gets the full 6 s before the next
 // auto-advance — never a half-second residual fire from the previous
 // interval (which is what setInterval would do).
-const AUTOPLAY_INTERVAL_MS = 6000;
+const AUTOPLAY_INTERVAL_MS = 7000;
 const DESKTOP_BREAKPOINT_QUERY = "(min-width: 1024px)";
 
 // Apple-style carousel: every slide is rendered side-by-side in one wide
@@ -832,7 +832,7 @@ const ProjectsGallery = () => {
   // refocus clamp) animates straight to the target index, which means a
   // backward step from slide 1 → slide 0 produces a clean rightward
   // animation instead of being mistaken for a forward wrap.
-  const goToSlide = useCallback((next, useClone = false) => {
+  const goToSlide = useCallback((next, useClone = false, useBackwardClone = false) => {
     const N = slides.length;
     if (N === 0) return;
     const target = ((next % N) + N) % N;
@@ -860,19 +860,36 @@ const ProjectsGallery = () => {
     } else if (useClone && current === N - 1 && target === 0) {
       setEnableTransition(true);
       setCarouselIdx(N); // animate onto the clone
+    } else if (useBackwardClone && current === 0 && target === N - 1) {
+      // Backward wrap (left arrow at slide 0): we don't have a -1 clone,
+      // but the appended clone at position N is visually identical to
+      // slide 0 and sits to the *right* of the real slide N-1. So snap
+      // carouselIdx to N (no transition — clone looks like the slide we
+      // were just on) and then animate backward to N-1. The animation
+      // goes from -N*33% → -(N-1)*33%, i.e. rightward shift, which
+      // matches the user's expectation of "left arrow = previous slide
+      // sliding in from the left".
+      setEnableTransition(false);
+      setCarouselIdx(N);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setEnableTransition(true);
+          setCarouselIdx(N - 1);
+        });
+      });
     } else {
       setEnableTransition(true);
       setCarouselIdx(target);
     }
-    // Restart the 6 s autoplay countdown after every navigation (whether
-    // it came from the user clicking arrow/dot or from the autoplay tick
+    // Restart the autoplay countdown after every navigation (whether it
+    // came from the user clicking arrow/dot or from the autoplay tick
     // itself). Going through a ref keeps this independent of where
     // scheduleAutoplay is defined, so we don't get into a circular
     // useCallback dependency.
     if (scheduleAutoplayRef.current) scheduleAutoplayRef.current();
   }, [slides.length]);
 
-  const goToMobileSlide = useCallback((next, useClone = false) => {
+  const goToMobileSlide = useCallback((next, useClone = false, useBackwardClone = false) => {
     const M = mobileSlides.length;
     if (M === 0) return;
     const target = ((next % M) + M) % M;
@@ -894,6 +911,17 @@ const ProjectsGallery = () => {
     } else if (useClone && current === M - 1 && target === 0) {
       setEnableMobileTransition(true);
       setMobileCarouselIdx(M);
+    } else if (useBackwardClone && current === 0 && target === M - 1) {
+      // Mirror of the desktop backward-wrap: snap to clone (looks like
+      // current slide), animate left-to-right to slide M-1.
+      setEnableMobileTransition(false);
+      setMobileCarouselIdx(M);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setEnableMobileTransition(true);
+          setMobileCarouselIdx(M - 1);
+        });
+      });
     } else {
       setEnableMobileTransition(true);
       setMobileCarouselIdx(target);
@@ -1395,7 +1423,7 @@ const ProjectsGallery = () => {
               {slides.length > 1 ? (
                 <button
                   type="button"
-                  onClick={() => goToSlide(slideRef.current - 1)}
+                  onClick={() => goToSlide(slideRef.current - 1, /* useClone */ false, /* useBackwardClone */ true)}
                   className="hidden sm:flex items-center justify-center absolute left-2 md:left-4 top-1/2 -translate-y-1/2 z-[55] h-8 w-8 md:h-10 md:w-10 lg:h-12 lg:w-12 rounded-full bg-white/10 backdrop-blur-md border border-white/30 text-neutral-900 hover:bg-white/20 transition-all focus:outline-none focus:ring-2 focus:ring-white/50 shadow-lg"
                   aria-label="Trang trước"
                 >
