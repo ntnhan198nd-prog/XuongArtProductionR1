@@ -67,7 +67,12 @@ const GALLERY_FLUID = {
   containerWidth: "min(92vw, 1500px)",
   containerPadBottom: "clamp(2rem, 4vw, 5rem)",
   containerMarginTop: "clamp(0px, 2vw, 2.5rem)",
-  cardRadius: "clamp(0.75rem, 1.1vw, 1.25rem)",
+  // Card border-radius is intentionally fixed at 1rem (matches the
+  // mac/Tailwind `rounded-2xl` value) instead of fluid clamp. Letting
+  // it scale with viewport caused Chrome on Windows to subpixel-round
+  // the value differently per slide, leaking GPU video layers into
+  // the neighbouring slide.
+  cardRadius: "1rem",
   cardOverlayPad: "clamp(0.75rem, 1.2vw, 1.25rem)",
   cardClientFont: "clamp(0.625rem, 0.4vw + 0.5rem, 0.875rem)",
   cardTitleFont: "clamp(0.875rem, 0.4vw + 0.7rem, 1.125rem)",
@@ -449,15 +454,18 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
       onClick={() => onOpen && onOpen(item)}
     >
       {/* Chrome on Windows composites <video> on its own GPU layer that
-          ignores ancestor `overflow: hidden` + `border-radius`. Two
-          previous attempts (clip-path inset, isolation: isolate) helped
-          on some Chrome builds but not all. The reliable fix is to
-          force the wrapper into its own paint layer with `mask-image`:
-          a fully-opaque radial gradient mask is a no-op visually but
-          tells Chrome's compositor to clip everything inside (incl. the
-          video layer) to the element's geometry, which respects the
-          border-radius. `-webkit-mask-image` covers older Chromium
-          renderers that ignore the unprefixed property in this role.
+          ignores ancestor `overflow: hidden` + `border-radius`. The
+          reliable fix is the `mask-image` trick: a fully-opaque radial
+          gradient is a no-op visually but tells Chrome's compositor to
+          clip everything inside (incl. the video layer) to the element
+          geometry, which respects the border-radius.
+          `-webkit-mask-image` covers older Chromium renderers that
+          ignore the unprefixed property in this role.
+          NB: deliberately *no* `translateZ(0)` / `will-change` here —
+          a previous version added them to lock the 3D context, but on
+          Windows that promotion let GPU layers leak across slide
+          boundaries when the carousel translated, painting slide N+1
+          on top of slide N. The mask alone is enough.
           See: https://stackoverflow.com/q/49066011 + Chrome bug 157218. */}
       <div
         className="relative h-full w-full overflow-hidden"
@@ -466,8 +474,6 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
           borderRadius: GALLERY_FLUID.cardRadius,
           WebkitMaskImage: "-webkit-radial-gradient(white, black)",
           maskImage: "radial-gradient(white, black)",
-          transform: "translateZ(0)",
-          willChange: "transform",
         }}
       >
         {isVideoCard ? (
@@ -1305,7 +1311,7 @@ const ProjectsGallery = () => {
                       return (
                         <div
                           key={`d-slide-${renderIdx}`}
-                          className="shrink-0"
+                          className="shrink-0 overflow-hidden"
                           style={{ width: `${100 / desktopRendered.length}%` }}
                         >
                           <div
@@ -1364,7 +1370,7 @@ const ProjectsGallery = () => {
                       return (
                         <div
                           key={`m-slide-${renderIdx}`}
-                          className="shrink-0 px-4"
+                          className="shrink-0 overflow-hidden px-4"
                           style={{ width: `${100 / mobileRendered.length}%` }}
                         >
                           {(() => {
