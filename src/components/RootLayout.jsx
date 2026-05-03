@@ -324,7 +324,7 @@ const RootLayoutInner = ({
               they all transition in lockstep. */}
           <motion.div
             aria-hidden="true"
-            className="pointer-events-none absolute inset-0 bg-white/90 shadow-[0_1px_0_rgba(0,0,0,0.06)] backdrop-blur-md"
+            className="pointer-events-none absolute inset-0 bg-white/90 shadow-[0_1px_0_rgba(0,0,0,0.06)] md:backdrop-blur-md"
             style={{ opacity: bgOpacity }}
           />
           {/* Header content sits above the layers */}

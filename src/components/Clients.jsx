@@ -70,7 +70,7 @@ const Clients = ({ content }) => {
                 },
               }}
             >
-              <div className="mx-auto flex max-w-5xl items-center justify-evenly gap-x-1 sm:gap-x-2 md:gap-x-3">
+              <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-evenly gap-x-1 gap-y-8 sm:flex-nowrap sm:gap-x-2 sm:gap-y-0 md:gap-x-3">
                 {strategicBrands.map((brand, idx) => (
                   <motion.div
                     key={`${brand.logoKey || brand.alt}-${idx}`}
@@ -96,7 +96,7 @@ const Clients = ({ content }) => {
                       stiffness: 320,
                       damping: 22,
                     }}
-                    className="shrink-0"
+                    className="flex shrink-0 basis-1/3 justify-center sm:basis-auto"
                   >
                     {brand.logoUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element

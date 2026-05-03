@@ -36,6 +36,17 @@ const SLIDE_TRANSITION = {
   damping: 32,
   mass: 1,
 };
+// Mobile / tablet swap a fixed-duration tween for the spring above. The
+// spring is a JS-integrated physics step every frame; on lower-end
+// phones that integration cost is enough to drop the slide animation
+// below 60fps, especially while 12 background <video> elements are
+// decoding. A plain ease-out tween is monotone and cheaper to sample,
+// so it stays smooth where the spring would judder.
+const SLIDE_TRANSITION_MOBILE = {
+  type: "tween",
+  duration: 0.42,
+  ease: [0.22, 1, 0.36, 1],
+};
 // Approximate time for the spring above to settle. Used by the snap-back
 // effect because spring transitions don't expose a deterministic duration
 // the way tween does. A 30 ms safety margin lets the spring fully come
@@ -482,7 +493,6 @@ const ProjectsGallery = () => {
   // slide animation with an instant cut so vestibular-sensitive users
   // don't get the horizontal sweep on every navigation.
   const reduceMotion = useReducedMotion();
-  const slideTransition = reduceMotion ? { duration: 0 } : SLIDE_TRANSITION;
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
 
@@ -581,6 +591,16 @@ const ProjectsGallery = () => {
     mediaQuery.addListener(updateViewport);
     return () => mediaQuery.removeListener(updateViewport);
   }, []);
+
+  // Slide transition picks the cheapest curve the device + user can use:
+  //   - reduceMotion → instant cut (vestibular safety)
+  //   - mobile / tablet → fixed-duration tween (cheap, no JS physics step)
+  //   - desktop → spring (velocity inheritance feels best on rapid clicks)
+  const slideTransition = reduceMotion
+    ? { duration: 0 }
+    : isDesktopViewport
+    ? SLIDE_TRANSITION
+    : SLIDE_TRANSITION_MOBILE;
 
   // Fetch featured projects from Strapi
   useEffect(() => {

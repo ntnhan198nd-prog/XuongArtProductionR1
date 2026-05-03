@@ -1,6 +1,7 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { useEffect, useRef } from "react";
+import { motion, useInView } from "framer-motion";
 import { DEFAULT_SITE_CONTENT } from "@/lib/siteContent";
 
 const HeroShowreel = ({ videoSrc, posterSrc, scrollTargetId = "projects-section", content }) => {
@@ -16,13 +17,39 @@ const HeroShowreel = ({ videoSrc, posterSrc, scrollTargetId = "projects-section"
     }
   };
 
+  // Pause the showreel when the section scrolls out of view. Browsers
+  // share a small pool of hardware video decoders; while the user is
+  // browsing the gallery (12 cards × 1 decoder each), letting the hero
+  // also keep decoding off-screen is wasted work — pausing it gives the
+  // gallery videos a clear runway and the user comes back to the hero
+  // with a fresh decoder slot when they scroll back to the top.
+  const sectionRef = useRef(null);
+  const videoRef = useRef(null);
+  const sectionInView = useInView(sectionRef, { amount: 0.1 });
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (sectionInView && (typeof document === "undefined" || !document.hidden)) {
+      const promise = v.play();
+      if (promise && typeof promise.catch === "function") {
+        promise.catch(() => {});
+      }
+    } else {
+      v.pause();
+    }
+  }, [sectionInView]);
+
   return (
-    <section className="relative -mt-20 w-full overflow-hidden bg-neutral-950 text-white">
+    <section
+      ref={sectionRef}
+      className="relative -mt-20 w-full overflow-hidden bg-neutral-950 text-white"
+    >
       {/* Pull -mt-20 to slip under the fixed 80px header; fill the entire viewport */}
       <div className="relative w-full h-screen min-h-[560px]">
         {/* Background: real video if provided, else cinematic placeholder */}
         {videoSrc ? (
           <video
+            ref={videoRef}
             className="absolute inset-0 h-full w-full object-cover"
             src={videoSrc}
             poster={posterSrc}
