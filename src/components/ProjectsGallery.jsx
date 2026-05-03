@@ -124,7 +124,7 @@ const SLIDE_PATTERNS = {
   mixed: {
     desktop: {
       columns: '1.35fr 1fr 1fr 1.35fr 1fr 1fr',
-      rows: 'repeat(2, minmax(0, 1fr))',
+      rows: 'repeat(2, auto)',
       areas: [
         // Col 1 portrait spans rows 1–2.
         { shape: 'portrait',  column: { start: 1, end: 2 }, row: { start: 1, end: 3 } },
@@ -147,7 +147,7 @@ const SLIDE_PATTERNS = {
   squares: {
     desktop: {
       columns: 'repeat(3, 1fr)',
-      rows: 'repeat(2, minmax(0, 1fr))',
+      rows: 'repeat(2, auto)',
       areas: [
         { shape: 'square', column: { start: 1, end: 2 }, row: { start: 1, end: 2 } },
         { shape: 'square', column: { start: 2, end: 3 }, row: { start: 1, end: 2 } },
@@ -477,37 +477,25 @@ const FeaturedCard = memo(({ gridColumn, gridRow, slotShape, item, onOpen, index
       }}
       onClick={() => onOpen && onOpen(item)}
     >
-      {/* Chrome on Windows composites <video> on its own GPU layer that
-          ignores ancestor `overflow: hidden` + `border-radius`. The
-          reliable fix is the `mask-image` trick: a fully-opaque radial
-          gradient is a no-op visually but tells Chrome's compositor to
-          clip everything inside (incl. the video layer) to the element
-          geometry, which respects the border-radius.
-          `-webkit-mask-image` covers older Chromium renderers that
-          ignore the unprefixed property in this role.
-          NB: deliberately *no* `translateZ(0)` / `will-change` here —
-          a previous version added them to lock the 3D context, but on
-          Windows that promotion let GPU layers leak across slide
-          boundaries when the carousel translated, painting slide N+1
-          on top of slide N. The mask alone is enough.
-          See: https://stackoverflow.com/q/49066011 + Chrome bug 157218. */}
+      {/* Single rounded clipping layer wrapping the card content.
+          Earlier versions stacked `mask-image: radial-gradient`,
+          `isolation: isolate`, and per-element border-radius on top
+          of each other to defeat a Chrome-Windows clipping bug.
+          Anh observed that the bug appears at wide viewports and
+          disappears the moment DevTools opens (narrowing the
+          viewport) — that's the signature of mask-image rasterising
+          poorly at very large element widths. Dropping mask-image
+          entirely and relying on plain border-radius + overflow
+          hidden + clip-path on the <video> itself is the simpler
+          path that should hold across viewport widths. */}
       <div
         className="relative h-full w-full overflow-hidden"
-        style={{
-          isolation: "isolate",
-          borderRadius: GALLERY_FLUID.cardRadius,
-          WebkitMaskImage: "-webkit-radial-gradient(white, black)",
-          maskImage: "radial-gradient(white, black)",
-        }}
+        style={{ borderRadius: GALLERY_FLUID.cardRadius }}
       >
         {isVideoCard ? (
           <div
             className="relative h-full w-full overflow-hidden"
-            style={{
-              borderRadius: GALLERY_FLUID.cardRadius,
-              WebkitMaskImage: "-webkit-radial-gradient(white, black)",
-              maskImage: "radial-gradient(white, black)",
-            }}
+            style={{ borderRadius: GALLERY_FLUID.cardRadius }}
           >
             <video
               ref={videoRef}
