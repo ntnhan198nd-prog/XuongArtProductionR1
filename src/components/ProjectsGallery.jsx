@@ -76,6 +76,14 @@ const normalizeOrientation = (val) => {
 // pattern keeps the wide 2-portrait + 4-landscape layout. Pattern picked
 // at slide-assignment time based on item composition (see
 // pickPatternForSlide below).
+// Each area now ships explicit `column` / `row` line numbers
+// (`{ start, end }`) instead of the previous named-template approach.
+// The named-area version produced a weird Chrome-Windows-only bug
+// where the grid auto-row solver let a portrait card span beyond its
+// row range, pushing the second slide's first card into the visual
+// space below slide 1. Explicit line numbers don't go through the
+// named-template solver at all and behave identically on every
+// browser we test.
 const SLIDE_PATTERNS = {
   // 2 portraits framing 4 landscapes — the original featured layout.
   // Used for any slide that isn't 100% square.
@@ -83,17 +91,19 @@ const SLIDE_PATTERNS = {
     desktop: {
       columns: '1.35fr 1fr 1fr 1.35fr 1fr 1fr',
       rows: 'repeat(2, auto)',
-      template: [
-        '"a b b c d d"',
-        '"a e e c f f"',
-      ],
       areas: [
-        { name: 'a', shape: 'portrait' },
-        { name: 'b', shape: 'landscape' },
-        { name: 'c', shape: 'portrait' },
-        { name: 'd', shape: 'landscape' },
-        { name: 'e', shape: 'landscape' },
-        { name: 'f', shape: 'landscape' },
+        // Col 1 portrait spans rows 1–2.
+        { shape: 'portrait',  column: { start: 1, end: 2 }, row: { start: 1, end: 3 } },
+        // Cols 2–3 landscape, row 1.
+        { shape: 'landscape', column: { start: 2, end: 4 }, row: { start: 1, end: 2 } },
+        // Col 4 portrait spans rows 1–2.
+        { shape: 'portrait',  column: { start: 4, end: 5 }, row: { start: 1, end: 3 } },
+        // Cols 5–6 landscape, row 1.
+        { shape: 'landscape', column: { start: 5, end: 7 }, row: { start: 1, end: 2 } },
+        // Cols 2–3 landscape, row 2.
+        { shape: 'landscape', column: { start: 2, end: 4 }, row: { start: 2, end: 3 } },
+        // Cols 5–6 landscape, row 2.
+        { shape: 'landscape', column: { start: 5, end: 7 }, row: { start: 2, end: 3 } },
       ],
     },
   },
@@ -103,18 +113,14 @@ const SLIDE_PATTERNS = {
   squares: {
     desktop: {
       columns: 'repeat(3, 1fr)',
-      rows: 'repeat(2, 1fr)',
-      template: [
-        '"a b c"',
-        '"d e f"',
-      ],
+      rows: 'repeat(2, auto)',
       areas: [
-        { name: 'a', shape: 'square' },
-        { name: 'b', shape: 'square' },
-        { name: 'c', shape: 'square' },
-        { name: 'd', shape: 'square' },
-        { name: 'e', shape: 'square' },
-        { name: 'f', shape: 'square' },
+        { shape: 'square', column: { start: 1, end: 2 }, row: { start: 1, end: 2 } },
+        { shape: 'square', column: { start: 2, end: 3 }, row: { start: 1, end: 2 } },
+        { shape: 'square', column: { start: 3, end: 4 }, row: { start: 1, end: 2 } },
+        { shape: 'square', column: { start: 1, end: 2 }, row: { start: 2, end: 3 } },
+        { shape: 'square', column: { start: 2, end: 3 }, row: { start: 2, end: 3 } },
+        { shape: 'square', column: { start: 3, end: 4 }, row: { start: 2, end: 3 } },
       ],
     },
   },
@@ -153,8 +159,9 @@ const assignToPattern = (items, pattern) => {
     const finalOrientation = area.shape;
 
     return {
-      area: area.name,
       shape: finalOrientation,
+      gridColumn: `${area.column.start} / ${area.column.end}`,
+      gridRow: `${area.row.start} / ${area.row.end}`,
       item: {
         ...item,
         orientation: finalOrientation
@@ -176,7 +183,7 @@ const assignToPattern = (items, pattern) => {
 // from parent, eagerLoad from a once-true useInView), so default shallow
 // comparison reliably skips re-renders that would otherwise hit every
 // card on each navigation.
-const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillHeight = false, forceAspectRatio, eagerLoad = false }) => {
+const FeaturedCard = memo(({ gridColumn, gridRow, slotShape, item, onOpen, index = 0, fillHeight = false, forceAspectRatio, eagerLoad = false }) => {
   const ref = useRef(null);
   const videoRef = useRef(null);
   // We deliberately don't run a per-card entry animation any more. With
@@ -214,17 +221,19 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
   // the decoder simultaneously. 120 ms × 6 cards = 720 ms total spread,
   // imperceptible to the user but enough to keep the browser ahead.
   useEffect(() => {
+    // Each card kicks load() the moment its phase unlocks via eagerLoad.
+    // With 12 small WebM previews (~2–3 MB each), loading them all
+    // once the gallery is in view is well within the network and
+    // decode budget for desktop browsers — the parent gates phase 2
+    // behind a short delay after phase 1 so the network burst is
+    // staggered into two waves instead of one.
     if (!eagerLoad || !videoRef.current || !isVideoCard) return;
-    const delay = index * 120;
-    const id = window.setTimeout(() => {
-      try {
-        videoRef.current?.load();
-      } catch {
-        // Some browsers throw if load() is called too early; ignore.
-      }
-    }, delay);
-    return () => window.clearTimeout(id);
-  }, [eagerLoad, isVideoCard, cardMediaUrl, index]);
+    try {
+      videoRef.current.load();
+    } catch {
+      // Some browsers throw if load() is called too early; ignore.
+    }
+  }, [eagerLoad, isVideoCard, cardMediaUrl]);
 
   // Keep thumbnail autoplay stable: resume when tab returns, when stream stalls, or when browser pauses unexpectedly.
   useEffect(() => {
@@ -243,6 +252,11 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
     // 12 videos all keep running in the background once the gallery
     // has been reached, so a slide change is just a translateX of an
     // already-playing row.
+    // Playback gates on section-in-view (sticky once true) and the tab
+    // being visible. Once a card's phase unlocks via eagerLoad it loops
+    // forever — across slide changes, autoplay ticks, and back-and-
+    // forth navigation — until the user leaves the homepage entirely
+    // (component unmounts, freeing every <video>).
     const canAutoplay = () => eagerLoad && !document.hidden;
 
     const tryPlay = () => {
@@ -345,16 +359,27 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
       video.removeEventListener("suspend", onBuffering);
       video.removeEventListener("ended", onEnded);
     };
-    // Deps drop `inView` deliberately — see canAutoplay above. The effect
-    // only needs to re-init when the source URL changes (different video)
-    // or when eagerLoad first flips on (kick off the initial play call).
+    // Deps drop `inView` deliberately — see canAutoplay above. The
+    // effect re-inits when the source URL or eagerLoad changes (a
+    // phase-2 unlock, typically) so playback kicks off as soon as the
+    // card joins the active set.
   }, [eagerLoad, isVideoCard, cardMediaUrl]);
 
   return (
     <motion.div
       ref={ref}
       initial={false}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
+      // `scale` is intentionally absent from animate (only opacity + y).
+      // Including `scale: 1` made framer-motion attach a permanent
+      // `transform: scale(1)` to the element which, on Chrome Windows,
+      // promoted the card to its own GPU layer; combined with the
+      // slide-level translateZ and the carousel translateX it stacked
+      // three nested layers and the resulting subpixel composition
+      // made the gallery look slightly zoomed compared to macOS.
+      // Hover scale (1.03) still works — whileHover sets it
+      // temporarily, and the override below keeps the hover-out
+      // animation snappy.
+      animate={{ opacity: 1, y: 0 }}
       transition={{
         // Default applies to opacity (the slow staggered reveal).
         duration: 0.8,
@@ -386,7 +411,8 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
           : 'col-span-1 row-span-1'
       )}
               style={{
-        ...(areaName ? { gridArea: areaName } : {}),
+        ...(gridColumn ? { gridColumn } : {}),
+        ...(gridRow ? { gridRow } : {}),
         width: '100%',
         height: fillHeight ? '100%' : 'auto',
         // Aspect ratio bám theo shape của ô (slot), không lấy từ media gốc —
@@ -416,25 +442,44 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
       }}
       onClick={() => onOpen && onOpen(item)}
     >
-      <div className="relative h-full w-full">
+      {/* Single rounded clipping layer wrapping the card content.
+          Earlier versions stacked `mask-image: radial-gradient`,
+          `isolation: isolate`, and per-element border-radius on top
+          of each other to defeat a Chrome-Windows clipping bug.
+          Anh observed that the bug appears at wide viewports and
+          disappears the moment DevTools opens (narrowing the
+          viewport) — that's the signature of mask-image rasterising
+          poorly at very large element widths. Dropping mask-image
+          entirely and relying on plain border-radius + overflow
+          hidden + clip-path on the <video> itself is the simpler
+          path that should hold across viewport widths. */}
+      <div className="relative h-full w-full overflow-hidden rounded-2xl">
         {isVideoCard ? (
-          <div className="relative h-full w-full overflow-hidden">
+          <div className="relative h-full w-full overflow-hidden rounded-2xl">
             <video
               ref={videoRef}
-              className="h-full w-full"
+              className="h-full w-full rounded-2xl"
               style={{
                 objectFit: 'cover',
                 objectPosition: 'center center',
                 width: '100%',
                 height: '100%',
-                position: 'static'
+                position: 'static',
+                clipPath: 'inset(0 round 1rem)',
               }}
               autoPlay={true}
               muted={true}
               loop={true}
               playsInline
               controls={false}
-              preload={eagerLoad ? "auto" : "metadata"}
+              // preload flips from "none" (sleep) to "auto" (fetch +
+              // decode now) the moment the card's phase unlocks via
+              // eagerLoad. With WebM previews at ~2–3 MB each the
+              // browser easily handles 12 simultaneous decodes; the
+              // parent staggers phase 1 (first 6) and phase 2 (last 6)
+              // so the network burst hits in two small waves rather
+              // than one big one.
+              preload={eagerLoad ? "auto" : "none"}
               poster={item.poster || ''}
               webkit-playsinline="true"
               disablePictureInPicture
@@ -444,14 +489,20 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
                 console.error('Video playback error:', e);
               }}
             >
-              {/* WebM source first so VP9-capable browsers pick it; the
-                  MP4 fallback covers Safari < 14.1 and any other UA that
-                  can't decode VP9. When `galleryWebmUrl` is empty the
-                  WebM <source> simply isn't rendered. */}
+              {/* Source is always rendered; the only thing that
+                  changes between sleep and active is the preload
+                  attribute. Mounting <source> conditionally (the
+                  earlier approach) raced with the <video> element's
+                  resource-selection state machine and occasionally
+                  left the element stuck without a fetch.
+                  WebM-only when uploaded: the small VP9 file is what
+                  the gallery loops; modal click-to-play still uses
+                  the MP4 directly via cardMediaUrl. */}
               {galleryWebmUrl ? (
                 <source src={galleryWebmUrl} type={galleryWebmMime} />
-              ) : null}
-              <source src={cardMediaUrl} type="video/mp4" />
+              ) : (
+                <source src={cardMediaUrl} type="video/mp4" />
+              )}
             </video>
           </div>
         ) : cardMediaUrl ? (
@@ -706,16 +757,18 @@ const ProjectsGallery = () => {
     fetchProjects();
   }, []);
 
-  // _isPhase1 flag rides on each item so any FeaturedCard renderer (desktop
-  // grid, mobile 1P+4L, mobile 2P) can decide whether to fire eagerLoad
-  // immediately or wait for the phase-2 hand-off — without needing to know
-  // the item's absolute index in `projects` from inside the carousel
-  // mapping, which doesn't always preserve project order on mobile.
+  // _loadOrder is the absolute project index (0–11). The eagerLoad
+  // gate uses it to release videos in waves, with the second wave
+  // staggered card-by-card so Chrome on Windows — which has a smaller
+  // hardware-decoder pool than macOS — never sees 6 decode requests
+  // hit the queue at once. Riding the flag on the item itself means
+  // the desktop and mobile carousels can share the same gate even
+  // though they slice the project list differently.
   const allItems = useMemo(
     () => projects.map((p, idx) => ({
       ...p,
       medias: p.medias.length > 0 ? p.medias : [{ url: p.media }],
-      _isPhase1: idx < 6,
+      _loadOrder: idx,
     })),
     [projects]
   );
@@ -966,61 +1019,66 @@ const ProjectsGallery = () => {
   const sectionRef = useRef(null);
   const sectionInView = useInView(sectionRef, { amount: 0.05, once: true });
 
-  // Two-phase reveal. When the gallery scrolls into view, the first 6
-  // cards (slide 1) unlock immediately so the user has something to
-  // watch right away. After PHASE_2_DELAY_MS the parent flips
-  // loadPhase, which lets the remaining 6 cards begin loading. With
-  // every featured project carrying a small WebM preview the second
-  // wave finishes well before the user ever clicks forward to the
-  // second slide; from there all 12 cards loop continuously until
-  // the homepage unmounts (route change to /videos, /images, or
-  // /whoweare).
+  // Two-phase preview-byte prefetch. The first 6 videos
+  // Wave-based reveal. When the gallery scrolls into view, the first
+  // 6 cards (slide 1) unlock immediately so the user has something to
+  // watch right away. After PHASE_2_DELAY_MS each of the remaining
+  // cards unlocks one at a time spaced PHASE_2_STAGGER_MS apart —
+  // crucial on Chrome Windows, which trips over 6 simultaneous
+  // decoder requests but handles them fine when they arrive in a
+  // queue. Mac (which has a much bigger decoder pool) just sees a
+  // ~1.5–3.5 s reveal of the back row, no different from a single
+  // setLoadPhase flip.
   const PHASE_2_DELAY_MS = 1500;
-  const [loadPhase, setLoadPhase] = useState("phase1");
+  const PHASE_2_STAGGER_MS = 300;
+  const [unlockedCount, setUnlockedCount] = useState(0);
   useEffect(() => {
-    if (!sectionInView || loadPhase === "phase2") return undefined;
-    const id = window.setTimeout(() => {
-      setLoadPhase("phase2");
-    }, PHASE_2_DELAY_MS);
-    return () => window.clearTimeout(id);
-  }, [sectionInView, loadPhase]);
+    if (!sectionInView) return undefined;
+    // Phase 1: unlock the first 6 cards in one shot so slide 1 lights
+    // up together.
+    setUnlockedCount((prev) => (prev < 6 ? 6 : prev));
+    // Phase 2: schedule staggered unlocks for cards 7..12.
+    const timeouts = [];
+    for (let i = 7; i <= 12; i += 1) {
+      const delay = PHASE_2_DELAY_MS + (i - 7) * PHASE_2_STAGGER_MS;
+      const id = window.setTimeout(() => {
+        setUnlockedCount((prev) => Math.max(prev, i));
+      }, delay);
+      timeouts.push(id);
+    }
+    return () => {
+      timeouts.forEach((id) => window.clearTimeout(id));
+    };
+  }, [sectionInView]);
 
   const cardEagerLoad = useCallback(
     (item) => {
-      const phaseAllows = item?._isPhase1 || loadPhase === "phase2";
-      return sectionInView && phaseAllows;
+      if (!sectionInView) return false;
+      const order = Number.isInteger(item?._loadOrder) ? item._loadOrder : 0;
+      // unlockedCount=6 → orders 0..5 (slide 1) eligible; later
+      // increments add 6, 7, 8 … up to the full 12.
+      return order < unlockedCount;
     },
-    [sectionInView, loadPhase]
+    [sectionInView, unlockedCount]
   );
 
-  // Force-play sweep: on every slide change (manual nav OR autoplay tick),
-  // walk all <video> elements inside the gallery and call play() on any
-  // that are paused. This catches two cases the per-card heartbeat is
-  // too slow for:
-  //   1. Browsers (Chrome / Safari) auto-suspend muted videos that have
-  //      been translated off-screen via translateX, even though we never
-  //      called pause() ourselves. Without this sweep there'd be a
-  //      visible "freeze then play" when a previously-off-screen card
-  //      slides into view.
-  //   2. The per-card heartbeat only ticks every 2.5 s, which would let
-  //      a stale paused state linger across multiple rapid clicks.
-  // Running on every carouselIdx / mobileCarouselIdx change means the
-  // play() call lands at the *start* of the slide animation, so by the
-  // time the spring settles all 12 are already running.
+  // Force-play sweep: on every slide change (manual nav OR autoplay
+  // tick), walk every <video> in the gallery and kick play on any
+  // that are paused. With all 12 cards looping continuously this sweep
+  // is a safety net — Chrome / Safari occasionally suspend muted
+  // videos translated off-screen, and the per-card heartbeat takes up
+  // to 1.5 s to recover; running on every slide change means a
+  // suspended card resumes the moment its slide comes back into view.
   useEffect(() => {
     if (!sectionInView || !sectionRef.current) return;
     const videos = sectionRef.current.querySelectorAll("video");
     videos.forEach((video) => {
       if (!video.paused) return;
-      // Recover videos stuck on the last frame too: rewinding to 0 here
-      // matches what the per-card heartbeat does and means a slide change
-      // also doubles as a "kick the loop again" signal.
       if (video.ended) video.currentTime = 0;
       const promise = video.play();
       if (promise && typeof promise.catch === "function") {
         promise.catch(() => {
-          // Autoplay may be transiently blocked (e.g. mid-buffer) —
-          // the per-card heartbeat will pick it up on the next tick.
+          // Autoplay transiently blocked — per-card heartbeat retries.
         });
       }
     });
@@ -1142,8 +1200,8 @@ const ProjectsGallery = () => {
           justifyContent: "center"
         }}
       >
-        <div className="w-[92vw] lg:w-[80vw]" style={{ 
-          paddingTop: "0px", 
+        <div className="w-[92vw] lg:w-[80vw]" style={{
+          paddingTop: "0px",
           marginTop: "0px",
           margin: "0 auto"
         }}>
@@ -1184,7 +1242,7 @@ const ProjectsGallery = () => {
                     snaps right. */}
                 {slides.length > 0 && viewportMode !== "mobile" ? (
                   <motion.div
-                    className={viewportMode === "desktop" ? "flex" : "hidden lg:flex"}
+                    className={viewportMode === "desktop" ? "flex flex-nowrap" : "hidden lg:flex flex-nowrap"}
                     style={{
                       width: `${desktopRendered.length * 100}%`,
                       willChange: "transform",
@@ -1201,15 +1259,24 @@ const ProjectsGallery = () => {
                       return (
                         <div
                           key={`d-slide-${renderIdx}`}
-                          className="shrink-0"
-                          style={{ width: `${100 / desktopRendered.length}%` }}
+                          className="shrink-0 overflow-hidden"
+                          style={{
+                            width: `${100 / desktopRendered.length}%`,
+                            // overflow: hidden is enough; previous
+                            // attempts also added contain: paint /
+                            // translateZ here, but on Chrome Windows
+                            // those properties affected layout side
+                            // effects (slide 2's grid bled into slide
+                            // 1's row) without the Mac compositor ever
+                            // tripping. Plain overflow gives a clean
+                            // clip on every platform.
+                          }}
                         >
                           <div
                             className="grid gap-3 px-4 lg:px-6 projects-grid"
                             style={{
                               gridTemplateColumns: pattern.desktop.columns,
                               gridTemplateRows: pattern.desktop.rows,
-                              gridTemplateAreas: pattern.desktop.template.join(' '),
                               height: 'auto',
                               gap: 'clamp(8px, 1vw, 16px)',
                               alignItems: 'stretch',
@@ -1221,7 +1288,8 @@ const ProjectsGallery = () => {
                             {slots.map((slot, idx) => (
                               <FeaturedCard
                                 key={`d-${renderIdx}-${slot.item.id}-${idx}`}
-                                areaName={slot.area}
+                                gridColumn={slot.gridColumn}
+                                gridRow={slot.gridRow}
                                 slotShape={slot.shape}
                                 item={slot.item}
                                 onOpen={openProject}
@@ -1239,7 +1307,7 @@ const ProjectsGallery = () => {
                 {/* Mobile carousel — visible below lg. Same clone strategy. */}
                 {mobileSlides.length > 0 && viewportMode !== "desktop" ? (
                   <motion.div
-                    className={viewportMode === "mobile" ? "flex" : "lg:hidden flex"}
+                    className={viewportMode === "mobile" ? "flex flex-nowrap" : "lg:hidden flex flex-nowrap"}
                     style={{
                       width: `${mobileRendered.length * 100}%`,
                       willChange: "transform",
@@ -1258,8 +1326,10 @@ const ProjectsGallery = () => {
                       return (
                         <div
                           key={`m-slide-${renderIdx}`}
-                          className="shrink-0 px-4"
-                          style={{ width: `${100 / mobileRendered.length}%` }}
+                          className="shrink-0 overflow-hidden px-4"
+                          style={{
+                            width: `${100 / mobileRendered.length}%`,
+                          }}
                         >
                           {(() => {
                             if (sourceIdx <= 1 && items.length >= 3) {
