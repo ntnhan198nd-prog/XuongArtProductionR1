@@ -56,6 +56,29 @@ const SLIDE_SETTLE_MS = 650;
 // --- Helpers ---
 const isVideoUrl = (url) => /(mp4|webm|ogg|mov|avi)$/i.test(url || "");
 
+// Fluid sizing tokens for the Featured gallery. Each value is a CSS
+// `clamp(min, fluid, max)` so the gallery scales smoothly with the
+// viewport instead of jumping at Tailwind breakpoints. Defined once
+// and referenced via inline style (or CSS custom property) so the
+// card outer wrapper, inner clip wrappers, video element, and clip-
+// path all stay in sync. Range is roughly tuned for 320 px → 1600 px
+// viewports; below / above those points the clamp pins to min / max.
+const GALLERY_FLUID = {
+  containerWidth: "min(92vw, 1500px)",
+  containerPadBottom: "clamp(2rem, 4vw, 5rem)",
+  containerMarginTop: "clamp(0px, 2vw, 2.5rem)",
+  cardRadius: "clamp(0.75rem, 1.1vw, 1.25rem)",
+  cardOverlayPad: "clamp(0.75rem, 1.2vw, 1.25rem)",
+  cardClientFont: "clamp(0.625rem, 0.4vw + 0.5rem, 0.875rem)",
+  cardTitleFont: "clamp(0.875rem, 0.4vw + 0.7rem, 1.125rem)",
+  gridPadX: "clamp(0.75rem, 1.5vw, 1.5rem)",
+  arrowSize: "clamp(2rem, 3vw, 3rem)",
+  arrowIcon: "clamp(1.25rem, 1.6vw + 0.7rem, 1.75rem)",
+  arrowOffset: "clamp(0.5rem, 1.5vw, 1.5rem)",
+  dotsMarginTop: "clamp(2rem, 3vw, 2.75rem)",
+  dotActiveWidth: "clamp(2rem, 3vw, 3rem)",
+};
+
 const toAbsoluteAssetUrl = (url, appBaseUrl) => {
   if (!url) return "";
   return url.startsWith("http") ? url : `${appBaseUrl}${url}`;
@@ -378,7 +401,7 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
         y: { duration: 0.18, ease: [0.32, 0.72, 0, 1], delay: 0 },
       }}
       className={clsx(
-        "relative group overflow-hidden rounded-2xl bg-transparent text-white shadow-xl cursor-pointer",
+        "relative group overflow-hidden bg-transparent text-white shadow-xl cursor-pointer",
         // transition-shadow only — transition-all also animates transform,
         // which would double-animate (and slow down) the lift/scale that
         // framer-motion's whileHover already drives. Restricting to shadow
@@ -394,6 +417,7 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
           : 'col-span-1 row-span-1'
       )}
               style={{
+        borderRadius: GALLERY_FLUID.cardRadius,
         ...(areaName ? { gridArea: areaName } : {}),
         width: '100%',
         height: fillHeight ? '100%' : 'auto',
@@ -431,24 +455,28 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
           rounded corners look square only on Windows — Mac / iOS clip
           GPU layers to the parent border-radius transparently. */}
       <div
-        className="relative h-full w-full overflow-hidden rounded-2xl"
-        style={{ isolation: "isolate" }}
+        className="relative h-full w-full overflow-hidden"
+        style={{ isolation: "isolate", borderRadius: GALLERY_FLUID.cardRadius }}
       >
         {isVideoCard ? (
-          <div className="relative h-full w-full overflow-hidden rounded-2xl">
+          <div
+            className="relative h-full w-full overflow-hidden"
+            style={{ borderRadius: GALLERY_FLUID.cardRadius }}
+          >
             <video
               ref={videoRef}
-              className="h-full w-full rounded-2xl"
+              className="h-full w-full"
               style={{
                 objectFit: 'cover',
                 objectPosition: 'center center',
                 width: '100%',
                 height: '100%',
                 position: 'static',
+                borderRadius: GALLERY_FLUID.cardRadius,
                 // Belt-and-braces: also clip via mask so the video's
                 // own compositor layer is shaped to the rounded box on
                 // Chrome Windows even before isolation kicks in.
-                clipPath: 'inset(0 round 1rem)',
+                clipPath: `inset(0 round ${GALLERY_FLUID.cardRadius})`,
               }}
               autoPlay={true}
               muted={true}
@@ -517,9 +545,22 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
 
       {/* Title overlay (mobile: only show title) */}
       <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-5 transform translate-y-1 transition-transform duration-300 group-hover:translate-y-0">
-          <div className="hidden sm:block text-[10px] uppercase tracking-[0.18em] text-neutral-200 font-medium">{item.client}</div>
-          <div className="mt-px line-clamp-2 font-display text-sm sm:text-base font-semibold text-white leading-snug">{item.title}</div>
+        <div
+          className="absolute bottom-0 left-0 right-0 transform translate-y-1 transition-transform duration-300 group-hover:translate-y-0"
+          style={{ padding: GALLERY_FLUID.cardOverlayPad }}
+        >
+          <div
+            className="hidden sm:block uppercase tracking-[0.18em] text-neutral-200 font-medium"
+            style={{ fontSize: GALLERY_FLUID.cardClientFont }}
+          >
+            {item.client}
+          </div>
+          <div
+            className="mt-px line-clamp-2 font-display font-semibold text-white leading-snug"
+            style={{ fontSize: GALLERY_FLUID.cardTitleFont }}
+          >
+            {item.title}
+          </div>
         </div>
       </div>
     </motion.div>
@@ -1183,13 +1224,19 @@ const ProjectsGallery = () => {
           justifyContent: "center"
         }}
       >
-        <div className="w-[92vw] lg:w-[80vw]" style={{ 
-          paddingTop: "0px", 
-          marginTop: "0px",
-          margin: "0 auto"
+        <div style={{
+          width: GALLERY_FLUID.containerWidth,
+          paddingTop: "0px",
+          margin: "0 auto",
         }}>
           {/* Slider */}
-          <div className="relative pb-12 sm:pb-16 md:pb-20 sm:mt-10">
+          <div
+            className="relative"
+            style={{
+              paddingBottom: GALLERY_FLUID.containerPadBottom,
+              marginTop: GALLERY_FLUID.containerMarginTop,
+            }}
+          >
             {/* Apple-style horizontal carousel viewport.
                 Every slide stays mounted inside the inner flex row, even
                 the off-screen ones. We translateX the whole row (not each
@@ -1246,13 +1293,15 @@ const ProjectsGallery = () => {
                           style={{ width: `${100 / desktopRendered.length}%` }}
                         >
                           <div
-                            className="grid gap-3 px-4 lg:px-6 projects-grid"
+                            className="grid projects-grid"
                             style={{
                               gridTemplateColumns: pattern.desktop.columns,
                               gridTemplateRows: pattern.desktop.rows,
                               gridTemplateAreas: pattern.desktop.template.join(' '),
                               height: 'auto',
                               gap: 'clamp(8px, 1vw, 16px)',
+                              paddingLeft: GALLERY_FLUID.gridPadX,
+                              paddingRight: GALLERY_FLUID.gridPadX,
                               alignItems: 'stretch',
                               justifyItems: 'stretch',
                               maxWidth: '100%',
@@ -1367,20 +1416,30 @@ const ProjectsGallery = () => {
                 <button
                   type="button"
                   onClick={() => goToSlide(slideRef.current - 1)}
-                  className="hidden sm:flex items-center justify-center absolute left-2 md:left-4 top-1/2 -translate-y-1/2 z-[55] h-8 w-8 md:h-10 md:w-10 lg:h-12 lg:w-12 rounded-full bg-white/10 backdrop-blur-md border border-white/30 text-neutral-900 hover:bg-white/20 transition-all focus:outline-none focus:ring-2 focus:ring-white/50 shadow-lg"
+                  className="hidden sm:flex items-center justify-center absolute top-1/2 -translate-y-1/2 z-[55] rounded-full bg-white/10 backdrop-blur-md border border-white/30 text-neutral-900 hover:bg-white/20 transition-all focus:outline-none focus:ring-2 focus:ring-white/50 shadow-lg"
+                  style={{
+                    left: GALLERY_FLUID.arrowOffset,
+                    width: GALLERY_FLUID.arrowSize,
+                    height: GALLERY_FLUID.arrowSize,
+                  }}
                   aria-label="Trang trước"
                 >
-                  <MdChevronLeft className="h-5 w-5 md:h-6 md:w-6 lg:h-7 lg:w-7" />
+                  <MdChevronLeft style={{ width: GALLERY_FLUID.arrowIcon, height: GALLERY_FLUID.arrowIcon }} />
                 </button>
               ) : null}
               {slides.length > 1 ? (
                 <button
                   type="button"
                   onClick={() => goToSlide(slideRef.current + 1, /* useClone */ true)}
-                  className="hidden sm:flex items-center justify-center absolute right-2 md:right-4 top-1/2 -translate-y-1/2 z-[55] h-8 w-8 md:h-10 md:w-10 lg:h-12 lg:w-12 rounded-full bg-white/10 backdrop-blur-md border border-white/30 text-neutral-900 hover:bg-white/20 transition-all focus:outline-none focus:ring-2 focus:ring-white/50 shadow-lg"
+                  className="hidden sm:flex items-center justify-center absolute top-1/2 -translate-y-1/2 z-[55] rounded-full bg-white/10 backdrop-blur-md border border-white/30 text-neutral-900 hover:bg-white/20 transition-all focus:outline-none focus:ring-2 focus:ring-white/50 shadow-lg"
+                  style={{
+                    right: GALLERY_FLUID.arrowOffset,
+                    width: GALLERY_FLUID.arrowSize,
+                    height: GALLERY_FLUID.arrowSize,
+                  }}
                   aria-label="Trang tiếp theo"
                 >
-                  <MdChevronRight className="h-5 w-5 md:h-6 md:w-6 lg:h-7 lg:w-7" />
+                  <MdChevronRight style={{ width: GALLERY_FLUID.arrowIcon, height: GALLERY_FLUID.arrowIcon }} />
                 </button>
               ) : null}
             </div>
@@ -1417,7 +1476,10 @@ const ProjectsGallery = () => {
 
             {/* Desktop - show dots based on desktop slides */}
             {slides.length > 1 && (
-              <div className="hidden md:flex mt-8 sm:mt-10 justify-center items-center gap-3">
+              <div
+                className="hidden md:flex justify-center items-center gap-3"
+                style={{ marginTop: GALLERY_FLUID.dotsMarginTop }}
+              >
                 {slides.map((_, idx) => (
                   <button
                     key={idx}
@@ -1426,9 +1488,14 @@ const ProjectsGallery = () => {
                       "rounded-full transition-all duration-500 ease-out",
                       "hover:scale-110 focus:outline-none focus:ring-2 focus:ring-white/50",
                       idx === slide
-                        ? "w-10 md:w-12 h-2 bg-neutral-900"
+                        ? "h-2 bg-neutral-900"
                         : "w-2 h-2 bg-neutral-900/40 hover:bg-neutral-900/60"
                     )}
+                    style={
+                      idx === slide
+                        ? { width: GALLERY_FLUID.dotActiveWidth }
+                        : undefined
+                    }
                   />
                 ))}
               </div>
