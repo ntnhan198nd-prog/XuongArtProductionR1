@@ -176,7 +176,7 @@ const assignToPattern = (items, pattern) => {
 // from parent, eagerLoad from a once-true useInView), so default shallow
 // comparison reliably skips re-renders that would otherwise hit every
 // card on each navigation.
-const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillHeight = false, forceAspectRatio, eagerLoad = false, isActiveSlide = true }) => {
+const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillHeight = false, forceAspectRatio, eagerLoad = false }) => {
   const ref = useRef(null);
   const videoRef = useRef(null);
   // We deliberately don't run a per-card entry animation any more. With
@@ -214,22 +214,19 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
   // the decoder simultaneously. 120 ms × 6 cards = 720 ms total spread,
   // imperceptible to the user but enough to keep the browser ahead.
   useEffect(() => {
-    // Trigger fetch + decode the moment the slide becomes active. The
-    // earlier staggered version (index * 120 ms) was tuned for a
-    // 12-video preload all firing at once, but with the active-slide
-    // gate we only have 6 simultaneous loads — well within budget for
-    // any modern desktop. More importantly, the heartbeat below kicks
-    // tryPlay() immediately on activation, so deferring load() by up
-    // to 600 ms means the first play() call lands before any data has
-    // arrived; the video then sits in an aborted state until the next
-    // heartbeat tick. Loading immediately keeps load → play in order.
-    if (!eagerLoad || !isActiveSlide || !videoRef.current || !isVideoCard) return;
+    // Each card kicks load() the moment its phase unlocks via eagerLoad.
+    // With 12 small WebM previews (~2–3 MB each), loading them all
+    // once the gallery is in view is well within the network and
+    // decode budget for desktop browsers — the parent gates phase 2
+    // behind a short delay after phase 1 so the network burst is
+    // staggered into two waves instead of one.
+    if (!eagerLoad || !videoRef.current || !isVideoCard) return;
     try {
       videoRef.current.load();
     } catch {
       // Some browsers throw if load() is called too early; ignore.
     }
-  }, [eagerLoad, isActiveSlide, isVideoCard, cardMediaUrl]);
+  }, [eagerLoad, isVideoCard, cardMediaUrl]);
 
   // Keep thumbnail autoplay stable: resume when tab returns, when stream stalls, or when browser pauses unexpectedly.
   useEffect(() => {
@@ -248,13 +245,12 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
     // 12 videos all keep running in the background once the gallery
     // has been reached, so a slide change is just a translateX of an
     // already-playing row.
-    // Playback is gated on three things: section-in-view (sticky once
-    // true), the slide currently being shown, and the tab being visible.
-    // The slide check is the new piece — it's what stops 12 videos from
-    // racing for 6–8 hardware decoders on Chrome Windows. Previously
-    // every card kept playing even off-screen, which is why the tiles
-    // beyond the decoder budget silently went blank.
-    const canAutoplay = () => eagerLoad && isActiveSlide && !document.hidden;
+    // Playback gates on section-in-view (sticky once true) and the tab
+    // being visible. Once a card's phase unlocks via eagerLoad it loops
+    // forever — across slide changes, autoplay ticks, and back-and-
+    // forth navigation — until the user leaves the homepage entirely
+    // (component unmounts, freeing every <video>).
+    const canAutoplay = () => eagerLoad && !document.hidden;
 
     const tryPlay = () => {
       if (!canAutoplay()) return;
@@ -356,30 +352,11 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
       video.removeEventListener("suspend", onBuffering);
       video.removeEventListener("ended", onEnded);
     };
-    // Deps drop `inView` deliberately — see canAutoplay above. The effect
-    // re-inits when the source URL, eagerLoad, or active-slide state
-    // changes. isActiveSlide flipping false → true triggers a fresh
-    // play() via the scheduleRetry call below; flipping true → false
-    // pauses the video so its decoder slot can be reused by the new
-    // active slide.
-  }, [eagerLoad, isActiveSlide, isVideoCard, cardMediaUrl]);
-
-  // Pause immediately when this card's slide goes inactive. The
-  // canAutoplay-gated heartbeat would also stop trying to play within
-  // 1.5 s, but pausing now frees the hardware decoder slot the moment
-  // the user clicks forward — that slot is then available to the cards
-  // in the slide they just navigated to.
-  useEffect(() => {
-    const v = videoRef.current;
-    if (!v || !isVideoCard) return;
-    if (!isActiveSlide) {
-      try {
-        v.pause();
-      } catch {
-        // Ignore — Safari throws if .pause() races with play() promise.
-      }
-    }
-  }, [isActiveSlide, isVideoCard]);
+    // Deps drop `inView` deliberately — see canAutoplay above. The
+    // effect re-inits when the source URL or eagerLoad changes (a
+    // phase-2 unlock, typically) so playback kicks off as soon as the
+    // card joins the active set.
+  }, [eagerLoad, isVideoCard, cardMediaUrl]);
 
   return (
     <motion.div
@@ -465,14 +442,14 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
               loop={true}
               playsInline
               controls={false}
-              // preload="none" on inactive slides means the browser
-              // doesn't even fetch metadata or allocate a decoder slot
-              // for those <video> elements — pause() alone wasn't enough
-              // on Chrome Windows, which holds the slot for any element
-              // it has touched. Going to "none" until the slide becomes
-              // active drops every off-screen card out of the decoder
-              // pool, leaving the full ~6–8 slots for the active 6.
-              preload={isActiveSlide && eagerLoad ? "auto" : "none"}
+              // preload flips from "none" (sleep) to "auto" (fetch +
+              // decode now) the moment the card's phase unlocks via
+              // eagerLoad. With WebM previews at ~2–3 MB each the
+              // browser easily handles 12 simultaneous decodes; the
+              // parent staggers phase 1 (first 6) and phase 2 (last 6)
+              // so the network burst hits in two small waves rather
+              // than one big one.
+              preload={eagerLoad ? "auto" : "none"}
               poster={item.poster || ''}
               webkit-playsinline="true"
               disablePictureInPicture
@@ -482,21 +459,11 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
                 console.error('Video playback error:', e);
               }}
             >
-              {/* Source elements are rendered only when the slide is
-                  active. Conditional mounting cleanly resets the
-                  browser's media state on every (re-)activation: when
-                  isActiveSlide flips false the source unmounts and the
-                  video element drops to NETWORK_EMPTY, releasing the
-                  decoder slot. When it flips true again the source
-                  re-mounts and the load() call in the effect above
-                  picks it up. This was the missing piece that left
-                  slide-2 cards stuck on Chrome Windows — preload alone
-                  doesn't release decoders, but unmounting the source
-                  does.
-                  WebM-only when uploaded: the small VP9 file is what
-                  the gallery loops; modal click-to-play still uses the
-                  MP4 directly via cardMediaUrl. */}
-              {isActiveSlide ? (
+              {/* Source mounts as soon as the card's phase unlocks via
+                  eagerLoad. WebM-only when uploaded: the small VP9
+                  file is what the gallery loops; modal click-to-play
+                  still uses the MP4 directly via cardMediaUrl. */}
+              {eagerLoad ? (
                 galleryWebmUrl ? (
                   <source src={galleryWebmUrl} type={galleryWebmMime} />
                 ) : (
@@ -757,10 +724,17 @@ const ProjectsGallery = () => {
     fetchProjects();
   }, []);
 
+  // _isPhase1 marks the first 6 projects as the "load-first" wave so
+  // the per-card eagerLoad gate can hold the remaining 6 back until
+  // the parent's phase-2 timer fires. Riding the flag on the item
+  // itself means the desktop and mobile carousels can share the same
+  // eagerLoad helper without re-deriving the absolute index from
+  // their own slide arrays (which slice the project list differently).
   const allItems = useMemo(
-    () => projects.map((p) => ({
+    () => projects.map((p, idx) => ({
       ...p,
       medias: p.medias.length > 0 ? p.medias : [{ url: p.media }],
+      _isPhase1: idx < 6,
     })),
     [projects]
   );
@@ -1012,36 +986,43 @@ const ProjectsGallery = () => {
   const sectionInView = useInView(sectionRef, { amount: 0.05, once: true });
 
   // Two-phase preview-byte prefetch. The first 6 videos
-  // Per-card eagerLoad gate. With small WebM previews now uploaded for
-  // every featured project (~2–3 MB total each), the old two-phase
-  // Range prefetch is unnecessary — the <video> element fetches the
-  // whole WebM directly when the active slide mounts its source, and
-  // the file is small enough that the network round-trip is in line
-  // with what the prefetch used to deliver. Removing the prefetch also
-  // sidesteps the CORS issue (HTML media element fetches don't trigger
-  // CORS, but our fetch() call did).
+  // Two-phase reveal. When the gallery scrolls into view, phase 1
+  // (the first 6 cards) unlocks immediately so the user has something
+  // to watch right away. After PHASE_2_DELAY_MS the parent flips
+  // loadPhase, which lets the remaining 6 cards begin loading. With
+  // every featured project carrying a small WebM preview the second
+  // wave finishes well before the user ever clicks forward to the
+  // second slide; from there all 12 cards loop continuously until
+  // the homepage unmounts (route change to /videos, /images, or
+  // /whoweare).
+  const PHASE_2_DELAY_MS = 1500;
+  const [loadPhase, setLoadPhase] = useState("phase1");
+  useEffect(() => {
+    if (!sectionInView || loadPhase === "phase2") return undefined;
+    const id = window.setTimeout(() => {
+      setLoadPhase("phase2");
+    }, PHASE_2_DELAY_MS);
+    return () => window.clearTimeout(id);
+  }, [sectionInView, loadPhase]);
+
   const cardEagerLoad = useCallback(
-    () => sectionInView,
-    [sectionInView]
+    (item) => {
+      if (!sectionInView) return false;
+      return Boolean(item?._isPhase1) || loadPhase === "phase2";
+    },
+    [sectionInView, loadPhase]
   );
 
-  // Force-play sweep: on every slide change, walk only the *active*
-  // slide's <video> elements and kick play on any that are paused. This
-  // hits the moment the user clicks forward, so the new slide's cards
-  // start playing at the start of the slide animation rather than
-  // waiting on the per-card useEffect to react. Inactive slides are
-  // intentionally skipped — pausing them is what frees decoder slots
-  // for the active slide on Chrome Windows.
+  // Force-play sweep: on every slide change (manual nav OR autoplay
+  // tick), walk every <video> in the gallery and kick play on any
+  // that are paused. With all 12 cards looping continuously this sweep
+  // is a safety net — Chrome / Safari occasionally suspend muted
+  // videos translated off-screen, and the per-card heartbeat takes up
+  // to 1.5 s to recover; running on every slide change means a
+  // suspended card resumes the moment its slide comes back into view.
   useEffect(() => {
     if (!sectionInView || !sectionRef.current) return;
-    // The active slide div is identified by its data attribute. We tag
-    // it explicitly below so this query works for both desktop and
-    // mobile carousels.
-    const activeSlideEl = sectionRef.current.querySelector(
-      '[data-active-slide="true"]'
-    );
-    if (!activeSlideEl) return;
-    const videos = activeSlideEl.querySelectorAll("video");
+    const videos = sectionRef.current.querySelectorAll("video");
     videos.forEach((video) => {
       if (!video.paused) return;
       if (video.ended) video.currentTime = 0;
@@ -1226,19 +1207,11 @@ const ProjectsGallery = () => {
                       // Clones reuse the source slide's grid template + items
                       // — they're visually identical to the slide they clone.
                       const { slots, pattern } = slideAssignment;
-                      // Only the slide currently centred in the viewport
-                      // gets to play its videos. Everyone else stays
-                      // paused so the hardware decoder pool isn't
-                      // saturated. carouselIdx covers both real slides
-                      // and the trailing clone, so `===` correctly
-                      // gates clone playback during the wrap animation.
-                      const slideIsActive = renderIdx === carouselIdx;
                       return (
                         <div
                           key={`d-slide-${renderIdx}`}
                           className="shrink-0"
                           style={{ width: `${100 / desktopRendered.length}%` }}
-                          data-active-slide={slideIsActive ? "true" : "false"}
                         >
                           <div
                             className="grid gap-3 px-4 lg:px-6 projects-grid"
@@ -1263,7 +1236,6 @@ const ProjectsGallery = () => {
                                 onOpen={openProject}
                                 index={idx}
                                 eagerLoad={cardEagerLoad(slot.item)}
-                                isActiveSlide={slideIsActive}
                               />
                             ))}
                           </div>
@@ -1292,17 +1264,11 @@ const ProjectsGallery = () => {
                       // mimics slide 0's layout, not the layout of "the next
                       // index" which would mis-render the clone as a 2P page.
                       const sourceIdx = renderIdx >= mobileSlides.length ? 0 : renderIdx;
-                      // Same active-slide gate as desktop: only the slide
-                      // the user is currently viewing on mobile gets to
-                      // play its videos. Off-slide cards stay paused so
-                      // mobile decoders aren't saturated.
-                      const slideIsActive = renderIdx === mobileCarouselIdx;
                       return (
                         <div
                           key={`m-slide-${renderIdx}`}
                           className="shrink-0 px-4"
                           style={{ width: `${100 / mobileRendered.length}%` }}
-                          data-active-slide={slideIsActive ? "true" : "false"}
                         >
                           {(() => {
                             if (sourceIdx <= 1 && items.length >= 3) {
@@ -1315,28 +1281,28 @@ const ProjectsGallery = () => {
                                 <div className="grid grid-cols-2 grid-rows-3 gap-3">
                                   {a && (
                                     <div className="row-span-2">
-                                      <FeaturedCard item={a} onOpen={openProject} index={0} fillHeight forceAspectRatio={9/16} eagerLoad={cardEagerLoad(a)} isActiveSlide={slideIsActive} />
+                                      <FeaturedCard item={a} onOpen={openProject} index={0} fillHeight forceAspectRatio={9/16} eagerLoad={cardEagerLoad(a)} />
                                     </div>
                                   )}
                                   {b && (
                                     <div>
-                                      <FeaturedCard item={b} onOpen={openProject} index={1} fillHeight forceAspectRatio={16/9} eagerLoad={cardEagerLoad(b)} isActiveSlide={slideIsActive} />
+                                      <FeaturedCard item={b} onOpen={openProject} index={1} fillHeight forceAspectRatio={16/9} eagerLoad={cardEagerLoad(b)} />
                                     </div>
                                   )}
                                   {c && (
                                     <div>
-                                      <FeaturedCard item={c} onOpen={openProject} index={2} fillHeight forceAspectRatio={16/9} eagerLoad={cardEagerLoad(c)} isActiveSlide={slideIsActive} />
+                                      <FeaturedCard item={c} onOpen={openProject} index={2} fillHeight forceAspectRatio={16/9} eagerLoad={cardEagerLoad(c)} />
                                     </div>
                                   )}
                                   <div className="col-span-2 grid grid-cols-2 gap-3">
                                     {d && (
                                       <div>
-                                        <FeaturedCard item={d} onOpen={openProject} index={3} fillHeight forceAspectRatio={16/9} eagerLoad={cardEagerLoad(d)} isActiveSlide={slideIsActive} />
+                                        <FeaturedCard item={d} onOpen={openProject} index={3} fillHeight forceAspectRatio={16/9} eagerLoad={cardEagerLoad(d)} />
                                       </div>
                                     )}
                                     {e && (
                                       <div>
-                                        <FeaturedCard item={e} onOpen={openProject} index={4} fillHeight forceAspectRatio={16/9} eagerLoad={cardEagerLoad(e)} isActiveSlide={slideIsActive} />
+                                        <FeaturedCard item={e} onOpen={openProject} index={4} fillHeight forceAspectRatio={16/9} eagerLoad={cardEagerLoad(e)} />
                                       </div>
                                     )}
                                   </div>
@@ -1347,7 +1313,7 @@ const ProjectsGallery = () => {
                               <div className="grid grid-cols-2 gap-3">
                                 {items.map((it, i) => (
                                   <div key={i}>
-                                    <FeaturedCard item={it} onOpen={openProject} index={i} fillHeight forceAspectRatio={9/16} eagerLoad={cardEagerLoad(it)} isActiveSlide={slideIsActive} />
+                                    <FeaturedCard item={it} onOpen={openProject} index={i} fillHeight forceAspectRatio={9/16} eagerLoad={cardEagerLoad(it)} />
                                   </div>
                                 ))}
                               </div>
