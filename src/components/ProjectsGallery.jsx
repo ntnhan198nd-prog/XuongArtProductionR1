@@ -727,17 +727,18 @@ const ProjectsGallery = () => {
     fetchProjects();
   }, []);
 
-  // _isPhase1 marks the first 6 projects as the "load-first" wave so
-  // the per-card eagerLoad gate can hold the remaining 6 back until
-  // the parent's phase-2 timer fires. Riding the flag on the item
-  // itself means the desktop and mobile carousels can share the same
-  // eagerLoad helper without re-deriving the absolute index from
-  // their own slide arrays (which slice the project list differently).
+  // _loadOrder is the absolute project index (0–11). The eagerLoad
+  // gate uses it to release videos in waves, with the second wave
+  // staggered card-by-card so Chrome on Windows — which has a smaller
+  // hardware-decoder pool than macOS — never sees 6 decode requests
+  // hit the queue at once. Riding the flag on the item itself means
+  // the desktop and mobile carousels can share the same gate even
+  // though they slice the project list differently.
   const allItems = useMemo(
     () => projects.map((p, idx) => ({
       ...p,
       medias: p.medias.length > 0 ? p.medias : [{ url: p.media }],
-      _isPhase1: idx < 6,
+      _loadOrder: idx,
     })),
     [projects]
   );
@@ -989,31 +990,46 @@ const ProjectsGallery = () => {
   const sectionInView = useInView(sectionRef, { amount: 0.05, once: true });
 
   // Two-phase preview-byte prefetch. The first 6 videos
-  // Two-phase reveal. When the gallery scrolls into view, phase 1
-  // (the first 6 cards) unlocks immediately so the user has something
-  // to watch right away. After PHASE_2_DELAY_MS the parent flips
-  // loadPhase, which lets the remaining 6 cards begin loading. With
-  // every featured project carrying a small WebM preview the second
-  // wave finishes well before the user ever clicks forward to the
-  // second slide; from there all 12 cards loop continuously until
-  // the homepage unmounts (route change to /videos, /images, or
-  // /whoweare).
+  // Wave-based reveal. When the gallery scrolls into view, the first
+  // 6 cards (slide 1) unlock immediately so the user has something to
+  // watch right away. After PHASE_2_DELAY_MS each of the remaining
+  // cards unlocks one at a time spaced PHASE_2_STAGGER_MS apart —
+  // crucial on Chrome Windows, which trips over 6 simultaneous
+  // decoder requests but handles them fine when they arrive in a
+  // queue. Mac (which has a much bigger decoder pool) just sees a
+  // ~1.5–3.5 s reveal of the back row, no different from a single
+  // setLoadPhase flip.
   const PHASE_2_DELAY_MS = 1500;
-  const [loadPhase, setLoadPhase] = useState("phase1");
+  const PHASE_2_STAGGER_MS = 300;
+  const [unlockedCount, setUnlockedCount] = useState(0);
   useEffect(() => {
-    if (!sectionInView || loadPhase === "phase2") return undefined;
-    const id = window.setTimeout(() => {
-      setLoadPhase("phase2");
-    }, PHASE_2_DELAY_MS);
-    return () => window.clearTimeout(id);
-  }, [sectionInView, loadPhase]);
+    if (!sectionInView) return undefined;
+    // Phase 1: unlock the first 6 cards in one shot so slide 1 lights
+    // up together.
+    setUnlockedCount((prev) => (prev < 6 ? 6 : prev));
+    // Phase 2: schedule staggered unlocks for cards 7..12.
+    const timeouts = [];
+    for (let i = 7; i <= 12; i += 1) {
+      const delay = PHASE_2_DELAY_MS + (i - 7) * PHASE_2_STAGGER_MS;
+      const id = window.setTimeout(() => {
+        setUnlockedCount((prev) => Math.max(prev, i));
+      }, delay);
+      timeouts.push(id);
+    }
+    return () => {
+      timeouts.forEach((id) => window.clearTimeout(id));
+    };
+  }, [sectionInView]);
 
   const cardEagerLoad = useCallback(
     (item) => {
       if (!sectionInView) return false;
-      return Boolean(item?._isPhase1) || loadPhase === "phase2";
+      const order = Number.isInteger(item?._loadOrder) ? item._loadOrder : 0;
+      // unlockedCount=6 → orders 0..5 (slide 1) eligible; later
+      // increments add 6, 7, 8 … up to the full 12.
+      return order < unlockedCount;
     },
-    [sectionInView, loadPhase]
+    [sectionInView, unlockedCount]
   );
 
   // Force-play sweep: on every slide change (manual nav OR autoplay
