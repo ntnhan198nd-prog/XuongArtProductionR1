@@ -24,7 +24,9 @@ function normalizeBoolean(value) {
 
 function normalizeOrientation(value) {
   const normalized = normalizeText(value).toLowerCase();
-  return normalized === "portrait" ? "portrait" : "landscape";
+  if (normalized === "portrait") return "portrait";
+  if (normalized === "square") return "square";
+  return "landscape";
 }
 
 function normalizeAssetInput(asset, store, now) {
@@ -84,6 +86,11 @@ export function normalizeProjectPayload(payload, store, currentItem = null) {
     // featured gallery. Falls back to `media` at render time so existing
     // projects without a preview keep working unchanged.
     preview: normalizeAssetInput(payload.preview ?? currentItem?.preview, store, now),
+    // `adminRating` is a private 0–5 score the admin assigns to mark
+    // their favourites. Used only inside the admin "Video Khác" tab for
+    // sorting; never serialised to the public /api/projects payload, so
+    // homepage / videos page can't expose it accidentally.
+    adminRating: normalizeNumber(payload.adminRating ?? currentItem?.adminRating),
     thumbnail: normalizeAssetInput(payload.thumbnail ?? currentItem?.thumbnail, store, now),
     createdAt: currentItem?.createdAt || now,
     updatedAt: now,

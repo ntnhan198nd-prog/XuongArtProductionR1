@@ -31,8 +31,80 @@ const EMPTY_FORM = {
   // WebM (VP9, no audio) used by the homepage gallery. Modal click-to-play
   // still uses `media` (full-quality MP4).
   preview: null,
+  // `adminRating` is the 0–5 favourite rating used inside the admin to
+  // sort "Video Khác". Never sent to the public site.
+  adminRating: 0,
   thumbnail: null,
 };
+
+const SORT_OPTIONS = [
+  { key: "order", label: "Thứ tự thủ công" },
+  { key: "rating-desc", label: "★ cao → thấp" },
+  { key: "rating-asc", label: "★ thấp → cao" },
+  { key: "date-desc", label: "Ngày mới → cũ" },
+  { key: "date-asc", label: "Ngày cũ → mới" },
+];
+
+function timestampForItem(item) {
+  const candidate =
+    item?.completionDate || item?.publishedAt || item?.createdAt || null;
+  if (!candidate) return 0;
+  const t = new Date(candidate).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+function StarRatingInput({ value = 0, onChange }) {
+  const safeValue = Math.max(0, Math.min(5, Number(value) || 0));
+  return (
+    <div className="flex items-center gap-1.5">
+      {[1, 2, 3, 4, 5].map((star) => {
+        const filled = star <= safeValue;
+        return (
+          <button
+            key={star}
+            type="button"
+            onClick={() => onChange(safeValue === star ? 0 : star)}
+            aria-label={`${star} sao`}
+            className={`text-xl leading-none transition-colors ${
+              filled ? "text-amber-500" : "text-gray-300 hover:text-amber-300"
+            }`}
+          >
+            ★
+          </button>
+        );
+      })}
+      <span className="ml-2 text-xs text-gray-500">
+        {safeValue > 0 ? `${safeValue} / 5` : "Chưa đánh giá"}
+      </span>
+      {safeValue > 0 ? (
+        <button
+          type="button"
+          onClick={() => onChange(0)}
+          className="ml-1 text-[11px] text-gray-500 underline hover:text-gray-700"
+        >
+          Xoá
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function StarRatingDisplay({ value = 0 }) {
+  const safeValue = Math.max(0, Math.min(5, Number(value) || 0));
+  if (safeValue === 0) return null;
+  return (
+    <span
+      className="inline-flex items-center gap-0.5 text-[11px] text-amber-600"
+      title={`${safeValue}/5`}
+    >
+      {[1, 2, 3, 4, 5].map((star) => (
+        <span key={star} className={star <= safeValue ? "" : "text-gray-300"}>
+          ★
+        </span>
+      ))}
+    </span>
+  );
+}
 
 function slugify(value = "") {
   return String(value)
@@ -187,6 +259,7 @@ function toForm(item, tab) {
     media: tab === "projects" ? item?.media || null : null,
     mediaList: tab === "image-projects" ? item?.media || [] : [],
     preview: tab === "projects" ? item?.preview || null : null,
+    adminRating: Number(item?.adminRating) || 0,
     thumbnail: item?.thumbnail || null,
   };
 }
@@ -226,6 +299,13 @@ export default function ProjectsAdminPanel({ mode } = {}) {
   const [listFilter, setListFilter] = useState("");
   const [reordering, setReordering] = useState(false);
   const [dragId, setDragId] = useState(null);
+  // Other-videos defaults to rating-desc so the user's favourites float
+  // up; everywhere else the canonical manual order is the most useful
+  // default. Drag-and-drop is only enabled when sort === "order" because
+  // reordering a sort that isn't manual would just be confusing.
+  const [listSort, setListSort] = useState(
+    mode === "other-videos" ? "rating-desc" : "order"
+  );
 
   const tabLabel = useMemo(() => TABS.find((item) => item.key === tab)?.label || tab, [tab]);
 
@@ -289,6 +369,24 @@ export default function ProjectsAdminPanel({ mode } = {}) {
       return haystack.includes(query);
     });
   }, [modeFilteredItems, listFilter]);
+
+  // sortedFilteredItems is what the list actually renders. The canonical
+  // `items` array stays in manual order so drag-drop reorder still works
+  // when the user flips listSort back to "order".
+  const sortedFilteredItems = useMemo(() => {
+    if (listSort === "order") return filteredItems;
+    const arr = [...filteredItems];
+    if (listSort === "rating-desc") {
+      arr.sort((a, b) => (Number(b.adminRating) || 0) - (Number(a.adminRating) || 0));
+    } else if (listSort === "rating-asc") {
+      arr.sort((a, b) => (Number(a.adminRating) || 0) - (Number(b.adminRating) || 0));
+    } else if (listSort === "date-desc") {
+      arr.sort((a, b) => timestampForItem(b) - timestampForItem(a));
+    } else if (listSort === "date-asc") {
+      arr.sort((a, b) => timestampForItem(a) - timestampForItem(b));
+    }
+    return arr;
+  }, [filteredItems, listSort]);
 
   const resetEditor = () => {
     setEditingId(null);
@@ -368,7 +466,7 @@ export default function ProjectsAdminPanel({ mode } = {}) {
   );
 
   const handleMove = (item, direction) => {
-    if (listFilter || reordering) return;
+    if (listFilter || reordering || listSort !== "order") return;
     const idx = items.findIndex((it) => Number(it.id) === Number(item.id));
     if (idx < 0) return;
     const target = idx + direction;
@@ -379,7 +477,7 @@ export default function ProjectsAdminPanel({ mode } = {}) {
   };
 
   const handleDropOnto = (targetItem) => {
-    if (listFilter || reordering) return;
+    if (listFilter || reordering || listSort !== "order") return;
     if (dragId === null) return;
     const fromIdx = items.findIndex((it) => Number(it.id) === Number(dragId));
     const toIdx = items.findIndex((it) => Number(it.id) === Number(targetItem.id));
@@ -429,6 +527,7 @@ export default function ProjectsAdminPanel({ mode } = {}) {
         completionDate: form.completionDate || null,
         orientation: form.orientation,
         featured: form.featured,
+        adminRating: Number(form.adminRating) || 0,
         order: form.order === "" ? null : Number(form.order),
       };
 
@@ -714,8 +813,9 @@ export default function ProjectsAdminPanel({ mode } = {}) {
                   }
                   className={baseInputClassName()}
                 >
-                  <option value="landscape">landscape</option>
-                  <option value="portrait">portrait</option>
+                  <option value="landscape">landscape (16:9)</option>
+                  <option value="portrait">portrait (9:16)</option>
+                  <option value="square">square (1:1)</option>
                 </select>
               </div>
 
@@ -732,6 +832,28 @@ export default function ProjectsAdminPanel({ mode } = {}) {
                 </label>
               </div>
             </div>
+
+            {/* Admin-only favourite rating, only exposed in the
+                "Video Khác" tab where the spec calls for it. The value
+                is still persisted on every project though, so flipping
+                a video into Featured doesn't lose its rating. */}
+            {mode === "other-videos" ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                <label className="mb-2 block text-sm font-medium">
+                  Đánh giá yêu thích (chỉ hiện trong admin)
+                </label>
+                <StarRatingInput
+                  value={form.adminRating}
+                  onChange={(next) =>
+                    setForm((prev) => ({ ...prev, adminRating: next }))
+                  }
+                />
+                <p className="mt-2 text-[11px] text-gray-600">
+                  Dùng để sort danh sách Video Khác. Không hiển thị trên
+                  trang công khai.
+                </p>
+              </div>
+            ) : null}
 
             {tab === "projects" ? (
               <div>
@@ -863,25 +985,39 @@ export default function ProjectsAdminPanel({ mode } = {}) {
               <h2 className="text-lg font-semibold">{tabLabel}</h2>
               <p className="mt-1 text-xs text-gray-600">
                 {listFilter
-                  ? `${filteredItems.length} / ${items.length}`
+                  ? `${sortedFilteredItems.length} / ${items.length}`
                   : `Total: ${items.length}`}
                 {reordering ? (
                   <span className="ml-2 text-amber-700">· đang lưu thứ tự...</span>
                 ) : null}
               </p>
             </div>
-            <input
-              type="search"
-              value={listFilter}
-              onChange={(event) => setListFilter(event.target.value)}
-              placeholder="Tìm theo title, client, slug, category..."
-              className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-black focus:outline-none sm:w-72"
-            />
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+              <input
+                type="search"
+                value={listFilter}
+                onChange={(event) => setListFilter(event.target.value)}
+                placeholder="Tìm theo title, client, slug, category..."
+                className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-black focus:outline-none sm:w-64"
+              />
+              <select
+                value={listSort}
+                onChange={(event) => setListSort(event.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm focus:border-black focus:outline-none sm:w-44"
+                aria-label="Sắp xếp danh sách"
+              >
+                {SORT_OPTIONS.map((opt) => (
+                  <option key={opt.key} value={opt.key}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <p className="mt-2 text-xs text-gray-500">
-            {listFilter
-              ? "Xoá bộ lọc để bật sắp xếp thứ tự (kéo-thả hoặc nút ↑/↓)."
+            {listFilter || listSort !== "order"
+              ? "Để bật kéo-thả / ↑↓ đổi thứ tự, chọn 'Thứ tự thủ công' và xoá bộ lọc."
               : "Kéo-thả thẻ hoặc dùng ↑/↓ để đổi thứ tự hiển thị trên trang công khai."}
           </p>
 
@@ -889,21 +1025,22 @@ export default function ProjectsAdminPanel({ mode } = {}) {
             <p className="mt-4 text-sm text-gray-600">Loading...</p>
           ) : items.length === 0 ? (
             <p className="mt-4 text-sm text-gray-600">No items yet.</p>
-          ) : filteredItems.length === 0 ? (
+          ) : sortedFilteredItems.length === 0 ? (
             <p className="mt-4 text-sm text-gray-500">
               Không có mục nào khớp với &quot;{listFilter}&quot;.
             </p>
           ) : (
             <motion.div layout className="mt-4 space-y-3">
               <AnimatePresence initial={false}>
-                {filteredItems.map((item) => {
+                {sortedFilteredItems.map((item) => {
                   const thumbUrl = item.thumbnail?.url || item.media?.url;
                   const isCurrent = Number(editingId) === Number(item.id);
                   const cats = Array.isArray(item.categories) ? item.categories : [];
                   const sortIdx = items.findIndex(
                     (it) => Number(it.id) === Number(item.id)
                   );
-                  const canReorder = !listFilter && !reordering;
+                  const canReorder =
+                    !listFilter && !reordering && listSort === "order";
                   const isDragging = dragId !== null && Number(dragId) === Number(item.id);
                   return (
                     <motion.div
@@ -1000,12 +1137,13 @@ export default function ProjectsAdminPanel({ mode } = {}) {
                               <div className="mt-0.5 truncate text-xs text-gray-600">
                                 {item.client || "—"} · slug: {item.slug || "-"}
                               </div>
-                              <div className="mt-1 flex flex-wrap items-center gap-1">
+                              <div className="mt-1 flex flex-wrap items-center gap-1.5">
                                 {item.featured ? (
                                   <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
                                     ★ featured
                                   </span>
                                 ) : null}
+                                <StarRatingDisplay value={item.adminRating} />
                                 <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-700">
                                   order: {item.order ?? "-"}
                                 </span>

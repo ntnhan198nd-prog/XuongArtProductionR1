@@ -106,55 +106,91 @@ const normalizeOrientation = (val) => {
   const s = String(val).trim().toLowerCase();
   if (["portrait", "doc", "dọc", "vertical", "v", "p"].includes(s)) return "portrait";
   if (["landscape", "ngang", "horizontal", "h", "l"].includes(s)) return "landscape";
+  if (["square", "vuong", "vuông", "1:1", "1x1", "s"].includes(s)) return "square";
   return undefined;
 };
 
-// Grid pattern cố định theo layout trong ảnh
-const SLIDE_PATTERNS = [
-  {
+// Grid patterns. Each pattern declares its own column / row template so a
+// slide of 6 squares can render a tight 3×2 grid while the default mixed
+// pattern keeps the wide 2-portrait + 4-landscape layout. Pattern picked
+// at slide-assignment time based on item composition (see
+// pickPatternForSlide below).
+const SLIDE_PATTERNS = {
+  // 2 portraits framing 4 landscapes — the original featured layout.
+  // Used for any slide that isn't 100% square.
+  mixed: {
     desktop: {
+      columns: '1.35fr 1fr 1fr 1.35fr 1fr 1fr',
+      rows: 'repeat(2, auto)',
       template: [
         '"a b b c d d"',
         '"a e e c f f"',
       ],
       areas: [
-        { name: 'a', shape: 'portrait' },   // Order 1: Dự án dọc (Portrait)
-        { name: 'b', shape: 'landscape' },  // Order 2: Dự án ngang (Landscape) 
-        { name: 'c', shape: 'portrait' },   // Order 3: Dự án dọc (Portrait)
-        { name: 'd', shape: 'landscape' },  // Order 4: Dự án ngang (Landscape)
-        { name: 'e', shape: 'landscape' },  // Order 5: Dự án ngang (Landscape)
-        { name: 'f', shape: 'landscape' },  // Order 6: Dự án ngang (Landscape)
+        { name: 'a', shape: 'portrait' },
+        { name: 'b', shape: 'landscape' },
+        { name: 'c', shape: 'portrait' },
+        { name: 'd', shape: 'landscape' },
+        { name: 'e', shape: 'landscape' },
+        { name: 'f', shape: 'landscape' },
       ],
     },
   },
-];
+  // 6 equal squares laid out 3 across × 2 down. Activated when every
+  // item in the slide has orientation === 'square'. Cells are 1fr × 1fr
+  // so each card stays exactly 1:1.
+  squares: {
+    desktop: {
+      columns: 'repeat(3, 1fr)',
+      rows: 'repeat(2, 1fr)',
+      template: [
+        '"a b c"',
+        '"d e f"',
+      ],
+      areas: [
+        { name: 'a', shape: 'square' },
+        { name: 'b', shape: 'square' },
+        { name: 'c', shape: 'square' },
+        { name: 'd', shape: 'square' },
+        { name: 'e', shape: 'square' },
+        { name: 'f', shape: 'square' },
+      ],
+    },
+  },
+};
 
-// Generate grid template areas using pattern rotation
-const generateGridTemplateAreas = (patternIndex, itemsCount) => {
-  if (itemsCount <= 0) return [];
-  
-  const pattern = SLIDE_PATTERNS[patternIndex % SLIDE_PATTERNS.length].desktop;
-  return pattern.template;
+// Pick the right pattern for a slide. Pure-square slides use the dedicated
+// squares grid; everything else (mixed, or all portrait/landscape) uses
+// the original mixed grid. Mixing a single square into a 2P+4L slide
+// would distort the existing layout, so we keep it strict for V1 — admins
+// can group their squares into their own slide via the order field.
+const pickPatternForSlide = (slideItems = []) => {
+  if (
+    slideItems.length > 0 &&
+    slideItems.every((item) => item?.orientation === 'square')
+  ) {
+    return SLIDE_PATTERNS.squares;
+  }
+  return SLIDE_PATTERNS.mixed;
 };
 
 // Assign projects to pattern areas với thứ tự cố định
-const assignToPattern = (items, pattern, orientationMap = {}) => {
+const assignToPattern = (items, pattern) => {
   if (!items || items.length === 0) return [];
-  
+
   // Cố định thứ tự items theo order field hoặc ID để tránh xáo trộn khi F5
   const sortedItems = [...items].sort((a, b) => {
-    // Ưu tiên order field, fallback về ID
     const aOrder = a.order || a.id;
     const bOrder = b.order || b.id;
     return aOrder - bOrder;
   });
-  
+
   return pattern.desktop.areas.slice(0, items.length).map((area, index) => {
     const item = sortedItems[index] || items[index];
-    
+
     // Sử dụng orientation từ pattern thay vì detection để đảm bảo tính nhất quán
     const finalOrientation = area.shape;
-    
+
     return {
       area: area.name,
       shape: finalOrientation,
@@ -384,6 +420,8 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
           ? 'col-span-2 row-span-2'
           : slotShape === 'landscape'
           ? 'col-span-3 row-span-1'
+          : slotShape === 'square'
+          ? 'col-span-1 row-span-1'
           : 'col-span-1 row-span-1'
       )}
               style={{
@@ -395,11 +433,16 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
         ...(fillHeight
           ? {}
           : {
-              // slotShape is always set by assignToPattern (portrait/landscape),
-              // so 16/9 is just a defensive fallback that never executes.
+              // slotShape is always set by assignToPattern (portrait /
+              // landscape / square). 16/9 is the defensive fallback when
+              // an unrecognised shape sneaks through.
               aspectRatio:
                 forceAspectRatio ||
-                (slotShape === 'portrait' ? 9 / 16 : 16 / 9),
+                (slotShape === 'portrait'
+                  ? 9 / 16
+                  : slotShape === 'square'
+                  ? 1
+                  : 16 / 9),
             })
       }}
       whileHover={{
@@ -942,9 +985,12 @@ const ProjectsGallery = () => {
   // `slides` so the heavy pattern→item mapping doesn't re-run on each
   // slide change (only the translateX changes).
   const allDesktopSlideAssignments = useMemo(() => {
-    return slides.map((slideItems, slideIdx) => {
-      const pattern = SLIDE_PATTERNS[slideIdx % SLIDE_PATTERNS.length];
-      return assignToPattern(slideItems, pattern);
+    return slides.map((slideItems) => {
+      const pattern = pickPatternForSlide(slideItems);
+      return {
+        slots: assignToPattern(slideItems, pattern),
+        pattern,
+      };
     });
   }, [slides]);
 
@@ -1256,10 +1302,10 @@ const ProjectsGallery = () => {
                     }}
                     transition={enableTransition ? slideTransition : { duration: 0 }}
                   >
-                    {desktopRendered.map((assignedSlots, renderIdx) => {
+                    {desktopRendered.map((slideAssignment, renderIdx) => {
                       // Clones reuse the source slide's grid template + items
                       // — they're visually identical to the slide they clone.
-                      const sourceIdx = renderIdx >= slides.length ? 0 : renderIdx;
+                      const { slots, pattern } = slideAssignment;
                       return (
                         <div
                           key={`d-slide-${renderIdx}`}
@@ -1269,10 +1315,9 @@ const ProjectsGallery = () => {
                           <div
                             className="grid gap-3 px-4 lg:px-6 projects-grid"
                             style={{
-                              // Mở rộng cột 1 và 4 (portrait) để thẻ a và c to hơn
-                              gridTemplateColumns: '1.35fr 1fr 1fr 1.35fr 1fr 1fr',
-                              gridTemplateRows: 'repeat(2, auto)',
-                              gridTemplateAreas: generateGridTemplateAreas(sourceIdx, slides[sourceIdx]?.length || 0).join(' '),
+                              gridTemplateColumns: pattern.desktop.columns,
+                              gridTemplateRows: pattern.desktop.rows,
+                              gridTemplateAreas: pattern.desktop.template.join(' '),
                               height: 'auto',
                               gap: 'clamp(8px, 1vw, 16px)',
                               alignItems: 'stretch',
@@ -1281,7 +1326,7 @@ const ProjectsGallery = () => {
                               margin: '0 auto'
                             }}
                           >
-                            {assignedSlots.map((slot, idx) => (
+                            {slots.map((slot, idx) => (
                               <FeaturedCard
                                 key={`d-${renderIdx}-${slot.item.id}-${idx}`}
                                 areaName={slot.area}
