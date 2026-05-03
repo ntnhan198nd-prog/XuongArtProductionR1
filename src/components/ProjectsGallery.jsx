@@ -253,27 +253,22 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
   // the decoder simultaneously. 120 ms × 6 cards = 720 ms total spread,
   // imperceptible to the user but enough to keep the browser ahead.
   useEffect(() => {
-    // Only call load() for cards in the slide the user is currently
-    // looking at. Pre-loading every card up-front exhausts the browser
-    // hardware-decoder pool on Windows Chrome (~6–8 slots), so cards
-    // beyond the limit silently rendered as blank tiles. Gating on
-    // isActiveSlide caps the decoder demand at "one slide's worth"
-    // (≈ 6 videos) which sits comfortably under every desktop browser's
-    // limit. The Range prefetch from earlier still warms the bytes
-    // for off-active-slide cards, so when the user clicks forward the
-    // new slide's load() pulls from disk cache and starts playing
-    // within ~150–300 ms.
+    // Trigger fetch + decode the moment the slide becomes active. The
+    // earlier staggered version (index * 120 ms) was tuned for a
+    // 12-video preload all firing at once, but with the active-slide
+    // gate we only have 6 simultaneous loads — well within budget for
+    // any modern desktop. More importantly, the heartbeat below kicks
+    // tryPlay() immediately on activation, so deferring load() by up
+    // to 600 ms means the first play() call lands before any data has
+    // arrived; the video then sits in an aborted state until the next
+    // heartbeat tick. Loading immediately keeps load → play in order.
     if (!eagerLoad || !isActiveSlide || !videoRef.current || !isVideoCard) return;
-    const delay = index * 120;
-    const id = window.setTimeout(() => {
-      try {
-        videoRef.current?.load();
-      } catch {
-        // Some browsers throw if load() is called too early; ignore.
-      }
-    }, delay);
-    return () => window.clearTimeout(id);
-  }, [eagerLoad, isActiveSlide, isVideoCard, cardMediaUrl, index]);
+    try {
+      videoRef.current.load();
+    } catch {
+      // Some browsers throw if load() is called too early; ignore.
+    }
+  }, [eagerLoad, isActiveSlide, isVideoCard, cardMediaUrl]);
 
   // Keep thumbnail autoplay stable: resume when tab returns, when stream stalls, or when browser pauses unexpectedly.
   useEffect(() => {
@@ -526,21 +521,27 @@ const FeaturedCard = memo(({ areaName, slotShape, item, onOpen, index = 0, fillH
                 console.error('Video playback error:', e);
               }}
             >
-              {/* When a featured project has uploaded its WebM gallery
-                  preview, render *only* that source — the small VP9
-                  file is what we want the gallery to play, and adding
-                  an MP4 fallback alongside it would let the browser
-                  pull the heavy MP4 on UAs that report partial WebM
-                  support but really shouldn't be served the small file.
-                  Click-to-play in the modal still uses the MP4 directly
-                  via cardMediaUrl, so the high-quality file isn't
-                  wasted. Cards without a WebM upload fall through to
-                  the MP4 source as before. */}
-              {galleryWebmUrl ? (
-                <source src={galleryWebmUrl} type={galleryWebmMime} />
-              ) : (
-                <source src={cardMediaUrl} type="video/mp4" />
-              )}
+              {/* Source elements are rendered only when the slide is
+                  active. Conditional mounting cleanly resets the
+                  browser's media state on every (re-)activation: when
+                  isActiveSlide flips false the source unmounts and the
+                  video element drops to NETWORK_EMPTY, releasing the
+                  decoder slot. When it flips true again the source
+                  re-mounts and the load() call in the effect above
+                  picks it up. This was the missing piece that left
+                  slide-2 cards stuck on Chrome Windows — preload alone
+                  doesn't release decoders, but unmounting the source
+                  does.
+                  WebM-only when uploaded: the small VP9 file is what
+                  the gallery loops; modal click-to-play still uses the
+                  MP4 directly via cardMediaUrl. */}
+              {isActiveSlide ? (
+                galleryWebmUrl ? (
+                  <source src={galleryWebmUrl} type={galleryWebmMime} />
+                ) : (
+                  <source src={cardMediaUrl} type="video/mp4" />
+                )
+              ) : null}
             </video>
           </div>
         ) : cardMediaUrl ? (
