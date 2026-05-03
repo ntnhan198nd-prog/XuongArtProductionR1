@@ -61,45 +61,6 @@ const toAbsoluteAssetUrl = (url, appBaseUrl) => {
   return url.startsWith("http") ? url : `${appBaseUrl}${url}`;
 };
 
-// Cache-warming helper. Issues an HTTP Range request for just the first
-// chunk of a video file (~2 MB ≈ 6–10 s of HD-encoded video) and lets
-// the bytes flow into the browser's HTTP cache. When a <video> element
-// later mounts with the same URL, Chrome / Edge serve the cached prefix
-// from disk and only fetch the remainder from the network — so the
-// gallery starts playing instantly without paying the cost of
-// downloading 12 full files (60–240 MB) up-front. Safari and Firefox
-// have stricter partial-cache rules; in the worst case they refetch
-// the prefix once the <video> element actually needs it, costing a
-// little duplicate bandwidth but never breaking playback.
-const PREVIEW_PREFETCH_BYTES = 2_000_000;
-async function prefetchPreviewBytes(url, signal) {
-  try {
-    const response = await fetch(url, {
-      headers: { Range: `bytes=0-${PREVIEW_PREFETCH_BYTES - 1}` },
-      signal,
-      // Chrome 101+ honours this. Other browsers ignore it gracefully.
-      // We keep the prefetch low-priority so the hero showreel video
-      // (visible & playing) gets the bandwidth budget first.
-      priority: "low",
-    });
-    if (!response.ok && response.status !== 206) return;
-    if (!response.body) return;
-    // Drain the stream so the bytes are committed to the HTTP cache.
-    // We don't actually need the contents — the cache write is the
-    // whole point.
-    const reader = response.body.getReader();
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      const { done } = await reader.read();
-      if (done) break;
-    }
-  } catch {
-    // Network error, aborted, or browser refused the Range request —
-    // the <video> element will fall back to fetching from scratch when
-    // the gallery scrolls into view.
-  }
-}
-
 // Normalize Strapi orientation values (handle casing/whitespace/localization)
 const normalizeOrientation = (val) => {
   if (val === undefined || val === null) return undefined;
@@ -796,16 +757,10 @@ const ProjectsGallery = () => {
     fetchProjects();
   }, []);
 
-  // _isPhase1 flag rides on each item so any FeaturedCard renderer (desktop
-  // grid, mobile 1P+4L, mobile 2P) can decide whether to fire eagerLoad
-  // immediately or wait for the phase-2 hand-off — without needing to know
-  // the item's absolute index in `projects` from inside the carousel
-  // mapping, which doesn't always preserve project order on mobile.
   const allItems = useMemo(
-    () => projects.map((p, idx) => ({
+    () => projects.map((p) => ({
       ...p,
       medias: p.medias.length > 0 ? p.medias : [{ url: p.media }],
-      _isPhase1: idx < 6,
     })),
     [projects]
   );
@@ -1057,100 +1012,18 @@ const ProjectsGallery = () => {
   const sectionInView = useInView(sectionRef, { amount: 0.05, once: true });
 
   // Two-phase preview-byte prefetch. The first 6 videos
-  // (projects[0..5] = slide-1 grid) issue HTTP Range requests on mount
-  // for just the first ~2 MB of each file (≈ 6–10 s of HD-encoded
-  // video). Once those 6 fetches settle, we flip loadPhase to "phase2"
-  // and prefetch the same prefix for the remaining 6. Compared to a
-  // full <link rel=preload> warm, this trims the initial cost from
-  // 60–240 MB of full files down to ~24 MB total — the gallery still
-  // starts playing instantly when the user scrolls in (the cached
-  // prefix covers the first few seconds of playback) but a visitor
-  // who never reaches the section never burns the rest.
-  //
-  // Net result: showreel video at the top of the page keeps a clear
-  // bandwidth runway because the gallery prefetch is small + low
-  // priority; the gallery still feels instant on arrival because the
-  // cache holds the opening seconds of every clip; and the dropoff
-  // tax for visitors who leave early is dramatically smaller.
-  // 8 s safety fallback so a single stalled fetch can't block phase 2.
-  const [loadPhase, setLoadPhase] = useState("phase1");
-
-  // Helper: per-card eagerLoad gate. Cards stay at preload="metadata"
-  // until the gallery scrolls into view (sectionInView) AND the card's
-  // phase has been unlocked. Phase 1 cards (slide 0) unlock immediately
-  // when sectionInView fires; phase 2 cards (slide 1+) unlock once the
-  // phase-1 preload links have all reported `load` (or the safety
-  // timeout fires). Defined after loadPhase so the useCallback dep
-  // array doesn't TDZ.
+  // Per-card eagerLoad gate. With small WebM previews now uploaded for
+  // every featured project (~2–3 MB total each), the old two-phase
+  // Range prefetch is unnecessary — the <video> element fetches the
+  // whole WebM directly when the active slide mounts its source, and
+  // the file is small enough that the network round-trip is in line
+  // with what the prefetch used to deliver. Removing the prefetch also
+  // sidesteps the CORS issue (HTML media element fetches don't trigger
+  // CORS, but our fetch() call did).
   const cardEagerLoad = useCallback(
-    (item) => {
-      const phaseAllows = item?._isPhase1 || loadPhase === "phase2";
-      return sectionInView && phaseAllows;
-    },
-    [sectionInView, loadPhase]
+    () => sectionInView,
+    [sectionInView]
   );
-
-  useEffect(() => {
-    if (typeof window === "undefined") return undefined;
-    if (projects.length === 0) return undefined;
-
-    const phase1Urls = [];
-    const phase2Urls = [];
-    projects.forEach((p, idx) => {
-      // Prefer the WebM gallery preview when present — that's what the
-      // <video> elements actually play, so warming the MP4 cache here
-      // would burn bandwidth on bytes the gallery never streams.
-      const url = p?.galleryVideoUrl || p?.previewMedia || p?.media;
-      if (!url || !isVideoUrl(url)) return;
-      if (idx < 6) phase1Urls.push(url);
-      else phase2Urls.push(url);
-    });
-
-    // Single AbortController covers every in-flight prefetch so the
-    // unmount cleanup can stop them all at once (e.g. user navigates
-    // off / before the second batch even starts).
-    const controller = new AbortController();
-    let phase2Triggered = false;
-    let timeoutId = null;
-
-    const startPhase2 = () => {
-      if (phase2Triggered) return;
-      phase2Triggered = true;
-      if (timeoutId) {
-        window.clearTimeout(timeoutId);
-        timeoutId = null;
-      }
-      setLoadPhase("phase2");
-      phase2Urls.forEach((url) => {
-        prefetchPreviewBytes(url, controller.signal);
-      });
-    };
-
-    if (phase1Urls.length === 0) {
-      startPhase2();
-    } else {
-      let pending = phase1Urls.length;
-      const onComplete = () => {
-        pending -= 1;
-        if (pending <= 0) startPhase2();
-      };
-      phase1Urls.forEach((url) => {
-        // .finally so phase 2 still kicks off if a fetch errors out —
-        // the gallery falls back to its own <video> element fetch when
-        // the user actually scrolls in, so a missed prefetch is just
-        // a perf miss, not a broken card.
-        prefetchPreviewBytes(url, controller.signal).finally(onComplete);
-      });
-      // Safety fallback if a phase-1 fetch gets stuck (slow CDN, hung
-      // proxy). 8 s is enough for 6 × 2 MB on residential broadband.
-      timeoutId = window.setTimeout(startPhase2, 8000);
-    }
-
-    return () => {
-      if (timeoutId) window.clearTimeout(timeoutId);
-      controller.abort();
-    };
-  }, [projects]);
 
   // Force-play sweep: on every slide change, walk only the *active*
   // slide's <video> elements and kick play on any that are paused. This
