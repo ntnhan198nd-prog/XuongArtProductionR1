@@ -2,50 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Projects Gallery Responsive Scaling */
-.projects-grid {
-  /* Default scale for large screens */
-  transform: scale(0.92);
-  transform-origin: center center;
-}
-
-/* Responsive scaling based on screen size */
-@media (min-width: 1920px) {
-  .projects-grid {
-    transform: scale(1.08);
-  }
-}
-
-@media (min-width: 1440px) and (max-width: 1919px) {
-  .projects-grid {
-    transform: scale(0.97);
-  }
-}
-
-@media (min-width: 1200px) and (max-width: 1439px) {
-  .projects-grid {
-    transform: scale(0.92);
-  }
-}
-
-@media (min-width: 1024px) and (max-width: 1199px) {
-  .projects-grid {
-    transform: scale(0.86);
-  }
-}
-
-@media (min-width: 768px) and (max-width: 1023px) {
-  .projects-grid {
-    transform: scale(0.81);
-  }
-}
-
-/* Disable scaling on mobile for better performance */
-@media (max-width: 767px) {
-  .projects-grid {
-    transform: none;
-  }
-}
+/* Featured gallery sizing is driven entirely by the carousel container
+   width + grid fr units in ProjectsGallery.jsx. Earlier this file
+   layered `transform: scale()` on `.projects-grid` per breakpoint to
+   "responsive-zoom" the grid — most notably scale(1.08) above 1920 px,
+   which inflated the grid past the carousel viewport's overflow box.
+   On wide Windows monitors that scale was the actual cause of the
+   recurring "border square / slide bleed / gallery looks scaled"
+   reports: the GPU-composited cards were rendered at scaled
+   coordinates that no longer matched the parent's clip rect, so
+   rounded corners and slide boundaries lost. Removed the rules and
+   left this comment in place so nobody re-adds them. */
 
 /* Mobile touch-friendly button sizes */
 @media (max-width: 640px) {
