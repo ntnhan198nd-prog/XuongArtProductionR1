@@ -4,7 +4,7 @@
 export const DEFAULT_SITE_CONTENT = {
   hero: {
     showreelLabel: "Showreel · 2026",
-    tagline: "Xưởng Art Production",
+    tagline: "XUONGART Production",
     headingMain: "Every frame",
     headingAccent: "tells a story",
     description:
@@ -20,11 +20,11 @@ export const DEFAULT_SITE_CONTENT = {
   featuredHeader: {
     eyebrow: "Dự án nổi bật",
     headingMain: "Những thước phim làm nên",
-    headingAccent: "dấu ấn Xưởng Art",
+    headingAccent: "dấu ấn XUONGART",
   },
   stats: {
     eyebrow: "Numbers that matter",
-    heading: "Hành trình của Xưởng Art qua các con số",
+    heading: "Hành trình của XUONGART qua các con số",
     items: [
       { value: 200, suffix: "+", label: "Dự án đã sản xuất", decimals: 0 },
       { value: 50, suffix: "+", label: "Thương hiệu đối tác", decimals: 0 },
@@ -98,8 +98,8 @@ export const DEFAULT_SITE_CONTENT = {
   },
   about: {
     eyebrow: "Về chúng tôi",
-    title: "XưởngArt – Kể chuyện bằng hình ảnh chuyển động",
-    lead: "Chúng tôi là studio sáng tạo chuyên về sản xuất video và nội dung hình ảnh. Mục tiêu của XưởngArt là giúp thương hiệu kể được câu chuyện của mình một cách giàu cảm xúc, hiện đại và hiệu quả.",
+    title: "XUONGART – Kể chuyện bằng hình ảnh chuyển động",
+    lead: "Chúng tôi là studio sáng tạo chuyên về sản xuất video và nội dung hình ảnh. Mục tiêu của XUONGART là giúp thương hiệu kể được câu chuyện của mình một cách giàu cảm xúc, hiện đại và hiệu quả.",
     paragraphs: [
       "Từ quảng cáo, MV, social video đến ghi hình sự kiện, mỗi dự án đều được thực hiện theo quy trình chuẩn điện ảnh: tiền kỳ kỹ lưỡng, sản xuất gọn gàng và hậu kỳ tỉ mỉ.",
       "Chúng tôi tin rằng Every frame tells a story – mỗi khung hình đều có sức mạnh khơi gợi cảm xúc và truyền tải thông điệp rõ ràng.",

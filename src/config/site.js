@@ -1,6 +1,6 @@
 export function constructMetadata({
-  title = "XưởngArt ",
-  description = "XưởngArt is an open-source website.",
+  title = "XUONGART",
+  description = "XUONGART is a creative video production studio.",
   image = "/agency.PNG",
   icons = "/favicon.ico",
   noIndex = false,

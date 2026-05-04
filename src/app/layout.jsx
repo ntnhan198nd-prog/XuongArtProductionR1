@@ -8,8 +8,8 @@ export const revalidate = 0;
 
 export const metadata = {
   title: {
-    template: "XưởngArt",
-    default: "XưởngArt",
+    template: "XUONGART",
+    default: "XUONGART",
   },
 };
 
