@@ -18,6 +18,7 @@ const BLOCKS = [
   { key: "stats", label: "Stats — Why us", group: "Trang chủ" },
   { key: "clients", label: "Khách hàng (marquee)", group: "Trang chủ" },
   { key: "intro", label: "Manifesto cuối trang", group: "Trang chủ" },
+  { key: "footer1", label: "Footer 1 (footer đen trang chủ)", group: "Trang chủ" },
 
   { key: "about", label: "PageIntro + Stats", group: "Trang /whoweare" },
   { key: "cultures", label: "Văn hoá", group: "Trang /whoweare" },
@@ -749,6 +750,86 @@ function SocialBlock({ value, onChange }) {
   );
 }
 
+// Footer 1 (dark homepage footer) — convenience block that gathers
+// every field actually visible in the homepage's dark footer into a
+// single editor. Unlike normal blocks, the underlying data lives in
+// THREE existing keys (`cta`, `social`, `footer`) because those
+// fields are shared with the /whoweare CTA banner and the global
+// copyright row. We don't migrate the data; we just edit those
+// three keys atomically through `content` + `onContentChange`.
+// Editing here updates the same source-of-truth those other blocks
+// read from, so the CTA panel and the social panel stay in sync.
+function Footer1Block({ content, onContentChange }) {
+  const cta = content?.cta || {};
+  const social = content?.social || {};
+  const footer = content?.footer || {};
+
+  const setCta = (k, v) =>
+    onContentChange({ ...content, cta: { ...cta, [k]: v } });
+  const setSocial = (k, v) =>
+    onContentChange({ ...content, social: { ...social, [k]: v } });
+  const setFooter = (k, v) =>
+    onContentChange({ ...content, footer: { ...footer, [k]: v } });
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900">
+        <p className="font-semibold uppercase tracking-wider text-amber-800">
+          Quản lý tập trung Footer 1
+        </p>
+        <p className="mt-1.5">
+          Block này gom các field đang hiển thị ở Footer 1 (footer đen trang
+          chủ). Cùng dữ liệu với block <span className="font-medium">CTA banner + Footer trang chủ</span>,{" "}
+          <span className="font-medium">Mạng xã hội</span> và{" "}
+          <span className="font-medium">Footer · Copyright</span> — sửa chỗ
+          nào cũng ăn vào nhau, lưu một lần là cập nhật khắp nơi.
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-700">
+          Thông tin liên hệ (cột trái)
+        </h3>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <TextField label="Tên office" value={cta.officeName} onChange={(v) => setCta("officeName", v)} placeholder="vd: Our Office – Hồ Chí Minh City" />
+          <TextField label="Phone" value={cta.phone} onChange={(v) => setCta("phone", v)} validateAs="tel" placeholder="vd: ☎ 036 499 4647" />
+          <div className="lg:col-span-2">
+            <TextField label="Địa chỉ" value={cta.address} onChange={(v) => setCta("address", v)} placeholder="vd: 📍 172 Lâm Văn Bền, Q.7, TP.HCM" />
+          </div>
+          <div className="lg:col-span-2">
+            <TextField label="Email" value={cta.email} onChange={(v) => setCta("email", v)} validateAs="email" placeholder="vd: 📧 hello@xuongart.com" />
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-700">
+          Mạng xã hội (icon row)
+        </h3>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <TextField label="Facebook URL" value={social.facebook} onChange={(v) => setSocial("facebook", v)} placeholder="https://facebook.com/..." validateAs="url" />
+          <TextField label="Instagram URL" value={social.instagram} onChange={(v) => setSocial("instagram", v)} placeholder="https://instagram.com/..." validateAs="url" />
+          <TextField label="TikTok URL" value={social.tiktok} onChange={(v) => setSocial("tiktok", v)} placeholder="https://tiktok.com/@..." validateAs="url" />
+          <TextField label="Zalo URL" value={social.zalo} onChange={(v) => setSocial("zalo", v)} placeholder="https://zalo.me/..." validateAs="url" />
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-700">
+          Copyright (cột phải, dưới logo)
+        </h3>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <TextField label="Tên copyright" value={footer.copyright} onChange={(v) => setFooter("copyright", v)} placeholder="vd: XUONGART Inc." />
+        </div>
+        <p className="text-xs text-gray-500">
+          Footer 1 hiển thị © {`{Tên copyright}`} {`{năm hiện tại}`} —
+          năm tự cập nhật theo thời điểm xem.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function UiBlock({ value, onChange }) {
   const set = (k, v) => onChange({ ...value, [k]: v });
   return (
@@ -844,6 +925,7 @@ const BLOCK_RENDERERS = {
   social: SocialBlock,
   ui: UiBlock,
   portfolio: PortfolioBlock,
+  footer1: Footer1Block,
 };
 
 export default function SiteContentAdminPanel({ onDirtyChange }) {
@@ -1146,6 +1228,12 @@ export default function SiteContentAdminPanel({ onDirtyChange }) {
                 <ActiveRenderer
                   value={content[activeBlock]}
                   onChange={(next) => setContent({ ...content, [activeBlock]: next })}
+                  // Composite blocks (e.g. Footer 1) edit fields that
+                  // live across multiple top-level keys; they ignore
+                  // `value` / `onChange` and use these instead. Normal
+                  // blocks just leave them unread.
+                  content={content}
+                  onContentChange={setContent}
                 />
               ) : (
                 <p className="text-sm text-gray-500">Block chưa có editor.</p>
