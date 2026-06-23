@@ -974,8 +974,8 @@ export default function SiteContentAdminPanel({ onDirtyChange }) {
     setError("");
     try {
       const response = await fetch("/api/admin/site-content", { cache: "no-store" });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload?.error || "Failed to load content.");
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || `Failed to load content (${response.status}).`);
       setContent(payload.data);
       setOriginal(payload.data);
       setDefaults(payload.defaults);
@@ -1000,8 +1000,8 @@ export default function SiteContentAdminPanel({ onDirtyChange }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(content),
       });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload?.error || "Save failed.");
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || `Save failed (${response.status}).`);
       setContent(payload.data);
       setOriginal(payload.data);
       setSavedAt(new Date());

@@ -31,9 +31,9 @@ async function uploadShowreelToR2(file, onProgress) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ filename: file.name, contentType, folder: "showreel" }),
   });
-  const presignPayload = await presignRes.json();
+  const presignPayload = await presignRes.json().catch(() => ({}));
   if (!presignRes.ok) {
-    throw new Error(presignPayload?.error || "Failed to obtain upload URL.");
+    throw new Error(presignPayload?.error || `Failed to obtain upload URL (${presignRes.status}).`);
   }
   const { key, uploadUrl, publicUrl } = presignPayload.data || {};
   if (!uploadUrl) throw new Error("Server did not return an upload URL.");
@@ -108,9 +108,9 @@ export default function ShowreelPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(asset),
       });
-      const payload = await res.json();
-      if (!res.ok) throw new Error(payload?.error || "Lưu thất bại.");
-      setShowreel(payload.data);
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload?.error || `Lưu thất bại (${res.status}).`);
+      setShowreel(payload?.data || null);
     } catch (err) {
       setError(err.message);
     } finally {

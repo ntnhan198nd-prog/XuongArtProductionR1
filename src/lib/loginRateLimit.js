@@ -51,17 +51,33 @@ export function resetLoginAttempts(ip) {
   attempts.delete(ip);
 }
 
-// Best-effort client IP extraction. Vercel/Cloudflare set x-forwarded-for;
-// fall back to the request's remote address otherwise. Uses the first IP
-// in the chain since that's the original client (subsequent entries are
-// trusted proxies).
+// Best-effort client IP extraction for rate-limit keying.
+//
+// SECURITY: the LEFT-most x-forwarded-for entry is fully client-controllable
+// (the caller can send any value), so keying on it lets an attacker dodge the
+// per-IP limit by rotating the header on every request. Prefer the trusted
+// client-IP header written by our own edge — Cloudflare's cf-connecting-ip or
+// the platform's x-real-ip — which the client cannot forge. Only as a last
+// resort fall back to the RIGHT-most x-forwarded-for entry (the hop appended
+// by our edge), never the left-most.
+//
+// NB: the in-memory `attempts` Map is per-instance, so on multi-lambda
+// deploys (Vercel) this limiter is still best-effort; a shared store
+// (Upstash/Cloudflare KV) is required for a hard cross-instance guarantee.
 export function getClientIp(request) {
+  const cfIp = request.headers.get("cf-connecting-ip");
+  if (cfIp) return cfIp.trim();
+
+  const realIp = request.headers.get("x-real-ip");
+  if (realIp) return realIp.trim();
+
   const forwarded = request.headers.get("x-forwarded-for");
   if (forwarded) {
-    const first = forwarded.split(",")[0]?.trim();
-    if (first) return first;
+    const parts = forwarded
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (parts.length) return parts[parts.length - 1];
   }
-  const real = request.headers.get("x-real-ip");
-  if (real) return real.trim();
   return "unknown";
 }

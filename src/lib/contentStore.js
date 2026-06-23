@@ -204,6 +204,10 @@ export function collectAssetKeysFromProject(project) {
   if (!project) return [];
   const keys = [];
   if (project.media?.key) keys.push(project.media.key);
+  // `preview` is a first-class uploaded R2 asset (its own key). Without it
+  // here, deleting/replacing a project's preview WebM orphans the old object
+  // in the bucket forever, since the cleanup diff never sees its key.
+  if (project.preview?.key) keys.push(project.preview.key);
   if (project.thumbnail?.key) keys.push(project.thumbnail.key);
   return keys.filter(Boolean);
 }

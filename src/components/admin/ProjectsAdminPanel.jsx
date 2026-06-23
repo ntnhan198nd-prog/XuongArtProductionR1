@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import FeaturedLayoutPanel from "@/components/admin/FeaturedLayoutPanel";
 import ShowreelPanel from "@/components/admin/ShowreelPanel";
@@ -328,9 +328,12 @@ async function uploadAsset(file, folder, onProgress) {
       folder,
     }),
   });
-  const presignPayload = await presignRes.json();
+  // Guard against an empty/non-JSON error body (e.g. a 502/504 gateway page):
+  // bare .json() would throw "Unexpected end of JSON input" and mask the real
+  // failure. Falling back to {} lets the status-aware message below surface.
+  const presignPayload = await presignRes.json().catch(() => ({}));
   if (!presignRes.ok) {
-    throw new Error(presignPayload?.error || "Failed to obtain upload URL.");
+    throw new Error(presignPayload?.error || `Failed to obtain upload URL (${presignRes.status}).`);
   }
   const { key, uploadUrl, publicUrl } = presignPayload.data || {};
   if (!uploadUrl) {
@@ -538,9 +541,9 @@ export default function ProjectsAdminPanel({ mode } = {}) {
     setError("");
     try {
       const response = await fetch(`/api/admin/${targetTab}`);
-      const payload = await response.json();
+      const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(payload?.error || "Failed to load items.");
+        throw new Error(payload?.error || `Failed to load items (${response.status}).`);
       }
       setItems(Array.isArray(payload.data) ? payload.data : []);
     } catch (loadError) {
@@ -630,10 +633,13 @@ export default function ProjectsAdminPanel({ mode } = {}) {
 
     setError("");
     const response = await fetch(`/api/admin/${tab}/${id}`, { method: "DELETE" });
-    const payload = await response.json();
+    // Without the .catch(), an empty/non-JSON body (infra 500/502) makes this
+    // bare async click handler reject silently: no error shown, list never
+    // refreshes, the row appears to "do nothing". Guard like the others do.
+    const payload = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      setError(payload?.error || "Delete failed.");
+      setError(payload?.error || `Delete failed (${response.status}).`);
       return;
     }
 
@@ -722,10 +728,10 @@ export default function ProjectsAdminPanel({ mode } = {}) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const responsePayload = await response.json();
+      const responsePayload = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error(responsePayload?.error || "Save failed.");
+        throw new Error(responsePayload?.error || `Save failed (${response.status}).`);
       }
 
       const savedItem = responsePayload?.data;
