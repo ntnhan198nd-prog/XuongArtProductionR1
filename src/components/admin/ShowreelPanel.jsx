@@ -1,40 +1,52 @@
 "use client";
 import { useEffect, useState } from "react";
+import { resolveContentType, cleanupUploadedKeys } from "@/lib/uploadClient";
+import { fetchJson } from "@/lib/apiClient";
 
+// Watchdog: some videos fire neither onloadedmetadata nor onerror (codec the
+// browser can't decode). Without a timeout the awaited read deadlocks the
+// whole upload, so resolve with nulls (metadata is optional) and continue.
 async function readVideoMetadata(file) {
   return new Promise((resolve) => {
     const objectUrl = URL.createObjectURL(file);
     const video = document.createElement("video");
     video.preload = "metadata";
-    video.onloadedmetadata = () => {
-      resolve({
+    let timer = null;
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      URL.revokeObjectURL(objectUrl);
+      resolve(result);
+    };
+    video.onloadedmetadata = () =>
+      finish({
         width: video.videoWidth || null,
         height: video.videoHeight || null,
         duration: Number.isFinite(video.duration) ? Number(video.duration.toFixed(2)) : null,
       });
-      URL.revokeObjectURL(objectUrl);
-    };
-    video.onerror = () => {
-      resolve({ width: null, height: null, duration: null });
-      URL.revokeObjectURL(objectUrl);
-    };
+    video.onerror = () => finish({ width: null, height: null, duration: null });
+    timer = setTimeout(() => finish({ width: null, height: null, duration: null }), 12000);
     video.src = objectUrl;
   });
 }
 
 async function uploadShowreelToR2(file, onProgress) {
   const meta = await readVideoMetadata(file);
-  const contentType = file.type || "video/mp4";
+  const contentType = resolveContentType(file, "video/mp4");
 
-  const presignRes = await fetch("/api/admin/r2/upload-url", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ filename: file.name, contentType, folder: "showreel" }),
-  });
-  const presignPayload = await presignRes.json().catch(() => ({}));
-  if (!presignRes.ok) {
-    throw new Error(presignPayload?.error || `Failed to obtain upload URL (${presignRes.status}).`);
-  }
+  // fetchJson tolerates empty / non-JSON error bodies and always yields a
+  // message that includes the HTTP status.
+  const presignPayload = await fetchJson(
+    "/api/admin/r2/upload-url",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: file.name, contentType, folder: "showreel" }),
+    },
+    { fallbackError: "Không lấy được upload URL" }
+  );
   const { key, uploadUrl, publicUrl } = presignPayload.data || {};
   if (!uploadUrl) throw new Error("Server did not return an upload URL.");
 
@@ -42,17 +54,47 @@ async function uploadShowreelToR2(file, onProgress) {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", uploadUrl);
     xhr.setRequestHeader("Content-Type", contentType);
-    if (typeof onProgress === "function") {
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) onProgress(event.loaded / event.total);
-      };
-    }
-    xhr.onload = () =>
+
+    // Stall watchdog: onerror does not fire on a black-holed connection, so a
+    // stalled upload (common for 200-500MB showreels on slow links) would hang
+    // forever. Reset on each progress tick; abort only when truly stuck.
+    const STALL_MS = 60000;
+    let stallTimer = null;
+    const clearStall = () => {
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = null;
+    };
+    const armStall = () => {
+      clearStall();
+      stallTimer = setTimeout(() => {
+        try {
+          xhr.abort();
+        } catch {}
+        reject(new Error("Upload stalled (no progress). Check your connection and try again."));
+      }, STALL_MS);
+    };
+
+    xhr.upload.onprogress = (event) => {
+      armStall();
+      if (event.lengthComputable && typeof onProgress === "function") {
+        onProgress(event.loaded / event.total);
+      }
+    };
+    xhr.onload = () => {
+      clearStall();
       xhr.status >= 200 && xhr.status < 300
         ? resolve()
         : reject(new Error(`R2 upload failed (${xhr.status}).`));
-    xhr.onerror = () => reject(new Error("Network error during upload."));
-    xhr.onabort = () => reject(new Error("Upload was aborted."));
+    };
+    xhr.onerror = () => {
+      clearStall();
+      reject(new Error("Network error during upload."));
+    };
+    xhr.onabort = () => {
+      clearStall();
+      reject(new Error("Upload was aborted."));
+    };
+    armStall();
     xhr.send(file);
   });
 
@@ -71,6 +113,9 @@ async function uploadShowreelToR2(file, onProgress) {
 export default function ShowreelPanel() {
   const [showreel, setShowreel] = useState(null);
   const [loading, setLoading] = useState(true);
+  // True when the initial GET failed: we then don't know whether a showreel
+  // exists, so the "Chưa có showreel" empty state must not be shown.
+  const [loadFailed, setLoadFailed] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
@@ -79,11 +124,22 @@ export default function ShowreelPanel() {
     let alive = true;
     (async () => {
       try {
-        const res = await fetch("/api/admin/showreel", { cache: "no-store" });
-        const payload = await res.json();
-        if (alive && res.ok) setShowreel(payload?.data || null);
-      } catch {
-        // Swallow — error UI not needed for initial load.
+        const payload = await fetchJson(
+          "/api/admin/showreel",
+          { cache: "no-store" },
+          { fallbackError: "Không tải được showreel" }
+        );
+        if (alive) {
+          setShowreel(payload?.data || null);
+          setLoadFailed(false);
+        }
+      } catch (loadError) {
+        // Surface the load failure (previously swallowed) so a broken R2
+        // config is visible here too instead of looking like "no showreel".
+        if (alive) {
+          setLoadFailed(true);
+          setError(loadError.message);
+        }
       } finally {
         if (alive) setLoading(false);
       }
@@ -103,14 +159,25 @@ export default function ShowreelPanel() {
     setError("");
     try {
       const asset = await uploadShowreelToR2(file, setProgress);
-      const res = await fetch("/api/admin/showreel", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(asset),
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(payload?.error || `Lưu thất bại (${res.status}).`);
+      let payload;
+      try {
+        payload = await fetchJson(
+          "/api/admin/showreel",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(asset),
+          },
+          { fallbackError: "Lưu thất bại" }
+        );
+      } catch (saveError) {
+        // Upload succeeded but the save didn't persist — delete the orphaned
+        // object so it doesn't linger in the bucket.
+        await cleanupUploadedKeys(asset?.key ? [asset.key] : []);
+        throw saveError;
+      }
       setShowreel(payload?.data || null);
+      setLoadFailed(false);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -123,11 +190,11 @@ export default function ShowreelPanel() {
     if (!window.confirm("Xoá showreel hiện tại? Trang chủ sẽ rơi về video mặc định.")) return;
     setError("");
     try {
-      const res = await fetch("/api/admin/showreel", { method: "DELETE" });
-      if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        throw new Error(payload?.error || "Xoá thất bại.");
-      }
+      await fetchJson(
+        "/api/admin/showreel",
+        { method: "DELETE" },
+        { fallbackError: "Xoá thất bại" }
+      );
       setShowreel(null);
     } catch (err) {
       setError(err.message);
@@ -202,6 +269,11 @@ export default function ShowreelPanel() {
               </span>
             ) : null}
           </div>
+        </div>
+      ) : loadFailed ? (
+        <div className="mt-4 rounded-lg border border-dashed border-red-200 p-6 text-center text-sm text-gray-500">
+          Không kiểm tra được showreel hiện tại (xem lỗi ở trên). Upload vẫn
+          có thể thử lại sau khi sửa kết nối R2.
         </div>
       ) : (
         <div className="mt-4 rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500">

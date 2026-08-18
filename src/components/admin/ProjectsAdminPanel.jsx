@@ -5,6 +5,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import FeaturedLayoutPanel from "@/components/admin/FeaturedLayoutPanel";
 import ShowreelPanel from "@/components/admin/ShowreelPanel";
 import AutocompleteInput from "@/components/admin/AutocompleteInput";
+import { resolveContentType, cleanupUploadedKeys } from "@/lib/uploadClient";
+import { fetchJson } from "@/lib/apiClient";
 
 const TABS = [
   { key: "projects", label: "Video Projects" },
@@ -264,18 +266,29 @@ function baseInputClassName() {
   return "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-black focus:border-black focus:outline-none";
 }
 
+// Metadata is non-essential (null is accepted everywhere downstream). Some
+// files fire NEITHER onload/onloadedmetadata NOR onerror — the element stalls
+// at readyState 0. Since getFileMetadata is awaited BEFORE the upload, a
+// stalled read would deadlock the whole save, so a watchdog resolves with
+// nulls and lets the upload proceed.
+const METADATA_TIMEOUT_MS = 12000;
+
 async function readImageMetadata(file) {
   return new Promise((resolve) => {
     const objectUrl = URL.createObjectURL(file);
     const image = new Image();
-    image.onload = () => {
-      resolve({ width: image.width, height: image.height });
+    let timer = null;
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
       URL.revokeObjectURL(objectUrl);
+      resolve(result);
     };
-    image.onerror = () => {
-      resolve({ width: null, height: null });
-      URL.revokeObjectURL(objectUrl);
-    };
+    image.onload = () => finish({ width: image.width, height: image.height });
+    image.onerror = () => finish({ width: null, height: null });
+    timer = setTimeout(() => finish({ width: null, height: null }), METADATA_TIMEOUT_MS);
     image.src = objectUrl;
   });
 }
@@ -285,18 +298,23 @@ async function readVideoMetadata(file) {
     const objectUrl = URL.createObjectURL(file);
     const video = document.createElement("video");
     video.preload = "metadata";
-    video.onloadedmetadata = () => {
-      resolve({
+    let timer = null;
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      URL.revokeObjectURL(objectUrl);
+      resolve(result);
+    };
+    video.onloadedmetadata = () =>
+      finish({
         width: video.videoWidth || null,
         height: video.videoHeight || null,
         duration: Number.isFinite(video.duration) ? Number(video.duration.toFixed(2)) : null,
       });
-      URL.revokeObjectURL(objectUrl);
-    };
-    video.onerror = () => {
-      resolve({ width: null, height: null, duration: null });
-      URL.revokeObjectURL(objectUrl);
-    };
+    video.onerror = () => finish({ width: null, height: null, duration: null });
+    timer = setTimeout(() => finish({ width: null, height: null, duration: null }), METADATA_TIMEOUT_MS);
     video.src = objectUrl;
   });
 }
@@ -316,25 +334,26 @@ async function uploadAsset(file, folder, onProgress) {
   // the Next.js server entirely. This avoids the double-bandwidth round trip
   // and Vercel function size/timeout limits.
   const metadata = await getFileMetadata(file);
-  const contentType = file.type || "application/octet-stream";
+  // Infer MIME from extension when the browser reports none, so allowlisted
+  // formats like .mkv/.mov (whose file.type is often empty) aren't rejected.
+  const contentType = resolveContentType(file);
 
-  // Step 1: ask the server for a presigned PUT URL.
-  const presignRes = await fetch("/api/admin/r2/upload-url", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      filename: file.name,
-      contentType,
-      folder,
-    }),
-  });
-  // Guard against an empty/non-JSON error body (e.g. a 502/504 gateway page):
-  // bare .json() would throw "Unexpected end of JSON input" and mask the real
-  // failure. Falling back to {} lets the status-aware message below surface.
-  const presignPayload = await presignRes.json().catch(() => ({}));
-  if (!presignRes.ok) {
-    throw new Error(presignPayload?.error || `Failed to obtain upload URL (${presignRes.status}).`);
-  }
+  // Step 1: ask the server for a presigned PUT URL. fetchJson tolerates
+  // empty / non-JSON error bodies (502/504 pages, crashed handlers) and
+  // always yields a message that includes the HTTP status.
+  const presignPayload = await fetchJson(
+    "/api/admin/r2/upload-url",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: file.name,
+        contentType,
+        folder,
+      }),
+    },
+    { fallbackError: "Không lấy được upload URL" }
+  );
   const { key, uploadUrl, publicUrl } = presignPayload.data || {};
   if (!uploadUrl) {
     throw new Error("Server did not return an upload URL.");
@@ -345,22 +364,52 @@ async function uploadAsset(file, folder, onProgress) {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", uploadUrl);
     xhr.setRequestHeader("Content-Type", contentType);
-    if (typeof onProgress === "function") {
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) {
-          onProgress(event.loaded / event.total);
-        }
-      };
-    }
+
+    // Stall watchdog: onerror does NOT fire when a connection black-holes
+    // mid-transfer (common on slow networks with large videos), so without
+    // this the promise never settles and the whole save hangs forever. A
+    // fixed total timeout would wrongly kill legitimately slow large uploads,
+    // so we reset the timer on every progress tick and only fire when the
+    // transfer is truly stuck (no progress for STALL_MS).
+    const STALL_MS = 60000;
+    let stallTimer = null;
+    const clearStall = () => {
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = null;
+    };
+    const armStall = () => {
+      clearStall();
+      stallTimer = setTimeout(() => {
+        try {
+          xhr.abort();
+        } catch {}
+        reject(new Error("Upload stalled (no progress). Check your connection and try again."));
+      }, STALL_MS);
+    };
+
+    xhr.upload.onprogress = (event) => {
+      armStall();
+      if (event.lengthComputable && typeof onProgress === "function") {
+        onProgress(event.loaded / event.total);
+      }
+    };
     xhr.onload = () => {
+      clearStall();
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve();
       } else {
         reject(new Error(`R2 upload failed (${xhr.status}).`));
       }
     };
-    xhr.onerror = () => reject(new Error("Network error during upload."));
-    xhr.onabort = () => reject(new Error("Upload was aborted."));
+    xhr.onerror = () => {
+      clearStall();
+      reject(new Error("Network error during upload."));
+    };
+    xhr.onabort = () => {
+      clearStall();
+      reject(new Error("Upload was aborted."));
+    };
+    armStall();
     xhr.send(file);
   });
 
@@ -425,6 +474,12 @@ export default function ProjectsAdminPanel({ mode } = {}) {
   const [loadingItems, setLoadingItems] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // Optional actionable hint returned by the API (e.g. which R2 env var to
+  // fix). Shown under the error message when present.
+  const [errorHint, setErrorHint] = useState("");
+  // HTTP status of the last failed request (ApiError.status). Used to hide
+  // the R2 diagnostics link when the real problem is an expired login (401).
+  const [errorStatus, setErrorStatus] = useState(null);
 
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -539,15 +594,19 @@ export default function ProjectsAdminPanel({ mode } = {}) {
   const loadItems = useCallback(async (targetTab) => {
     setLoadingItems(true);
     setError("");
+    setErrorHint("");
+    setErrorStatus(null);
     try {
-      const response = await fetch(`/api/admin/${targetTab}`);
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload?.error || `Failed to load items (${response.status}).`);
-      }
+      const payload = await fetchJson(
+        `/api/admin/${targetTab}`,
+        { cache: "no-store" },
+        { fallbackError: "Không tải được danh sách" }
+      );
       setItems(Array.isArray(payload.data) ? payload.data : []);
     } catch (loadError) {
       setError(loadError.message);
+      setErrorHint(loadError.hint || "");
+      setErrorStatus(loadError.status ?? null);
       setItems([]);
     } finally {
       setLoadingItems(false);
@@ -581,21 +640,27 @@ export default function ProjectsAdminPanel({ mode } = {}) {
       setItems(reordered);
       setReordering(true);
       setError("");
+      setErrorHint("");
+      setErrorStatus(null);
       try {
-        const response = await fetch(`/api/admin/${tab}/reorder`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            orderedIds: reordered.map((it) => it.id),
-          }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(payload?.error || "Reorder failed.");
-        }
+        await fetchJson(
+          `/api/admin/${tab}/reorder`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              orderedIds: reordered.map((it) => it.id),
+            }),
+          },
+          { fallbackError: "Lưu thứ tự thất bại" }
+        );
       } catch (reorderError) {
-        setError(reorderError.message);
+        // Reload first (it clears the error banner), THEN show the reorder
+        // failure — otherwise the message is wiped a moment after it appears.
         await loadItems(tab);
+        setError(reorderError.message);
+        setErrorHint(reorderError.hint || "");
+        setErrorStatus(reorderError.status ?? null);
       } finally {
         setReordering(false);
       }
@@ -632,14 +697,21 @@ export default function ProjectsAdminPanel({ mode } = {}) {
     if (!shouldDelete) return;
 
     setError("");
-    const response = await fetch(`/api/admin/${tab}/${id}`, { method: "DELETE" });
-    // Without the .catch(), an empty/non-JSON body (infra 500/502) makes this
-    // bare async click handler reject silently: no error shown, list never
-    // refreshes, the row appears to "do nothing". Guard like the others do.
-    const payload = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      setError(payload?.error || `Delete failed (${response.status}).`);
+    setErrorHint("");
+    setErrorStatus(null);
+    try {
+      // Bare async click handler: without try/catch an empty/non-JSON error
+      // body used to reject silently — no message, list never refreshed,
+      // the row appeared to "do nothing".
+      await fetchJson(
+        `/api/admin/${tab}/${id}`,
+        { method: "DELETE" },
+        { fallbackError: "Xoá thất bại" }
+      );
+    } catch (deleteError) {
+      setError(deleteError.message);
+      setErrorHint(deleteError.hint || "");
+      setErrorStatus(deleteError.status ?? null);
       return;
     }
 
@@ -654,6 +726,13 @@ export default function ProjectsAdminPanel({ mode } = {}) {
     event.preventDefault();
     setSaving(true);
     setError("");
+    setErrorHint("");
+    setErrorStatus(null);
+
+    // Keys of objects PUT to R2 during THIS save. If the save ultimately
+    // fails, these were never written to any record, so we delete them in the
+    // catch to avoid orphaning files in the bucket.
+    const uploadedKeys = [];
 
     try {
       const basePayload = {
@@ -681,12 +760,15 @@ export default function ProjectsAdminPanel({ mode } = {}) {
 
         if (mediaFile) {
           media = await uploadAsset(mediaFile, "projects");
+          if (media?.key) uploadedKeys.push(media.key);
         }
         if (previewFile) {
           preview = await uploadAsset(previewFile, "projects");
+          if (preview?.key) uploadedKeys.push(preview.key);
         }
         if (thumbnailFile) {
           thumbnail = await uploadAsset(thumbnailFile, "thumbnails");
+          if (thumbnail?.key) uploadedKeys.push(thumbnail.key);
         }
 
         payload = {
@@ -705,12 +787,14 @@ export default function ProjectsAdminPanel({ mode } = {}) {
           for (const file of mediaFiles) {
             // Upload sequentially to avoid memory spikes for large files.
             const uploadedAsset = await uploadAsset(file, "image-projects");
+            if (uploadedAsset?.key) uploadedKeys.push(uploadedAsset.key);
             nextMediaList.push(uploadedAsset);
           }
         }
 
         if (thumbnailFile) {
           thumbnail = await uploadAsset(thumbnailFile, "thumbnails");
+          if (thumbnail?.key) uploadedKeys.push(thumbnail.key);
         }
 
         payload = {
@@ -723,16 +807,15 @@ export default function ProjectsAdminPanel({ mode } = {}) {
       const endpoint = isEditing ? `/api/admin/${tab}/${editingId}` : `/api/admin/${tab}`;
       const method = isEditing ? "PUT" : "POST";
 
-      const response = await fetch(endpoint, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const responsePayload = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(responsePayload?.error || `Save failed (${response.status}).`);
-      }
+      const responsePayload = await fetchJson(
+        endpoint,
+        {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+        { fallbackError: "Lưu thất bại" }
+      );
 
       const savedItem = responsePayload?.data;
       resetEditor();
@@ -743,7 +826,12 @@ export default function ProjectsAdminPanel({ mode } = {}) {
         setForm(toForm(savedItem, tab));
       }
     } catch (saveError) {
+      // Save didn't persist — delete anything we already PUT to R2 so it
+      // doesn't orphan. Best-effort; never blocks the error surfaced below.
+      await cleanupUploadedKeys(uploadedKeys);
       setError(saveError.message);
+      setErrorHint(saveError.hint || "");
+      setErrorStatus(saveError.status ?? null);
     } finally {
       setSaving(false);
     }
@@ -775,12 +863,13 @@ export default function ProjectsAdminPanel({ mode } = {}) {
             <button
               key={item.key}
               type="button"
+              disabled={saving}
               onClick={() => {
                 setTab(item.key);
                 resetEditor();
                 setListFilter("");
               }}
-              className={`rounded-full px-4 py-2 text-sm transition-colors ${
+              className={`rounded-full px-4 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                 tab === item.key
                   ? "bg-black text-white"
                   : "border border-gray-300 text-gray-700 hover:bg-gray-50"
@@ -791,8 +880,9 @@ export default function ProjectsAdminPanel({ mode } = {}) {
           ))}
           <button
             type="button"
+            disabled={saving}
             onClick={startCreate}
-            className="rounded-full border border-gray-300 px-4 py-2 text-sm transition-colors hover:bg-gray-50"
+            className="rounded-full border border-gray-300 px-4 py-2 text-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             + New {tabLabel}
           </button>
@@ -801,7 +891,39 @@ export default function ProjectsAdminPanel({ mode } = {}) {
 
       {error ? (
         <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
+          <p className="break-words">{error}</p>
+          {errorHint ? (
+            <p className="mt-1.5 text-xs leading-relaxed text-red-800">💡 {errorHint}</p>
+          ) : null}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => loadItems(tab)}
+              disabled={loadingItems}
+              className="rounded-md border border-red-300 px-2.5 py-1 text-xs text-red-700 hover:bg-red-100 disabled:opacity-50"
+            >
+              Tải lại danh sách
+            </button>
+            {errorStatus === 401 ? (
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="text-xs text-red-700 underline hover:text-red-900"
+              >
+                Tải lại trang để đăng nhập
+              </button>
+            ) : (
+              <a
+                href="/api/admin/health"
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-red-700 underline hover:text-red-900"
+                title="Mở báo cáo kiểm tra biến môi trường + kết nối R2 của server (tab mới)"
+              >
+                Kiểm tra kết nối R2 ↗
+              </a>
+            )}
+          </div>
         </div>
       ) : null}
 
@@ -1170,13 +1292,14 @@ export default function ProjectsAdminPanel({ mode } = {}) {
               {!showSubTabs ? (
                 <button
                   type="button"
+                  disabled={saving}
                   onClick={() => {
                     startCreate();
                     if (typeof window !== "undefined") {
                       window.scrollTo({ top: 0, behavior: "smooth" });
                     }
                   }}
-                  className="rounded-lg bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
+                  className="rounded-lg bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   + Tạo mới
                 </button>
@@ -1334,15 +1457,17 @@ export default function ProjectsAdminPanel({ mode } = {}) {
                             <div className="flex shrink-0 gap-2">
                               <button
                                 type="button"
+                                disabled={saving}
                                 onClick={() => startEdit(item)}
-                                className="rounded-md border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50"
+                                className="rounded-md border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                               >
                                 Edit
                               </button>
                               <button
                                 type="button"
+                                disabled={saving}
                                 onClick={() => handleDelete(item.id)}
-                                className="rounded-md border border-red-300 px-3 py-1 text-xs text-red-700 hover:bg-red-50"
+                                className="rounded-md border border-red-300 px-3 py-1 text-xs text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
                               >
                                 Delete
                               </button>

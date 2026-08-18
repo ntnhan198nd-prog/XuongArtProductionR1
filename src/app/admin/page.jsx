@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
 import ProjectsAdminPanel from "@/components/admin/ProjectsAdminPanel";
 import SiteContentAdminPanel from "@/components/admin/SiteContentAdminPanel";
+import { fetchJson, readJsonSafe } from "@/lib/apiClient";
 
 // Tab order is fixed by the user's spec: Site Content first, then video
 // admin sections grouped by purpose. The "projects" key from the previous
@@ -85,7 +86,9 @@ export default function AdminPage() {
     const checkSession = async () => {
       try {
         const response = await fetch("/api/admin/session", { cache: "no-store" });
-        const payload = await response.json();
+        // Lenient parse: an empty/HTML body must not throw here, it just
+        // means "not authenticated" from the UI's point of view.
+        const payload = await readJsonSafe(response);
         setAuthenticated(Boolean(payload?.authenticated));
       } catch {
         setAuthenticated(false);
@@ -111,16 +114,20 @@ export default function AdminPage() {
     event.preventDefault();
     setLoginError("");
     try {
-      const response = await fetch("/api/admin/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: loginPassword }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload?.error || "Login failed.");
+      await fetchJson(
+        "/api/admin/login",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: loginPassword }),
+        },
+        { fallbackError: "Đăng nhập thất bại" }
+      );
       setAuthenticated(true);
       setLoginPassword("");
     } catch (loginErr) {
+      // A wrong password answers 401 {error:"Invalid credentials."} — that
+      // server message wins over the generic "session expired" status hint.
       setLoginError(loginErr.message);
     }
   };
@@ -132,7 +139,12 @@ export default function AdminPage() {
     ) {
       return;
     }
-    await fetch("/api/admin/logout", { method: "POST" });
+    try {
+      await fetch("/api/admin/logout", { method: "POST" });
+    } catch {
+      // Network hiccup: still drop to the login screen; the cookie expires
+      // on its own and the next login overwrites it.
+    }
     setAuthenticated(false);
     setContentDirty(false);
   };

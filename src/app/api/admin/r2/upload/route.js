@@ -67,6 +67,17 @@ export async function POST(request) {
       );
     }
 
+    // This relay path buffers the whole file into memory (below), so cap it.
+    // Large media must use the presigned-URL flow (/api/admin/r2/upload-url),
+    // which streams the client straight to R2 and has no server-side buffering.
+    const MAX_RELAY_BYTES = 25 * 1024 * 1024; // 25 MB
+    if (file.size && file.size > MAX_RELAY_BYTES) {
+      return NextResponse.json(
+        { error: "File too large for server upload; use the presigned upload flow." },
+        { status: 413 }
+      );
+    }
+
     const now = new Date();
     const datePrefix = `${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
     const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

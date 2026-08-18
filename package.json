@@ -5,6 +5,8 @@
   "scripts": {
     "check-env": "node check-env.js",
     "verify-r2": "node scripts/verify-r2.mjs",
+    "check-r2-cors": "node scripts/check-r2-cors.mjs",
+    "verify-upload": "node scripts/verify-upload.mjs",
     "debug-projects": "node debug-projects.js",
     "dev": "next dev",
     "dev:all": "npm run dev",
