@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import { fetchJson } from "@/lib/apiClient";
 
 const SLOT_KEYS = ["a", "b", "c", "d", "e", "f"];
 const SLOT_SHAPES = {
@@ -95,13 +96,15 @@ export default function FeaturedLayoutPanel({ items, onSaved }) {
     setSaving(true);
     setError("");
     try {
-      const response = await fetch("/api/admin/projects/reorder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderedIds }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload?.error || "Lưu thất bại.");
+      await fetchJson(
+        "/api/admin/projects/reorder",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderedIds }),
+        },
+        { fallbackError: "Lưu thất bại" }
+      );
       onSaved?.();
     } catch (saveError) {
       setError(saveError.message);

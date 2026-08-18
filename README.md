@@ -227,6 +227,27 @@ vercel
 
 ## 🐛 Troubleshooting
 
+### Admin (/admin) báo lỗi hoặc không tải được dữ liệu
+
+Toàn bộ dữ liệu admin (dự án, showreel, Site Content) nằm trong **một file
+JSON trên Cloudflare R2** (`_admin/content.json`). Nếu server không đọc được
+R2 thì admin và các API `/api/projects`, `/api/image-projects` đều lỗi.
+
+1. Đăng nhập `/admin`, mở **`/api/admin/health`** (hoặc bấm nút *"Kiểm tra
+   kết nối R2 ↗"* trong khung lỗi). Trang này cho biết biến môi trường nào
+   đang thiếu và R2 có kết nối được hay không (không lộ giá trị secret).
+2. Trên Vercel: **Project → Settings → Environment Variables** — cần đủ
+   `R2_ACCOUNT_ID` (hoặc `R2_ENDPOINT`), `R2_BUCKET`, `R2_ACCESS_KEY_ID`,
+   `R2_SECRET_ACCESS_KEY`, `R2_PUBLIC_URL`, `ADMIN_PASSWORD`,
+   `ADMIN_SESSION_SECRET` cho môi trường **Production**.
+3. Sau khi sửa env **phải Redeploy** — env chỉ có hiệu lực ở lần deploy tiếp theo.
+4. Đổi account Cloudflare / tạo bucket mới → token cũ (`R2_ACCESS_KEY_ID` /
+   `R2_SECRET_ACCESS_KEY`) không còn dùng được: tạo R2 API Token mới (quyền
+   *Object Read & Write*) và cập nhật lại env. Bucket mới sẽ **trống** — cần
+   copy `_admin/content.json` và media từ bucket cũ nếu muốn giữ nội dung.
+
+Local: `cp env.example .env.local`, điền giá trị rồi `npm run check-env`.
+
 ### Port đã được sử dụng
 
 ```bash

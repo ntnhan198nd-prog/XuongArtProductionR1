@@ -1,9 +1,16 @@
 import { NextResponse } from "next/server";
 import { isAdminAuthenticated } from "@/lib/adminAuth";
+import { NO_STORE_HEADERS, serverErrorResponse } from "@/lib/apiErrors";
 import { updateStore } from "@/lib/contentStore";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 function unauthorized() {
-  return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  return NextResponse.json(
+    { error: "Unauthorized" },
+    { status: 401, headers: NO_STORE_HEADERS }
+  );
 }
 
 function compareByExistingOrder(a, b) {
@@ -36,32 +43,39 @@ export async function POST(request) {
     );
   }
 
-  await updateStore((store) => {
-    const items = Array.isArray(store.imageProjects) ? store.imageProjects : [];
-    const byId = new Map(items.map((item) => [Number(item.id), item]));
-    const seen = new Set();
+  try {
+    await updateStore((store) => {
+      const items = Array.isArray(store.imageProjects) ? store.imageProjects : [];
+      const byId = new Map(items.map((item) => [Number(item.id), item]));
+      const seen = new Set();
 
-    const ordered = [];
-    for (const id of orderedIds) {
-      if (seen.has(id)) continue;
-      const item = byId.get(id);
-      if (item) {
-        ordered.push(item);
-        seen.add(id);
+      const ordered = [];
+      for (const id of orderedIds) {
+        if (seen.has(id)) continue;
+        const item = byId.get(id);
+        if (item) {
+          ordered.push(item);
+          seen.add(id);
+        }
       }
-    }
 
-    const rest = items
-      .filter((item) => !seen.has(Number(item.id)))
-      .sort(compareByExistingOrder);
+      const rest = items
+        .filter((item) => !seen.has(Number(item.id)))
+        .sort(compareByExistingOrder);
 
-    store.imageProjects = [...ordered, ...rest].map((item, index) => ({
-      ...item,
-      order: index + 1,
-    }));
+      store.imageProjects = [...ordered, ...rest].map((item, index) => ({
+        ...item,
+        order: index + 1,
+      }));
 
-    return store;
-  });
+      return store;
+    });
 
-  return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return serverErrorResponse(error, {
+      context: "POST /api/admin/image-projects/reorder",
+      prefix: "Không lưu được thứ tự dự án ảnh lên R2 —",
+    });
+  }
 }

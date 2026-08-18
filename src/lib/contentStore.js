@@ -8,7 +8,7 @@ import { getR2Client, getR2Config, validateR2Config } from "@/lib/r2";
 // repository filesystem is not viable on Vercel (read-only at runtime),
 // and R2 is already provisioned for media so it doubles as cheap durable
 // state for the admin.
-const STORE_KEY = "_admin/content.json";
+export const STORE_KEY = "_admin/content.json";
 
 const EMPTY_STORE = {
   projects: [],
@@ -60,8 +60,13 @@ function normalizeStore(store = {}) {
   };
 }
 
-function isMissingObjectError(error) {
+export function isMissingObjectError(error) {
   if (!error) return false;
+  // A missing *bucket* also comes back as HTTP 404 — but that is a
+  // configuration error (wrong R2_BUCKET / wrong account), not "first boot".
+  // Treating it as an empty store would silently show a blank admin and hide
+  // the misconfiguration, so let it propagate to the route's error handler.
+  if (error.name === "NoSuchBucket" || error.Code === "NoSuchBucket") return false;
   if (error.name === "NoSuchKey" || error.Code === "NoSuchKey") return true;
   const status = error?.$metadata?.httpStatusCode;
   return status === 404;
@@ -204,6 +209,10 @@ export function collectAssetKeysFromProject(project) {
   if (!project) return [];
   const keys = [];
   if (project.media?.key) keys.push(project.media.key);
+  // `preview` is a first-class uploaded R2 asset (its own key). Without it
+  // here, deleting/replacing a project's preview WebM orphans the old object
+  // in the bucket forever, since the cleanup diff never sees its key.
+  if (project.preview?.key) keys.push(project.preview.key);
   if (project.thumbnail?.key) keys.push(project.thumbnail.key);
   return keys.filter(Boolean);
 }

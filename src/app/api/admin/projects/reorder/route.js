@@ -1,9 +1,16 @@
 import { NextResponse } from "next/server";
 import { isAdminAuthenticated } from "@/lib/adminAuth";
+import { NO_STORE_HEADERS, serverErrorResponse } from "@/lib/apiErrors";
 import { updateStore } from "@/lib/contentStore";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 function unauthorized() {
-  return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  return NextResponse.json(
+    { error: "Unauthorized" },
+    { status: 401, headers: NO_STORE_HEADERS }
+  );
 }
 
 function compareByExistingOrder(a, b) {
@@ -36,32 +43,39 @@ export async function POST(request) {
     );
   }
 
-  await updateStore((store) => {
-    const projects = Array.isArray(store.projects) ? store.projects : [];
-    const byId = new Map(projects.map((project) => [Number(project.id), project]));
-    const seen = new Set();
+  try {
+    await updateStore((store) => {
+      const projects = Array.isArray(store.projects) ? store.projects : [];
+      const byId = new Map(projects.map((project) => [Number(project.id), project]));
+      const seen = new Set();
 
-    const ordered = [];
-    for (const id of orderedIds) {
-      if (seen.has(id)) continue;
-      const project = byId.get(id);
-      if (project) {
-        ordered.push(project);
-        seen.add(id);
+      const ordered = [];
+      for (const id of orderedIds) {
+        if (seen.has(id)) continue;
+        const project = byId.get(id);
+        if (project) {
+          ordered.push(project);
+          seen.add(id);
+        }
       }
-    }
 
-    const rest = projects
-      .filter((project) => !seen.has(Number(project.id)))
-      .sort(compareByExistingOrder);
+      const rest = projects
+        .filter((project) => !seen.has(Number(project.id)))
+        .sort(compareByExistingOrder);
 
-    store.projects = [...ordered, ...rest].map((project, index) => ({
-      ...project,
-      order: index + 1,
-    }));
+      store.projects = [...ordered, ...rest].map((project, index) => ({
+        ...project,
+        order: index + 1,
+      }));
 
-    return store;
-  });
+      return store;
+    });
 
-  return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return serverErrorResponse(error, {
+      context: "POST /api/admin/projects/reorder",
+      prefix: "Không lưu được thứ tự dự án lên R2 —",
+    });
+  }
 }

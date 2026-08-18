@@ -1,11 +1,18 @@
 import { NextResponse } from "next/server";
 import { isAdminAuthenticated } from "@/lib/adminAuth";
+import { NO_STORE_HEADERS, serverErrorResponse } from "@/lib/apiErrors";
 import { compactOrder, normalizeProjectPayload, replaceAtOrder } from "@/lib/contentAdmin";
 import { collectAssetKeysFromProject, updateStore } from "@/lib/contentStore";
 import { deleteR2Keys } from "@/lib/r2";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 function unauthorized() {
-  return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  return NextResponse.json(
+    { error: "Unauthorized" },
+    { status: 401, headers: NO_STORE_HEADERS }
+  );
 }
 
 function invalidId() {
@@ -25,9 +32,18 @@ export async function PUT(request, { params }) {
   const id = Number(params.id);
   if (!Number.isInteger(id) || id <= 0) return invalidId();
 
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "Invalid project payload." }, { status: 400 });
+  }
+
   let oldKeys = [];
   try {
-    const body = await request.json();
     let updated = null;
 
     await updateStore((store) => {
@@ -60,9 +76,10 @@ export async function PUT(request, { params }) {
     if (error?.message === "NOT_FOUND") {
       return NextResponse.json({ error: "Project not found." }, { status: 404 });
     }
-
-    console.error("Update project failed:", error);
-    return NextResponse.json({ error: "Invalid project payload." }, { status: 400 });
+    return serverErrorResponse(error, {
+      context: `PUT /api/admin/projects/${id}`,
+      prefix: "Không cập nhật được dự án trên R2 —",
+    });
   }
 }
 
@@ -72,25 +89,32 @@ export async function DELETE(request, { params }) {
   const id = Number(params.id);
   if (!Number.isInteger(id) || id <= 0) return invalidId();
 
-  let removed = false;
-  let removedKeys = [];
-  await updateStore((store) => {
-    const before = store.projects.length;
-    const target = store.projects.find((item) => Number(item.id) === id);
-    if (target) removedKeys = collectAssetKeysFromProject(target);
-    store.projects = store.projects.filter((item) => Number(item.id) !== id);
-    store.projects = compactOrder(store.projects);
-    removed = store.projects.length !== before;
-    return store;
-  });
+  try {
+    let removed = false;
+    let removedKeys = [];
+    await updateStore((store) => {
+      const before = store.projects.length;
+      const target = store.projects.find((item) => Number(item.id) === id);
+      if (target) removedKeys = collectAssetKeysFromProject(target);
+      store.projects = store.projects.filter((item) => Number(item.id) !== id);
+      store.projects = compactOrder(store.projects);
+      removed = store.projects.length !== before;
+      return store;
+    });
 
-  if (!removed) {
-    return NextResponse.json({ error: "Project not found." }, { status: 404 });
+    if (!removed) {
+      return NextResponse.json({ error: "Project not found." }, { status: 404 });
+    }
+
+    if (removedKeys.length > 0) {
+      await deleteR2Keys(removedKeys);
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return serverErrorResponse(error, {
+      context: `DELETE /api/admin/projects/${id}`,
+      prefix: "Không xoá được dự án trên R2 —",
+    });
   }
-
-  if (removedKeys.length > 0) {
-    await deleteR2Keys(removedKeys);
-  }
-
-  return NextResponse.json({ ok: true });
 }

@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { resolveContentType } from "@/lib/uploadClient";
+import { fetchJson } from "@/lib/apiClient";
 
 const URL_REGEX = /^https?:\/\/[^\s]+$/i;
 // Loose validators — only require a recognizable pattern is *present* anywhere
@@ -259,11 +261,12 @@ function StatsBlock({ value, onChange }) {
 }
 
 async function uploadImageToR2(file, folder = "brands") {
-  const contentType = file.type || "image/png";
-  // Step 1 — same-origin presign request
-  let presignRes;
-  try {
-    presignRes = await fetch("/api/admin/r2/upload-url", {
+  const contentType = resolveContentType(file, "image/png");
+  // Step 1 — same-origin presign request. fetchJson tolerates empty /
+  // non-JSON error bodies and always yields a readable message.
+  const presignPayload = await fetchJson(
+    "/api/admin/r2/upload-url",
+    {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
@@ -272,23 +275,9 @@ async function uploadImageToR2(file, folder = "brands") {
         contentType,
         folder,
       }),
-    });
-  } catch (networkErr) {
-    throw new Error(`Không gọi được presign API: ${networkErr.message}`);
-  }
-  let presignPayload;
-  try {
-    presignPayload = await presignRes.json();
-  } catch {
-    throw new Error(
-      `Presign API trả về dữ liệu không phải JSON (status ${presignRes.status}).`
-    );
-  }
-  if (!presignRes.ok) {
-    throw new Error(
-      presignPayload?.error || `Presign API lỗi ${presignRes.status}.`
-    );
-  }
+    },
+    { fallbackError: "Không lấy được upload URL" }
+  );
   const { key, uploadUrl, publicUrl } = presignPayload.data || {};
   if (!uploadUrl) throw new Error("Server không trả về upload URL.");
 
@@ -298,6 +287,11 @@ async function uploadImageToR2(file, folder = "brands") {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", uploadUrl);
     xhr.setRequestHeader("Content-Type", contentType);
+    // Logos/site images are small, so a fixed timeout is enough to stop a
+    // stalled connection from hanging the upload forever (onerror does not
+    // fire on a black-holed socket).
+    xhr.timeout = 120000;
+    xhr.ontimeout = () => reject(new Error("Upload quá thời gian — kiểm tra mạng và thử lại."));
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve();
@@ -933,9 +927,17 @@ export default function SiteContentAdminPanel({ onDirtyChange }) {
   const [defaults, setDefaults] = useState(null);
   const [original, setOriginal] = useState(null);
   const [activeBlock, setActiveBlock] = useState(BLOCKS[0].key);
-  const [loading, setLoading] = useState(false);
+  // Start in the loading state: the first fetch is kicked off from an effect,
+  // so with `false` the very first paint would flash the empty-state text.
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // Optional actionable hint returned by the API (e.g. which R2 env var to
+  // fix). Shown under the error message when present.
+  const [errorHint, setErrorHint] = useState("");
+  // HTTP status of the last failed request (ApiError.status). Used to hide
+  // the R2 diagnostics link when the real problem is an expired login (401).
+  const [errorStatus, setErrorStatus] = useState(null);
   const [savedAt, setSavedAt] = useState(null);
 
   const dirtyByBlock = useMemo(() => {
@@ -972,15 +974,27 @@ export default function SiteContentAdminPanel({ onDirtyChange }) {
   const loadContent = useCallback(async () => {
     setLoading(true);
     setError("");
+    setErrorHint("");
+    setErrorStatus(null);
     try {
-      const response = await fetch("/api/admin/site-content", { cache: "no-store" });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload?.error || "Failed to load content.");
+      // fetchJson never throws the opaque "Unexpected end of JSON input":
+      // empty / non-JSON bodies become a message that includes the HTTP
+      // status, and JSON error bodies surface the server's own message.
+      const payload = await fetchJson(
+        "/api/admin/site-content",
+        { cache: "no-store" },
+        { fallbackError: "Không tải được nội dung" }
+      );
+      if (!payload?.data || typeof payload.data !== "object") {
+        throw new Error("Server trả về dữ liệu không đúng định dạng (thiếu `data`).");
+      }
       setContent(payload.data);
       setOriginal(payload.data);
-      setDefaults(payload.defaults);
+      setDefaults(payload.defaults || null);
     } catch (e) {
       setError(e.message);
+      setErrorHint(e.hint || "");
+      setErrorStatus(e.status ?? null);
     } finally {
       setLoading(false);
     }
@@ -994,19 +1008,28 @@ export default function SiteContentAdminPanel({ onDirtyChange }) {
     if (!content) return;
     setSaving(true);
     setError("");
+    setErrorHint("");
+    setErrorStatus(null);
     try {
-      const response = await fetch("/api/admin/site-content", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(content),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload?.error || "Save failed.");
+      const payload = await fetchJson(
+        "/api/admin/site-content",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(content),
+        },
+        { fallbackError: "Lưu thất bại" }
+      );
+      if (!payload?.data || typeof payload.data !== "object") {
+        throw new Error("Server trả về dữ liệu không đúng định dạng sau khi lưu.");
+      }
       setContent(payload.data);
       setOriginal(payload.data);
       setSavedAt(new Date());
     } catch (e) {
       setError(e.message);
+      setErrorHint(e.hint || "");
+      setErrorStatus(e.status ?? null);
     } finally {
       setSaving(false);
     }
@@ -1054,8 +1077,53 @@ export default function SiteContentAdminPanel({ onDirtyChange }) {
   if (loading || !content) {
     return (
       <div className="py-10">
-        <p className="text-sm text-gray-600">Đang tải nội dung...</p>
-        {error ? <p className="mt-2 text-sm text-red-600">{error}</p> : null}
+        {loading ? (
+          <p className="text-sm text-gray-600">Đang tải nội dung...</p>
+        ) : error ? (
+          <div className="max-w-2xl rounded-xl border border-red-300 bg-red-50 px-4 py-3">
+            <p className="text-sm font-semibold text-red-700">
+              Không tải được nội dung
+            </p>
+            <p className="mt-1 break-words text-sm text-red-700">{error}</p>
+            {errorHint ? (
+              <p className="mt-2 text-xs leading-relaxed text-red-800">
+                💡 {errorHint}
+              </p>
+            ) : null}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={loadContent}
+                className="rounded-lg bg-black px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800"
+              >
+                Thử lại
+              </button>
+              {errorStatus === 401 ? (
+                <button
+                  type="button"
+                  onClick={() => window.location.reload()}
+                  className="rounded-lg border border-red-300 px-3 py-1.5 text-xs text-red-700 hover:bg-red-100"
+                >
+                  Tải lại trang để đăng nhập
+                </button>
+              ) : (
+                <a
+                  href="/api/admin/health"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-lg border border-red-300 px-3 py-1.5 text-xs text-red-700 hover:bg-red-100"
+                  title="Mở báo cáo kiểm tra biến môi trường + kết nối R2 của server (tab mới)"
+                >
+                  Kiểm tra kết nối R2 ↗
+                </a>
+              )}
+            </div>
+          </div>
+        ) : (
+          // Not loading, no error, but still no content — only reachable
+          // between mount and the first fetch, so keep showing the loader.
+          <p className="text-sm text-gray-600">Đang tải nội dung...</p>
+        )}
       </div>
     );
   }
@@ -1120,7 +1188,10 @@ export default function SiteContentAdminPanel({ onDirtyChange }) {
 
       {error ? (
         <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
+          <p className="break-words">{error}</p>
+          {errorHint ? (
+            <p className="mt-1.5 text-xs leading-relaxed text-red-800">💡 {errorHint}</p>
+          ) : null}
         </div>
       ) : null}
 
