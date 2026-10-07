@@ -70,3 +70,5 @@ coverage/
 
 # Misc
 .strapi-updater.json
+.vercel
+.env*

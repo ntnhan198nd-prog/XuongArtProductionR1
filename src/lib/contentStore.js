@@ -3,6 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getR2Client, getR2Config, validateR2Config } from "@/lib/r2";
+import { toSlotIndex } from "@/lib/featuredLayout";
 
 // Single JSON object on R2 acts as the content store. Writing to the
 // repository filesystem is not viable on Vercel (read-only at runtime),
@@ -312,6 +313,10 @@ export function serializeProject(project) {
       categories: normalizeCategories(project.categories),
       featured: Boolean(project.featured),
       order: Number.isFinite(Number(project.order)) ? Number(project.order) : null,
+      // Absolute 0-based cell index on the homepage featured grid (6 per
+      // slide). null = "flow into the first empty cell". See
+      // lib/featuredLayout.js for the resolution rules.
+      featuredSlot: toSlotIndex(project.featuredSlot),
       duration: project.duration || "",
       orientation: project.orientation || "landscape",
       description: project.description || "",

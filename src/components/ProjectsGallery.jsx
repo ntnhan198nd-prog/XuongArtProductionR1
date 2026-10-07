@@ -8,6 +8,11 @@ import TimeAgo from "@/components/TimeAgo";
 import RichTextRenderer from "@/components/RichTextRenderer";
 import { MdChevronLeft, MdChevronRight } from "react-icons/md";
 import { getFeaturedProjects } from "@/lib/strapi";
+import {
+  chunkFeaturedSlots,
+  compactFeaturedSlides,
+  resolveFeaturedSlots,
+} from "@/lib/featuredLayout";
 import { useSiteContent } from "@/components/SiteContentProvider";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 
@@ -141,33 +146,34 @@ const pickPatternForSlide = (slideItems = []) => {
   return SLIDE_PATTERNS.mixed;
 };
 
-// Assign projects to pattern areas với thứ tự cố định
-const assignToPattern = (items, pattern) => {
-  if (!items || items.length === 0) return [];
+// Map a slide's slot array (`item | null`, one entry per pattern area, in
+// cell order a..f) onto the pattern's areas. Cell placement is resolved
+// upstream by resolveFeaturedSlots (admin-pinned cells + order fallback),
+// so index === area. Empty cells render nothing; every card carries
+// explicit column/row lines, so the grid keeps its shape around a gap.
+const assignToPattern = (slideSlots, pattern) => {
+  if (!slideSlots || slideSlots.length === 0) return [];
+  const areas = pattern.desktop.areas;
 
-  // Cố định thứ tự items theo order field hoặc ID để tránh xáo trộn khi F5
-  const sortedItems = [...items].sort((a, b) => {
-    const aOrder = a.order || a.id;
-    const bOrder = b.order || b.id;
-    return aOrder - bOrder;
-  });
+  return slideSlots
+    .map((item, index) => {
+      const area = areas[index];
+      if (!item || !area) return null;
 
-  return pattern.desktop.areas.slice(0, items.length).map((area, index) => {
-    const item = sortedItems[index] || items[index];
+      // Sử dụng orientation từ pattern thay vì detection để đảm bảo tính nhất quán
+      const finalOrientation = area.shape;
 
-    // Sử dụng orientation từ pattern thay vì detection để đảm bảo tính nhất quán
-    const finalOrientation = area.shape;
-
-    return {
-      shape: finalOrientation,
-      gridColumn: `${area.column.start} / ${area.column.end}`,
-      gridRow: `${area.row.start} / ${area.row.end}`,
-      item: {
-        ...item,
-        orientation: finalOrientation
-      }
-    };
-  });
+      return {
+        shape: finalOrientation,
+        gridColumn: `${area.column.start} / ${area.column.end}`,
+        gridRow: `${area.row.start} / ${area.row.end}`,
+        item: {
+          ...item,
+          orientation: finalOrientation
+        }
+      };
+    })
+    .filter(Boolean);
 };
 
 // Individual project card component.
@@ -729,6 +735,9 @@ const ProjectsGallery = () => {
               featured: project.attributes?.featured || false,
               slug: project.attributes?.slug || '',
               order: project.attributes?.order || project.id,
+              // Pinned cell on the featured grid (0-based, 6 per slide);
+              // null flows into the first free cell. See lib/featuredLayout.
+              featuredSlot: project.attributes?.featuredSlot ?? null,
               media: fullMediaUrl,
               previewMedia: fullMediaPreviewUrl || fullMediaUrl,
               galleryVideoUrl,
@@ -776,13 +785,18 @@ const ProjectsGallery = () => {
   // Build slides based on available items
   const itemsPerSlide = 6; // Desktop/Tablet
   
+  // Desktop slides are slot arrays (`item | null` × 6) resolved by the
+  // same helper the admin layout panel uses, so a cell the admin pinned
+  // (or left empty) renders exactly where they placed it. Fully-empty
+  // slides are collapsed (never a blank carousel page). `_loadOrder` is
+  // overridden with the cell index in the compacted layout so the
+  // eager-load waves still unlock slide 1 first, whatever the fetch
+  // order was, and every card sits below totalDesktopCells.
   const slides = useMemo(() => {
-    const totalItems = allItems.length;
-    const numSlides = Math.ceil(totalItems / itemsPerSlide);
-
-    return Array.from({ length: numSlides }, (_, i) => {
-      return allItems.slice(i * itemsPerSlide, (i + 1) * itemsPerSlide);
-    }).filter(slide => slide.length > 0);
+    const layout = compactFeaturedSlides(resolveFeaturedSlots(allItems));
+    return chunkFeaturedSlots(
+      layout.map((item, cellIndex) => (item ? { ...item, _loadOrder: cellIndex } : null))
+    );
   }, [allItems]);
   
   // Build mobile-specific slides:
@@ -1027,10 +1041,12 @@ const ProjectsGallery = () => {
   // `slides` so the heavy pattern→item mapping doesn't re-run on each
   // slide change (only the translateX changes).
   const allDesktopSlideAssignments = useMemo(() => {
-    return slides.map((slideItems) => {
-      const pattern = pickPatternForSlide(slideItems);
+    return slides.map((slideSlots) => {
+      // Pattern choice looks at the occupied cells only (empty cells
+      // carry no orientation).
+      const pattern = pickPatternForSlide(slideSlots.filter(Boolean));
       return {
-        slots: assignToPattern(slideItems, pattern),
+        slots: assignToPattern(slideSlots, pattern),
         pattern,
       };
     });
@@ -1060,14 +1076,19 @@ const ProjectsGallery = () => {
   const PHASE_2_DELAY_MS = 1500;
   const PHASE_2_STAGGER_MS = 300;
   const [unlockedCount, setUnlockedCount] = useState(0);
+  // Total desktop cells (slides × 6). `_loadOrder` is the absolute cell
+  // index, so with admin-pinned gaps a card can sit past index 11 and
+  // still needs its unlock tick — the wave runs to the last cell.
+  const totalDesktopCells = slides.length * itemsPerSlide;
   useEffect(() => {
     if (!sectionInView) return undefined;
     // Phase 1: unlock the first 6 cards in one shot so slide 1 lights
     // up together.
     setUnlockedCount((prev) => (prev < 6 ? 6 : prev));
-    // Phase 2: schedule staggered unlocks for cards 7..12.
+    // Phase 2: schedule staggered unlocks for cards 7..N (N ≥ 12).
+    const lastCard = Math.max(12, totalDesktopCells);
     const timeouts = [];
-    for (let i = 7; i <= 12; i += 1) {
+    for (let i = 7; i <= lastCard; i += 1) {
       const delay = PHASE_2_DELAY_MS + (i - 7) * PHASE_2_STAGGER_MS;
       const id = window.setTimeout(() => {
         setUnlockedCount((prev) => Math.max(prev, i));
@@ -1077,7 +1098,7 @@ const ProjectsGallery = () => {
     return () => {
       timeouts.forEach((id) => window.clearTimeout(id));
     };
-  }, [sectionInView]);
+  }, [sectionInView, totalDesktopCells]);
 
   const cardEagerLoad = useCallback(
     (item) => {

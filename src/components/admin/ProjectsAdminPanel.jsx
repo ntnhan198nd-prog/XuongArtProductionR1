@@ -643,7 +643,7 @@ export default function ProjectsAdminPanel({ mode } = {}) {
       setErrorHint("");
       setErrorStatus(null);
       try {
-        await fetchJson(
+        const result = await fetchJson(
           `/api/admin/${tab}/reorder`,
           {
             method: "POST",
@@ -654,6 +654,11 @@ export default function ProjectsAdminPanel({ mode } = {}) {
           },
           { fallbackError: "Lưu thứ tự thất bại" }
         );
+        // The projects reorder route returns the saved list: a reorder may
+        // also re-flow featured grid pins (`featuredSlot`), which the
+        // optimistic update above cannot know about. Adopt the server
+        // state so FeaturedLayoutPanel's preview stays in sync.
+        if (Array.isArray(result?.data)) setItems(result.data);
       } catch (reorderError) {
         // Reload first (it clears the error banner), THEN show the reorder
         // failure — otherwise the message is wiped a moment after it appears.
@@ -927,7 +932,10 @@ export default function ProjectsAdminPanel({ mode } = {}) {
         </div>
       ) : null}
 
-      {showFeaturedLayoutSection && !loadingItems ? (
+      {/* Stay mounted while re-fetching once we have items, so an unsaved
+          layout the admin is arranging survives a save/delete elsewhere on
+          the page (the panel only re-syncs when the server layout changed). */}
+      {showFeaturedLayoutSection && (!loadingItems || items.length > 0) ? (
         <div className="mt-8">
           <FeaturedLayoutPanel items={items} onSaved={() => loadItems(tab)} />
         </div>

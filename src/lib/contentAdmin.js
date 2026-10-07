@@ -6,6 +6,7 @@ import {
   slugify,
   sortByOrderThenId,
 } from "@/lib/contentStore";
+import { toSlotIndex } from "@/lib/featuredLayout";
 
 function normalizeText(value, fallback = "") {
   if (value === null || value === undefined) return fallback;
@@ -66,6 +67,7 @@ export function normalizeProjectPayload(payload, store, currentItem = null) {
 
   const title = normalizeText(payload.title, currentItem?.title || "");
   const slug = slugify(normalizeText(payload.slug) || title || currentItem?.slug || "");
+  const featured = normalizeBoolean(payload.featured ?? currentItem?.featured);
 
   return {
     title,
@@ -74,8 +76,15 @@ export function normalizeProjectPayload(payload, store, currentItem = null) {
     tagline: normalizeText(payload.tagline, currentItem?.tagline || ""),
     category: normalizeText(payload.category, currentItem?.category || ""),
     categories: normalizeCategories(payload.categories ?? currentItem?.categories ?? []),
-    featured: normalizeBoolean(payload.featured ?? currentItem?.featured),
+    featured,
     order: normalizeNumber(payload.order ?? currentItem?.order),
+    // Pinned cell on the homepage featured grid, written by the admin
+    // layout panel through /api/admin/projects/reorder. The edit form
+    // never sends it, so an edit keeps the existing pin; un-featuring a
+    // project releases its cell.
+    featuredSlot: featured
+      ? toSlotIndex(payload.featuredSlot ?? currentItem?.featuredSlot)
+      : null,
     duration: normalizeText(payload.duration, currentItem?.duration || ""),
     orientation: normalizeOrientation(payload.orientation ?? currentItem?.orientation),
     description: normalizeText(payload.description, currentItem?.description || ""),
