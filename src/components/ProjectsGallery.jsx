@@ -1,6 +1,6 @@
 "use client";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion, useInView, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import clsx from "clsx";
 import Image from "next/image";
 import AuthorAvatar from "@/components/AuthorAvatar";
@@ -1060,8 +1060,41 @@ const ProjectsGallery = () => {
   // amount=0.05 fires as soon as a sliver of the gallery is visible;
   // once=true keeps it stuck on after first reveal so quickly scrolling
   // past doesn't cancel the preload.
+  //
+  // Observed manually rather than via framer-motion's useInView: that
+  // hook reads ref.current inside an effect whose deps (ref, amount,
+  // once, …) never change, so it arms exactly once — on first mount,
+  // while this component is still returning the `loading` spinner
+  // branch, where the <div ref={sectionRef}> below doesn't exist yet.
+  // It would bail on the null ref and never re-arm when the real
+  // gallery mounts, leaving sectionInView false forever (no eagerLoad
+  // wave, no force-play sweep). Keying the effect on `galleryMounted`
+  // re-runs it once the ref is actually attached.
   const sectionRef = useRef(null);
-  const sectionInView = useInView(sectionRef, { amount: 0.05, once: true });
+  const [sectionInView, setSectionInView] = useState(false);
+  const galleryMounted = !loading && projects.length > 0;
+  useEffect(() => {
+    if (sectionInView || !galleryMounted) return undefined;
+    const node = sectionRef.current;
+    if (!node) return undefined;
+    if (typeof IntersectionObserver === "undefined") {
+      // No observer support (very old browsers): don't leave the
+      // gallery permanently asleep — treat it as in view.
+      setSectionInView(true);
+      return undefined;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setSectionInView(true);
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.05 }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [galleryMounted, sectionInView]);
 
   // Two-phase preview-byte prefetch. The first 6 videos
   // Wave-based reveal. When the gallery scrolls into view, the first
