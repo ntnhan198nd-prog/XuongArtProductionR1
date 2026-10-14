@@ -94,6 +94,8 @@ const ALLOWED_FOLDERS = new Set([
   "services",
   "showreel",
   "uploads",
+  // Founder portrait on /whoweare (admin → Trang Về chúng tôi → Founder).
+  "about",
 ]);
 
 export function isAllowedFolder(folder) {

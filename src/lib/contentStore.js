@@ -240,6 +240,7 @@ export function collectAssetKeysFromSite(site) {
     }
   }
   if (site.services?.image?.key) keys.push(site.services.image.key);
+  if (site.about?.founder?.photo?.key) keys.push(site.about.founder.photo.key);
   return keys.filter(Boolean);
 }
 

@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { BsFacebook, BsInstagram } from "react-icons/bs";
+import { BsFacebook, BsInstagram, BsYoutube } from "react-icons/bs";
 import { SiTiktok, SiZalo } from "react-icons/si";
 import { DEFAULT_SITE_CONTENT } from "@/lib/siteContent";
 
@@ -10,6 +10,7 @@ const SOCIAL_PLATFORMS = [
   { key: "facebook", title: "Facebook", icon: BsFacebook },
   { key: "instagram", title: "Instagram", icon: BsInstagram },
   { key: "tiktok", title: "TikTok", icon: SiTiktok },
+  { key: "youtube", title: "YouTube", icon: BsYoutube },
   { key: "zalo", title: "Zalo", icon: SiZalo },
 ];
 

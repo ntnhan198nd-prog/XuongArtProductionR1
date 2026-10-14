@@ -385,7 +385,15 @@ const RootLayoutInner = ({
   );
 };
 
-const RootLayout = ({ children, footerContent, socialContent, ctaContent }) => {
+const RootLayout = ({
+  children,
+  footerContent,
+  socialContent,
+  ctaContent,
+  // false when the admin hid the "Liên hệ (CTA)" block on /whoweare, so the
+  // footer takes over showing the contact details there.
+  whoWeAreHasContact = true,
+}) => {
   const pathName = usePathname();
   const isHome = pathName === "/";
   // Routes that show the minimal footer (logo + copyright only). Gallery
@@ -404,7 +412,7 @@ const RootLayout = ({ children, footerContent, socialContent, ctaContent }) => {
   // itself. /whoweare already renders the full CTA section above the
   // footer, so showing the contact info again in the footer would just
   // duplicate it.
-  const showContactInFooter = isHome;
+  const showContactInFooter = isHome || (pathName === "/whoweare" && !whoWeAreHasContact);
   return (
     <RootLayoutInner
       key={pathName}

@@ -91,24 +91,118 @@ export const DEFAULT_SITE_CONTENT = {
     heading: "Hãy chia sẻ với chúng tôi về dự án của bạn",
     buttonText: "👉 Bắt đầu hợp tác",
     contactsHeading: "Thông tin liên hệ",
-    officeName: "Our Office – Hồ Chí Minh City",
-    address: "📍 172 Lâm Văn Bền, phường Tân Quy, Quận 7, HCM, Vietnam",
-    phone: "☎ 036 499 4647",
-    email: "📧 ntnhan198.nd@gmail.com",
+    // Shared contact details: homepage dark footer + fallback for the
+    // /whoweare CTA block.
+    officeName: "Văn phòng XUONGART",
+    address: "172 Lâm Văn Bền, phường Tân Quy, Quận 7, TP.HCM",
+    phone: "036 499 4647",
+    email: "xuongart.stu@gmail.com",
   },
+  // /whoweare. Every section is admin-editable; `sections` controls the
+  // order and visibility of the blocks on the page. Sections whose key is
+  // not listed here are appended (enabled by default) at normalize time.
   about: {
-    eyebrow: "Về chúng tôi",
-    title: "XUONGART – Kể chuyện bằng hình ảnh chuyển động",
-    lead: "Chúng tôi là studio sáng tạo chuyên về sản xuất video và nội dung hình ảnh. Mục tiêu của XUONGART là giúp thương hiệu kể được câu chuyện của mình một cách giàu cảm xúc, hiện đại và hiệu quả.",
-    paragraphs: [
-      "Từ quảng cáo, MV, social video đến ghi hình sự kiện, mỗi dự án đều được thực hiện theo quy trình chuẩn điện ảnh: tiền kỳ kỹ lưỡng, sản xuất gọn gàng và hậu kỳ tỉ mỉ.",
-      "Chúng tôi tin rằng Every frame tells a story – mỗi khung hình đều có sức mạnh khơi gợi cảm xúc và truyền tải thông điệp rõ ràng.",
+    sections: [
+      { key: "hero", enabled: true },
+      { key: "founder", enabled: true },
+      { key: "values", enabled: true },
+      { key: "process", enabled: true },
+      { key: "testimonials", enabled: true },
+      { key: "services", enabled: false },
+      { key: "cta", enabled: true },
     ],
-    stats: [
-      { value: "50+", label: "Dự án đã thực hiện" },
-      { value: "20+", label: "Thương hiệu đồng hành" },
-      { value: "5+ năm", label: "Kinh nghiệm đội ngũ" },
-    ],
+    hero: {
+      eyebrow: "Xưởng phim Quận 7",
+      title: "Đúng brief. Đúng hẹn. Xem lại vẫn thích.",
+      lead: "XUONGART làm TVC, MV, social video, phim doanh nghiệp, livestream và ghi hình sự kiện, hậu kỳ điện ảnh. Deadline gấp, brief đổi phút chót, revision vòng ba: chúng tôi quen rồi.",
+      paragraphs: [],
+      showStats: true,
+      stats: [
+        { value: "200+", label: "dự án đã giao" },
+        { value: "50+", label: "thương hiệu, từ Sony đến HOYOVERSE" },
+        { value: "10 năm", label: "founder trong nghề, từ 2016" },
+      ],
+    },
+    founder: {
+      eyebrow: "Người cầm lái",
+      name: "Nguyễn Trọng Nhân",
+      role: "Founder & Director",
+      story: [
+        "Nhân vào nghề năm 2016. Năm năm trên set dạy anh một điều: ý tưởng hay thì nhiều, người theo tới khung hình cuối mới hiếm.",
+        "Năm 2021, anh lập XUONGART tại TP.HCM để làm phim theo cách mình tin: ekip cố định hiểu ý nhau, cộng mạng lưới freelance tin cậy khi cần thêm tay.",
+      ],
+      quote: "Khách không cần tôi tài hoa lúc 2 giờ sáng, họ cần file đúng hẹn lúc 9 giờ.",
+      photo: { url: "", key: "", alt: "" },
+    },
+    values: {
+      eyebrow: "Cách chúng tôi làm",
+      title: "Ba thứ không thương lượng",
+      description: "Khách lớn hay nhỏ, TVC hay livestream, cách làm vẫn vậy.",
+      theme: "dark",
+      items: [
+        {
+          title: "Hỏi trước",
+          description: "Câu hỏi khó hỏi trước ngày quay, để ngày quay chỉ còn việc quay.",
+        },
+        {
+          title: "Chịu nhiệt",
+          description: "Mưa trên set hay livestream không có nút pause, ekip vẫn về đủ hình.",
+        },
+        {
+          title: "Có gu",
+          description: "Đẹp là mức tối thiểu, khung hình còn phải đúng tông thương hiệu.",
+        },
+      ],
+    },
+    process: {
+      eyebrow: "Từ brief đến file",
+      title: "Brief vào, phim ra",
+      description: "",
+      numbered: true,
+      steps: [
+        {
+          title: "Nhận brief",
+          description: "Hỏi kỹ mục tiêu, kênh phát, ngân sách, deadline thật, rồi gửi đề xuất kèm báo giá.",
+        },
+        {
+          title: "Tiền kỳ",
+          description: "Kịch bản, storyboard, casting, bối cảnh: chốt trên giấy trước khi ra set.",
+        },
+        {
+          title: "Quay",
+          description: "DOP và đạo diễn bám set tới shot cuối, phát sinh xử lý tại chỗ.",
+        },
+        {
+          title: "Hậu kỳ",
+          description: "Dựng, VFX, chỉnh màu, duyệt theo số vòng đã chốt, giao file đúng chuẩn từng kênh.",
+        },
+      ],
+    },
+    // Rendered only when at least one item exists, so the page never shows
+    // an empty "what clients say" block.
+    testimonials: {
+      eyebrow: "Khách nói gì",
+      title: "Người ngồi cạnh monitor",
+      description: "",
+      items: [],
+    },
+    // officeName / address / phone / email are page-specific; clearing one
+    // in the admin makes it fall back to the shared `cta` block (homepage
+    // footer). They ship filled because the live store may still carry the
+    // older shared contact copy (emoji prefixes, previous email).
+    cta: {
+      heading: "Nhắn cho chúng tôi trước khi deadline nhắn cho bạn.",
+      buttonText: "Bắt đầu hợp tác",
+      buttonUrl: "https://m.me/xuongartproduction",
+      contactsHeading: "Hoặc liên hệ trực tiếp",
+      officeName: "Văn phòng XUONGART",
+      address: "172 Lâm Văn Bền, phường Tân Quy, Quận 7, TP.HCM",
+      phone: "036 499 4647",
+      email: "xuongart.stu@gmail.com",
+      tagline: "Every frame tells a story.",
+      theme: "dark",
+      showSocial: true,
+    },
   },
   cultures: {
     eyebrow: "Văn hoá",
@@ -142,6 +236,7 @@ export const DEFAULT_SITE_CONTENT = {
     facebook: "https://www.facebook.com/xuongartproduction",
     instagram: "",
     tiktok: "",
+    youtube: "",
     zalo: "",
   },
   ui: {
@@ -172,6 +267,170 @@ function pickNumber(value, fallback) {
 function pickArray(value, fallback, mapItem) {
   if (!Array.isArray(value)) return fallback;
   return value.map(mapItem).filter((item) => item !== null && item !== undefined);
+}
+
+function pickBool(value, fallback) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function pickTheme(value, fallback) {
+  return value === "dark" || value === "light" ? value : fallback;
+}
+
+function pickImage(value, fallback) {
+  if (isObject(value)) {
+    return {
+      url: pickString(value.url, ""),
+      key: pickString(value.key, ""),
+      alt: pickString(value.alt, ""),
+    };
+  }
+  return { ...fallback };
+}
+
+function pickStringList(value, fallback) {
+  return pickArray(value, fallback, (item) => {
+    if (!isString(item)) return null;
+    const v = item.trim();
+    return v || null;
+  });
+}
+
+function pickTitledList(value, fallback) {
+  return pickArray(value, fallback, (item) => {
+    if (!isObject(item)) return null;
+    const title = pickString(item.title, "").trim();
+    const description = pickString(item.description, "").trim();
+    if (!title && !description) return null;
+    return { title, description };
+  });
+}
+
+// /whoweare sections. Order here is the default page order; the admin can
+// reorder and toggle each one through `about.sections`.
+export const ABOUT_SECTION_KEYS = [
+  "hero",
+  "founder",
+  "values",
+  "process",
+  "testimonials",
+  "services",
+  "cta",
+];
+
+export const ABOUT_SECTION_LABELS = {
+  hero: "Mở đầu + số liệu",
+  founder: "Founder",
+  values: "Giá trị / cách làm",
+  process: "Quy trình",
+  testimonials: "Khách nói gì",
+  services: "Dịch vụ (nội dung lấy từ block Dịch vụ)",
+  cta: "Liên hệ (CTA)",
+};
+
+// Keep saved order, drop unknown/duplicate keys, append anything missing
+// (new sections added in code show up automatically, enabled per default).
+function normalizeAboutSections(input, defaults) {
+  const seen = new Set();
+  const out = [];
+  if (Array.isArray(input)) {
+    for (const item of input) {
+      const key = isObject(item) ? item.key : item;
+      if (!ABOUT_SECTION_KEYS.includes(key) || seen.has(key)) continue;
+      seen.add(key);
+      const def = defaults.find((entry) => entry.key === key);
+      out.push({
+        key,
+        enabled: pickBool(isObject(item) ? item.enabled : undefined, def ? def.enabled : true),
+      });
+    }
+  }
+  for (const def of defaults) {
+    if (!seen.has(def.key)) out.push({ ...def });
+  }
+  return out;
+}
+
+// The pre-redesign `about` shape ({ eyebrow, title, lead, paragraphs, stats }
+// at the top level) is deliberately NOT migrated: the live site only ever
+// showed its defaults, and carrying them over would put the old hero copy
+// on top of the new sections.
+function normalizeAbout(input, d) {
+  const src = isObject(input) ? input : {};
+  const hero = isObject(src.hero) ? src.hero : {};
+  const founder = isObject(src.founder) ? src.founder : {};
+  const values = isObject(src.values) ? src.values : {};
+  const process = isObject(src.process) ? src.process : {};
+  const testimonials = isObject(src.testimonials) ? src.testimonials : {};
+  const cta = isObject(src.cta) ? src.cta : {};
+
+  return {
+    sections: normalizeAboutSections(src.sections, d.sections),
+    hero: {
+      eyebrow: pickString(hero.eyebrow, d.hero.eyebrow),
+      title: pickString(hero.title, d.hero.title),
+      lead: pickString(hero.lead, d.hero.lead),
+      paragraphs: pickStringList(hero.paragraphs, d.hero.paragraphs),
+      showStats: pickBool(hero.showStats, d.hero.showStats),
+      stats: pickArray(hero.stats, d.hero.stats, (item) => {
+        if (!isObject(item)) return null;
+        const value = pickString(item.value, "").trim();
+        const label = pickString(item.label, "").trim();
+        if (!value && !label) return null;
+        return { value, label };
+      }),
+    },
+    founder: {
+      eyebrow: pickString(founder.eyebrow, d.founder.eyebrow),
+      name: pickString(founder.name, d.founder.name),
+      role: pickString(founder.role, d.founder.role),
+      story: pickStringList(founder.story, d.founder.story),
+      quote: pickString(founder.quote, d.founder.quote),
+      photo: pickImage(founder.photo, d.founder.photo),
+    },
+    values: {
+      eyebrow: pickString(values.eyebrow, d.values.eyebrow),
+      title: pickString(values.title, d.values.title),
+      description: pickString(values.description, d.values.description),
+      theme: pickTheme(values.theme, d.values.theme),
+      items: pickTitledList(values.items, d.values.items),
+    },
+    process: {
+      eyebrow: pickString(process.eyebrow, d.process.eyebrow),
+      title: pickString(process.title, d.process.title),
+      description: pickString(process.description, d.process.description),
+      numbered: pickBool(process.numbered, d.process.numbered),
+      steps: pickTitledList(process.steps, d.process.steps),
+    },
+    testimonials: {
+      eyebrow: pickString(testimonials.eyebrow, d.testimonials.eyebrow),
+      title: pickString(testimonials.title, d.testimonials.title),
+      description: pickString(testimonials.description, d.testimonials.description),
+      items: pickArray(testimonials.items, d.testimonials.items, (item) => {
+        if (!isObject(item)) return null;
+        const quote = pickString(item.quote, "").trim();
+        if (!quote) return null;
+        return {
+          quote,
+          name: pickString(item.name, "").trim(),
+          role: pickString(item.role, "").trim(),
+        };
+      }),
+    },
+    cta: {
+      heading: pickString(cta.heading, d.cta.heading),
+      buttonText: pickString(cta.buttonText, d.cta.buttonText),
+      buttonUrl: pickString(cta.buttonUrl, d.cta.buttonUrl),
+      contactsHeading: pickString(cta.contactsHeading, d.cta.contactsHeading),
+      officeName: pickString(cta.officeName, d.cta.officeName),
+      address: pickString(cta.address, d.cta.address),
+      phone: pickString(cta.phone, d.cta.phone),
+      email: pickString(cta.email, d.cta.email),
+      tagline: pickString(cta.tagline, d.cta.tagline),
+      theme: pickTheme(cta.theme, d.cta.theme),
+      showSocial: pickBool(cta.showSocial, d.cta.showSocial),
+    },
+  };
 }
 
 // Deep-merge user-provided site content with the defaults so missing fields
@@ -286,23 +545,7 @@ export function normalizeSiteContent(input) {
       ...d.cta,
       ...(isObject(src.cta) ? src.cta : {}),
     },
-    about: {
-      eyebrow: pickString(src.about?.eyebrow, d.about.eyebrow),
-      title: pickString(src.about?.title, d.about.title),
-      lead: pickString(src.about?.lead, d.about.lead),
-      paragraphs: pickArray(src.about?.paragraphs, d.about.paragraphs, (item) => {
-        if (!isString(item)) return null;
-        const v = item.trim();
-        return v || null;
-      }),
-      stats: pickArray(src.about?.stats, d.about.stats, (item) => {
-        if (!isObject(item)) return null;
-        return {
-          value: pickString(item.value, ""),
-          label: pickString(item.label, ""),
-        };
-      }),
-    },
+    about: normalizeAbout(src.about, d.about),
     cultures: {
       eyebrow: pickString(src.cultures?.eyebrow, d.cultures.eyebrow),
       title: pickString(src.cultures?.title, d.cultures.title),

@@ -32,6 +32,11 @@ export default async function Layout({ children }) {
           footerContent={site.footer}
           socialContent={site.social}
           ctaContent={site.cta}
+          whoWeAreHasContact={
+            Array.isArray(site.about?.sections)
+              ? site.about.sections.some((section) => section.key === "cta" && section.enabled)
+              : true
+          }
         >
           <SiteContentProvider value={site}>{children}</SiteContentProvider>
         </RootLayout>

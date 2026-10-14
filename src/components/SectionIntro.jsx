@@ -9,12 +9,13 @@ const SectionIntro = ({
   children,
   smaller = false,
   invert = false,
+  as: Heading = "h2",
   ...props
 }) => {
   return (
     <Container {...props}>
       <FadeIn className="max-w-2xl">
-        <h2>
+        <Heading>
           {eyebrow && (
             <>
               <span
@@ -39,7 +40,7 @@ const SectionIntro = ({
           >
             {title}
           </span>
-        </h2>
+        </Heading>
         {children && (
           <div
             className={clsx(

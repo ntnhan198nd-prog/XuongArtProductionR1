@@ -4,8 +4,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { resolveContentType } from "@/lib/uploadClient";
 import { fetchJson } from "@/lib/apiClient";
+import { ABOUT_SECTION_LABELS } from "@/lib/siteContent";
 
 const URL_REGEX = /^https?:\/\/[^\s]+$/i;
+// Button links: absolute http(s), mailto:/tel:, or an internal path/anchor.
+const LINK_REGEX = /^(https?:\/\/[^\s]+|mailto:[^\s]+|tel:[^\s]+|[/#][^\s]*)$/i;
 // Loose validators — only require a recognizable pattern is *present* anywhere
 // in the value. Lets the user keep decorative prefixes (emojis, icons) without
 // the form constantly flagging them as invalid.
@@ -22,13 +25,12 @@ const BLOCKS = [
   { key: "intro", label: "Manifesto cuối trang", group: "Trang chủ" },
   { key: "footer1", label: "Footer 1 (footer đen trang chủ)", group: "Trang chủ" },
 
-  { key: "about", label: "PageIntro + Stats", group: "Trang /whoweare" },
-  { key: "cultures", label: "Văn hoá", group: "Trang /whoweare" },
-  { key: "services", label: "Dịch vụ", group: "Trang /whoweare" },
-  { key: "cta", label: "CTA banner + Footer trang chủ", group: "Trang /whoweare" },
+  { key: "about", label: "Trang Về chúng tôi (toàn bộ)", group: "Trang /whoweare" },
+  { key: "services", label: "Dịch vụ (khối tuỳ chọn)", group: "Trang /whoweare" },
 
   { key: "portfolio", label: "Bộ lọc tìm kiếm theo category", group: "Trang /videos + /images" },
 
+  { key: "cta", label: "Thông tin liên hệ chung", group: "Footer + Global" },
   { key: "footer", label: "Footer · Copyright", group: "Footer + Global" },
   { key: "social", label: "Mạng xã hội (footer + CTA)", group: "Footer + Global" },
   { key: "ui", label: "UI · Loading text", group: "Footer + Global" },
@@ -60,6 +62,9 @@ function validate(value, validateAs) {
     if (digits.length < 6) {
       return "Cần có ít nhất 6 chữ số";
     }
+  }
+  if (validateAs === "link" && !LINK_REGEX.test(text)) {
+    return "Dùng https://…, mailto:, tel: hoặc đường dẫn nội bộ bắt đầu bằng /";
   }
   return null;
 }
@@ -575,10 +580,29 @@ function ImageUploadField({
   );
 }
 
-function ServicesBlock({ value, onChange }) {
+function ServicesBlock({ value, onChange, content }) {
   const set = (k, v) => onChange({ ...value, [k]: v });
+  // Visibility lives in the about page's layout (about.sections); surface
+  // it here so nobody edits a block that is not rendered anywhere.
+  const servicesSection = Array.isArray(content?.about?.sections)
+    ? content.about.sections.find((section) => section.key === "services")
+    : null;
+  const servicesVisible = Boolean(servicesSection?.enabled);
   return (
     <div className="space-y-4">
+      <div
+        className={`rounded-xl border p-4 text-xs ${
+          servicesVisible
+            ? "border-gray-200 bg-gray-50 text-gray-600"
+            : "border-amber-200 bg-amber-50 text-amber-900"
+        }`}
+      >
+        {servicesVisible
+          ? "Khối Dịch vụ đang BẬT trên /whoweare."
+          : "Khối Dịch vụ đang ẨN — hiện không xuất hiện ở trang nào."}{" "}
+        Bật/tắt và đổi vị trí ở block{" "}
+        <span className="font-medium">Trang Về chúng tôi → Bố cục</span>.
+      </div>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <TextField label="Eyebrow" value={value.eyebrow} onChange={(v) => set("eyebrow", v)} />
         <TextField label="Tagline (italic dưới heading)" value={value.tagline} onChange={(v) => set("tagline", v)} />
@@ -617,105 +641,363 @@ function CtaBlock({ value, onChange }) {
     <div className="space-y-4">
       <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-xs text-gray-600">
         <p className="font-semibold uppercase tracking-wider text-gray-700">
-          Hai nơi dùng chung dữ liệu này
+          Thông tin liên hệ dùng chung
         </p>
         <ul className="mt-1.5 list-disc space-y-1 pl-5">
           <li>
-            <span className="font-medium">CTA banner đen ở /whoweare</span> —
-            dùng đầy đủ Heading lớn + nút CTA + Heading nhỏ + office/địa
-            chỉ/phone/email.
+            <span className="font-medium">Footer trang chủ (nền đen)</span> — hiện
+            Tên office, Địa chỉ, Phone, Email.
           </li>
           <li>
-            <span className="font-medium">Footer trang chủ (nền đen)</span> —
-            chỉ dùng <em>Tên office, Địa chỉ, Phone, Email</em>. Heading lớn
-            và nút CTA không hiển thị ở đây.
+            <span className="font-medium">Khối Liên hệ ở /whoweare</span> — dùng
+            các giá trị này khi ô tương ứng trong block{" "}
+            <span className="font-medium">Trang Về chúng tôi → Liên hệ</span> để trống.
           </li>
         </ul>
         <p className="mt-1.5">
-          Copyright &ldquo;© XUONGART Inc. 2026&rdquo; sửa ở block{" "}
-          <span className="font-medium">Footer · Copyright</span>; icon
-          mạng xã hội ở block <span className="font-medium">Mạng xã hội</span>.
+          Copyright sửa ở block <span className="font-medium">Footer · Copyright</span>;
+          icon mạng xã hội ở block <span className="font-medium">Mạng xã hội</span>.
         </p>
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <TextField label="Heading lớn (chỉ /whoweare)" value={value.heading} onChange={(v) => set("heading", v)} multiline rows={2} />
-        <TextField label="Text nút CTA (chỉ /whoweare)" value={value.buttonText} onChange={(v) => set("buttonText", v)} placeholder="vd: Liên hệ ngay" />
-        <TextField label="Heading nhỏ — Thông tin liên hệ (chỉ /whoweare)" value={value.contactsHeading} onChange={(v) => set("contactsHeading", v)} />
-        <TextField label="Tên office (footer + /whoweare)" value={value.officeName} onChange={(v) => set("officeName", v)} />
-        <div className="lg:col-span-2">
-          <TextField label="Địa chỉ (footer + /whoweare)" value={value.address} onChange={(v) => set("address", v)} />
+        <TextField label="Tên office" value={value.officeName} onChange={(v) => set("officeName", v)} />
+        <TextField label="Địa chỉ" value={value.address} onChange={(v) => set("address", v)} />
+        <TextField label="Phone" value={value.phone} onChange={(v) => set("phone", v)} validateAs="tel" placeholder="vd: +84 988 888 888" />
+        <TextField label="Email" value={value.email} onChange={(v) => set("email", v)} validateAs="email" placeholder="vd: hello@xuongart.com" />
+      </div>
+    </div>
+  );
+}
+
+function ToggleField({ label, checked, onChange, hint }) {
+  return (
+    <label className="flex items-start gap-2">
+      <input
+        type="checkbox"
+        checked={Boolean(checked)}
+        onChange={(event) => onChange(event.target.checked)}
+        className="mt-0.5 h-4 w-4 rounded border-gray-300"
+      />
+      <span>
+        <span className="block text-sm text-gray-800">{label}</span>
+        {hint ? <span className="block text-xs text-gray-500">{hint}</span> : null}
+      </span>
+    </label>
+  );
+}
+
+function SelectField({ label, value, onChange, options, hint }) {
+  return (
+    <label className="block">
+      <span className={labelCls}>{label}</span>
+      <select
+        className={`${inputCls} mt-1.5 bg-white`}
+        value={value ?? ""}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      {hint ? <span className="mt-1 block text-xs text-gray-500">{hint}</span> : null}
+    </label>
+  );
+}
+
+const THEME_OPTIONS = [
+  { value: "dark", label: "Nền đen, chữ trắng" },
+  { value: "light", label: "Nền xám nhạt, chữ đen" },
+];
+
+const ABOUT_TABS = [
+  { key: "layout", label: "Bố cục" },
+  { key: "hero", label: "Mở đầu + số liệu" },
+  { key: "founder", label: "Founder" },
+  { key: "values", label: "Giá trị" },
+  { key: "process", label: "Quy trình" },
+  { key: "testimonials", label: "Khách nói gì" },
+  { key: "cta", label: "Liên hệ" },
+];
+
+// Order + visibility of the /whoweare blocks. Fixed set (no add/remove):
+// a hidden block keeps its content so it can be switched back on later.
+function AboutLayoutEditor({ sections, onChange }) {
+  const list = Array.isArray(sections) ? sections : [];
+  const move = (idx, dir) => {
+    const copy = [...list];
+    const target = idx + dir;
+    if (target < 0 || target >= copy.length) return;
+    [copy[idx], copy[target]] = [copy[target], copy[idx]];
+    onChange(copy);
+  };
+  const toggle = (idx, enabled) =>
+    onChange(list.map((section, i) => (i === idx ? { ...section, enabled } : section)));
+
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-gray-600">
+        Thứ tự từ trên xuống là thứ tự hiện trên trang. Bỏ tick để ẩn một khối — nội
+        dung của khối vẫn được giữ. Khối <em>Khách nói gì</em> chỉ hiện khi có ít nhất
+        một nhận xét; khối <em>Dịch vụ</em> lấy nội dung từ block Dịch vụ.
+      </p>
+      {list.map((section, idx) => (
+        <div
+          key={section.key}
+          className={`flex items-center justify-between gap-3 rounded-xl border p-3 ${
+            section.enabled ? "border-gray-200 bg-white" : "border-dashed border-gray-300 bg-gray-50"
+          }`}
+        >
+          <label className="flex min-w-0 items-center gap-3">
+            <input
+              type="checkbox"
+              checked={Boolean(section.enabled)}
+              onChange={(event) => toggle(idx, event.target.checked)}
+              className="h-4 w-4 rounded border-gray-300"
+            />
+            <span className={`truncate text-sm ${section.enabled ? "text-gray-900" : "text-gray-500"}`}>
+              {idx + 1}. {ABOUT_SECTION_LABELS[section.key] || section.key}
+            </span>
+          </label>
+          <div className="flex shrink-0 gap-1">
+            <button
+              type="button"
+              onClick={() => move(idx, -1)}
+              disabled={idx === 0}
+              className="rounded border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-100 disabled:opacity-40"
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              onClick={() => move(idx, 1)}
+              disabled={idx === list.length - 1}
+              className="rounded border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-100 disabled:opacity-40"
+            >
+              ↓
+            </button>
+          </div>
         </div>
-        <TextField label="Phone (footer + /whoweare)" value={value.phone} onChange={(v) => set("phone", v)} validateAs="tel" placeholder="vd: +84 988 888 888" />
-        <TextField label="Email (footer + /whoweare)" value={value.email} onChange={(v) => set("email", v)} validateAs="email" placeholder="vd: hello@xuongart.com" />
-      </div>
+      ))}
     </div>
   );
 }
 
-function AboutBlock({ value, onChange }) {
-  const set = (k, v) => onChange({ ...value, [k]: v });
+function TitledItemList({ title, items, onChange, addLabel, titleLabel = "Tiêu đề", descriptionLabel = "Mô tả" }) {
+  return (
+    <ItemList
+      title={title}
+      items={items}
+      onChange={onChange}
+      emptyItem={{ title: "", description: "" }}
+      addLabel={addLabel}
+      renderItem={(item, update) => (
+        <div className="space-y-2">
+          <TextField label={titleLabel} value={item.title} onChange={(v) => update({ ...item, title: v })} />
+          <TextField label={descriptionLabel} value={item.description} onChange={(v) => update({ ...item, description: v })} multiline rows={2} />
+        </div>
+      )}
+    />
+  );
+}
+
+function ParagraphList({ title, items, onChange, addLabel = "Thêm đoạn" }) {
+  return (
+    <ItemList
+      title={title}
+      items={items}
+      onChange={onChange}
+      emptyItem=""
+      addLabel={addLabel}
+      renderItem={(item, update) => (
+        <textarea
+          value={item}
+          onChange={(event) => update(event.target.value)}
+          className={inputCls}
+          rows={3}
+        />
+      )}
+    />
+  );
+}
+
+// Whole /whoweare page: layout (order + visibility) plus one sub-tab per
+// block. Exported so it can be mounted standalone in a test harness.
+export function AboutBlock({ value, onChange }) {
+  const [tab, setTab] = useState("layout");
+  const about = value || {};
+  const set = (k, v) => onChange({ ...about, [k]: v });
+  const setIn = (section, k, v) =>
+    onChange({ ...about, [section]: { ...(about[section] || {}), [k]: v } });
+  const hero = about.hero || {};
+  const founder = about.founder || {};
+  const values = about.values || {};
+  const process = about.process || {};
+  const testimonials = about.testimonials || {};
+  const cta = about.cta || {};
+
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <TextField label="Eyebrow" value={value.eyebrow} onChange={(v) => set("eyebrow", v)} />
-        <TextField label="Title" value={value.title} onChange={(v) => set("title", v)} />
+      <div className="flex flex-wrap gap-1 rounded-xl border border-gray-200 p-1" role="tablist">
+        {ABOUT_TABS.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            role="tab"
+            aria-selected={tab === item.key}
+            onClick={() => setTab(item.key)}
+            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+              tab === item.key ? "bg-black text-white" : "text-gray-700 hover:bg-gray-100"
+            }`}
+          >
+            {item.label}
+          </button>
+        ))}
       </div>
-      <TextField label="Đoạn mở đầu (lead)" value={value.lead} onChange={(v) => set("lead", v)} multiline rows={3} />
-      <ItemList
-        title="Các đoạn bổ sung"
-        items={value.paragraphs}
-        onChange={(paragraphs) => set("paragraphs", paragraphs)}
-        emptyItem=""
-        addLabel="Thêm đoạn"
-        renderItem={(item, update) => (
-          <textarea
-            value={item}
-            onChange={(event) => update(event.target.value)}
-            className={inputCls}
-            rows={3}
+
+      {tab === "layout" ? (
+        <AboutLayoutEditor sections={about.sections} onChange={(sections) => set("sections", sections)} />
+      ) : null}
+
+      {tab === "hero" ? (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <TextField label="Eyebrow (dòng nhỏ trên tiêu đề)" value={hero.eyebrow} onChange={(v) => setIn("hero", "eyebrow", v)} />
+            <TextField label="Tiêu đề lớn" value={hero.title} onChange={(v) => setIn("hero", "title", v)} multiline rows={2} />
+          </div>
+          <TextField label="Đoạn mở đầu (lead)" value={hero.lead} onChange={(v) => setIn("hero", "lead", v)} multiline rows={3} />
+          <ParagraphList title="Đoạn bổ sung dưới lead (tuỳ chọn)" items={hero.paragraphs} onChange={(v) => setIn("hero", "paragraphs", v)} />
+          <ToggleField label="Hiện dãy số liệu dưới phần mở đầu" checked={hero.showStats} onChange={(v) => setIn("hero", "showStats", v)} />
+          <ItemList
+            title="Số liệu"
+            items={hero.stats}
+            onChange={(stats) => setIn("hero", "stats", stats)}
+            emptyItem={{ value: "", label: "" }}
+            addLabel="Thêm số liệu"
+            renderItem={(item, update) => (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <TextField label="Con số (text, vd: 200+)" value={item.value} onChange={(v) => update({ ...item, value: v })} />
+                <TextField label="Chú thích" value={item.label} onChange={(v) => update({ ...item, label: v })} />
+              </div>
+            )}
           />
-        )}
-      />
-      <ItemList
-        title="3 ô số liệu"
-        items={value.stats}
-        onChange={(stats) => set("stats", stats)}
-        emptyItem={{ value: "", label: "" }}
-        addLabel="Thêm số liệu"
-        renderItem={(item, update) => (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <TextField label="Giá trị (text)" value={item.value} onChange={(v) => update({ ...item, value: v })} />
-            <TextField label="Label" value={item.label} onChange={(v) => update({ ...item, label: v })} />
-          </div>
-        )}
-      />
-    </div>
-  );
-}
+        </div>
+      ) : null}
 
-function CulturesBlock({ value, onChange }) {
-  const set = (k, v) => onChange({ ...value, [k]: v });
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <TextField label="Eyebrow" value={value.eyebrow} onChange={(v) => set("eyebrow", v)} />
-        <TextField label="Title" value={value.title} onChange={(v) => set("title", v)} />
-      </div>
-      <TextField label="Mô tả" value={value.description} onChange={(v) => set("description", v)} multiline rows={2} />
-      <ItemList
-        title="Giá trị văn hoá"
-        items={value.items}
-        onChange={(items) => set("items", items)}
-        emptyItem={{ title: "", description: "" }}
-        addLabel="Thêm giá trị"
-        renderItem={(item, update) => (
-          <div className="space-y-2">
-            <TextField label="Tiêu đề" value={item.title} onChange={(v) => update({ ...item, title: v })} />
-            <TextField label="Mô tả" value={item.description} onChange={(v) => update({ ...item, description: v })} multiline rows={2} />
+      {tab === "founder" ? (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <TextField label="Eyebrow" value={founder.eyebrow} onChange={(v) => setIn("founder", "eyebrow", v)} />
+            <TextField label="Tên" value={founder.name} onChange={(v) => setIn("founder", "name", v)} />
+            <TextField label="Chức danh" value={founder.role} onChange={(v) => setIn("founder", "role", v)} />
           </div>
-        )}
-      />
+          <ImageUploadField
+            label="Ảnh chân dung"
+            hint="Tỉ lệ 4:5 (dọc), gợi ý 1200×1500px trở lên. Để trống thì phần Founder hiện toàn chữ."
+            value={founder.photo}
+            onChange={(photo) => setIn("founder", "photo", photo)}
+            folder="about"
+            previewAspect="4/5"
+            altPlaceholder="Mô tả ảnh (a11y) — ví dụ: Nguyễn Trọng Nhân trên set quay"
+          />
+          <ParagraphList title="Câu chuyện (mỗi dòng một đoạn)" items={founder.story} onChange={(v) => setIn("founder", "story", v)} />
+          <TextField label="Câu nói của founder (hiện có gạch cam bên trái)" value={founder.quote} onChange={(v) => setIn("founder", "quote", v)} multiline rows={2} />
+        </div>
+      ) : null}
+
+      {tab === "values" ? (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <TextField label="Eyebrow" value={values.eyebrow} onChange={(v) => setIn("values", "eyebrow", v)} />
+            <TextField label="Tiêu đề" value={values.title} onChange={(v) => setIn("values", "title", v)} />
+          </div>
+          <TextField label="Mô tả (1 câu dưới tiêu đề)" value={values.description} onChange={(v) => setIn("values", "description", v)} multiline rows={2} />
+          <SelectField label="Màu nền khối" value={values.theme} onChange={(v) => setIn("values", "theme", v)} options={THEME_OPTIONS} />
+          <TitledItemList title="Các giá trị" items={values.items} onChange={(v) => setIn("values", "items", v)} addLabel="Thêm giá trị" titleLabel="Tên giá trị (1–3 từ)" descriptionLabel="Giải thích (1 câu)" />
+        </div>
+      ) : null}
+
+      {tab === "process" ? (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <TextField label="Eyebrow" value={process.eyebrow} onChange={(v) => setIn("process", "eyebrow", v)} />
+            <TextField label="Tiêu đề" value={process.title} onChange={(v) => setIn("process", "title", v)} />
+          </div>
+          <TextField label="Mô tả (tuỳ chọn)" value={process.description} onChange={(v) => setIn("process", "description", v)} multiline rows={2} />
+          <ToggleField label="Đánh số bước (01, 02, …)" checked={process.numbered} onChange={(v) => setIn("process", "numbered", v)} />
+          <TitledItemList title="Các bước" items={process.steps} onChange={(v) => setIn("process", "steps", v)} addLabel="Thêm bước" titleLabel="Tên bước" descriptionLabel="Mô tả bước" />
+        </div>
+      ) : null}
+
+      {tab === "testimonials" ? (
+        <div className="space-y-4">
+          <p className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600">
+            Khối này chỉ hiện trên trang khi có ít nhất một nhận xét. Nên xin phép khách
+            trước khi đăng tên và chức danh.
+          </p>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <TextField label="Eyebrow" value={testimonials.eyebrow} onChange={(v) => setIn("testimonials", "eyebrow", v)} />
+            <TextField label="Tiêu đề" value={testimonials.title} onChange={(v) => setIn("testimonials", "title", v)} />
+          </div>
+          <TextField label="Mô tả (tuỳ chọn)" value={testimonials.description} onChange={(v) => setIn("testimonials", "description", v)} multiline rows={2} />
+          <ItemList
+            title="Nhận xét"
+            items={testimonials.items}
+            onChange={(items) => setIn("testimonials", "items", items)}
+            emptyItem={{ quote: "", name: "", role: "" }}
+            addLabel="Thêm nhận xét"
+            renderItem={(item, update) => (
+              <div className="space-y-2">
+                <TextField
+                  label="Nội dung nhận xét (bắt buộc)"
+                  value={item.quote}
+                  onChange={(v) => update({ ...item, quote: v })}
+                  multiline
+                  rows={3}
+                  hint={String(item.quote || "").trim() ? "" : "Chưa có nội dung: nhận xét này sẽ bị bỏ khi lưu."}
+                />
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <TextField label="Tên khách" value={item.name} onChange={(v) => update({ ...item, name: v })} />
+                  <TextField label="Chức danh, thương hiệu" value={item.role} onChange={(v) => update({ ...item, role: v })} placeholder="vd: Brand Manager, Sony Singapore" />
+                </div>
+              </div>
+            )}
+          />
+        </div>
+      ) : null}
+
+      {tab === "cta" ? (
+        <div className="space-y-4">
+          <TextField label="Câu kêu gọi (heading lớn)" value={cta.heading} onChange={(v) => setIn("cta", "heading", v)} multiline rows={2} />
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <TextField label="Chữ trên nút" value={cta.buttonText} onChange={(v) => setIn("cta", "buttonText", v)} />
+            <TextField
+              label="Nút dẫn đến"
+              value={cta.buttonUrl}
+              onChange={(v) => setIn("cta", "buttonUrl", v)}
+              validateAs="link"
+              placeholder="https://m.me/xuongartproduction"
+              hint="Link ngoài (https://…) mở tab mới. Có thể dùng mailto:, tel:, hoặc đường dẫn nội bộ như /videos. Để trống để ẩn nút."
+            />
+          </div>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <TextField label="Heading nhỏ phần liên hệ" value={cta.contactsHeading} onChange={(v) => setIn("cta", "contactsHeading", v)} />
+            <TextField label="Tên office" value={cta.officeName} onChange={(v) => setIn("cta", "officeName", v)} hint="Để trống = dùng giá trị ở block Thông tin liên hệ chung." />
+            <TextField label="Địa chỉ" value={cta.address} onChange={(v) => setIn("cta", "address", v)} hint="Để trống = dùng giá trị chung." />
+            <TextField label="Phone" value={cta.phone} onChange={(v) => setIn("cta", "phone", v)} validateAs="tel" hint="Để trống = dùng giá trị chung." />
+            <TextField label="Email" value={cta.email} onChange={(v) => setIn("cta", "email", v)} validateAs="email" hint="Để trống = dùng giá trị chung." />
+            <TextField label="Dòng kết (tagline, chữ nhỏ cuối khối)" value={cta.tagline} onChange={(v) => setIn("cta", "tagline", v)} />
+          </div>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <SelectField label="Màu nền khối" value={cta.theme} onChange={(v) => setIn("cta", "theme", v)} options={THEME_OPTIONS} />
+            <div className="pt-6">
+              <ToggleField label="Hiện icon mạng xã hội" checked={cta.showSocial} onChange={(v) => setIn("cta", "showSocial", v)} hint="Link các mạng sửa ở block Mạng xã hội." />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -739,6 +1021,7 @@ function SocialBlock({ value, onChange }) {
       <TextField label="Facebook URL" value={value.facebook} onChange={(v) => set("facebook", v)} placeholder="https://facebook.com/..." validateAs="url" />
       <TextField label="Instagram URL" value={value.instagram} onChange={(v) => set("instagram", v)} placeholder="https://instagram.com/..." validateAs="url" />
       <TextField label="TikTok URL" value={value.tiktok} onChange={(v) => set("tiktok", v)} placeholder="https://tiktok.com/@..." validateAs="url" />
+      <TextField label="YouTube URL" value={value.youtube} onChange={(v) => set("youtube", v)} placeholder="https://youtube.com/@..." validateAs="url" />
       <TextField label="Zalo URL" value={value.zalo} onChange={(v) => set("zalo", v)} placeholder="https://zalo.me/..." validateAs="url" />
     </div>
   );
@@ -773,7 +1056,7 @@ function Footer1Block({ content, onContentChange }) {
         </p>
         <p className="mt-1.5">
           Block này gom các field đang hiển thị ở Footer 1 (footer đen trang
-          chủ). Cùng dữ liệu với block <span className="font-medium">CTA banner + Footer trang chủ</span>,{" "}
+          chủ). Cùng dữ liệu với block <span className="font-medium">Thông tin liên hệ chung</span>,{" "}
           <span className="font-medium">Mạng xã hội</span> và{" "}
           <span className="font-medium">Footer · Copyright</span> — sửa chỗ
           nào cũng ăn vào nhau, lưu một lần là cập nhật khắp nơi.
@@ -785,13 +1068,13 @@ function Footer1Block({ content, onContentChange }) {
           Thông tin liên hệ (cột trái)
         </h3>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <TextField label="Tên office" value={cta.officeName} onChange={(v) => setCta("officeName", v)} placeholder="vd: Our Office – Hồ Chí Minh City" />
-          <TextField label="Phone" value={cta.phone} onChange={(v) => setCta("phone", v)} validateAs="tel" placeholder="vd: ☎ 036 499 4647" />
+          <TextField label="Tên office" value={cta.officeName} onChange={(v) => setCta("officeName", v)} placeholder="vd: Văn phòng XUONGART" />
+          <TextField label="Phone" value={cta.phone} onChange={(v) => setCta("phone", v)} validateAs="tel" placeholder="vd: 036 499 4647" />
           <div className="lg:col-span-2">
-            <TextField label="Địa chỉ" value={cta.address} onChange={(v) => setCta("address", v)} placeholder="vd: 📍 172 Lâm Văn Bền, Q.7, TP.HCM" />
+            <TextField label="Địa chỉ" value={cta.address} onChange={(v) => setCta("address", v)} placeholder="vd: 172 Lâm Văn Bền, Q.7, TP.HCM" />
           </div>
           <div className="lg:col-span-2">
-            <TextField label="Email" value={cta.email} onChange={(v) => setCta("email", v)} validateAs="email" placeholder="vd: 📧 hello@xuongart.com" />
+            <TextField label="Email" value={cta.email} onChange={(v) => setCta("email", v)} validateAs="email" placeholder="vd: hello@xuongart.com" />
           </div>
         </div>
       </div>
@@ -804,6 +1087,7 @@ function Footer1Block({ content, onContentChange }) {
           <TextField label="Facebook URL" value={social.facebook} onChange={(v) => setSocial("facebook", v)} placeholder="https://facebook.com/..." validateAs="url" />
           <TextField label="Instagram URL" value={social.instagram} onChange={(v) => setSocial("instagram", v)} placeholder="https://instagram.com/..." validateAs="url" />
           <TextField label="TikTok URL" value={social.tiktok} onChange={(v) => setSocial("tiktok", v)} placeholder="https://tiktok.com/@..." validateAs="url" />
+          <TextField label="YouTube URL" value={social.youtube} onChange={(v) => setSocial("youtube", v)} placeholder="https://youtube.com/@..." validateAs="url" />
           <TextField label="Zalo URL" value={social.zalo} onChange={(v) => setSocial("zalo", v)} placeholder="https://zalo.me/..." validateAs="url" />
         </div>
       </div>
@@ -914,7 +1198,6 @@ const BLOCK_RENDERERS = {
   services: ServicesBlock,
   cta: CtaBlock,
   about: AboutBlock,
-  cultures: CulturesBlock,
   footer: FooterBlock,
   social: SocialBlock,
   ui: UiBlock,
