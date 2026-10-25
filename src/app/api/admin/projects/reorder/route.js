@@ -165,7 +165,7 @@ export async function POST(request) {
       }
 
       return store;
-    });
+    }, { action: slotMap ? "projects.featured-layout" : "projects.reorder" });
 
     // Return the saved list so the admin can refresh its optimistic state
     // (pins may have changed) without a second round-trip.

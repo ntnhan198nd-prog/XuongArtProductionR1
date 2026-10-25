@@ -108,9 +108,12 @@ export async function GET(request) {
     } catch {
       parsed = null;
     }
+    // Same rule as contentStore: only a plain object is a valid store.
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) parsed = null;
     report.checks.store = {
-      // Reachable but unparseable is NOT ok — the app will wipe it on the
-      // next read (see contentStore.readStoreInternal).
+      // Reachable but unparseable is NOT ok — every admin read fails with
+      // STORE_CORRUPT until the owner restores a snapshot (the file itself
+      // is kept; see contentStore.readStoreInternal).
       ok: parsed !== null,
       exists: true,
       bytes: raw.length,
@@ -122,7 +125,7 @@ export async function GET(request) {
     };
     if (parsed === null) {
       report.problems.push(
-        `File ${STORE_KEY} tồn tại nhưng không phải JSON hợp lệ — lần đọc tiếp theo sẽ reset về store trống.`
+        `File ${STORE_KEY} bị hỏng (không phải JSON hợp lệ). File được giữ nguyên và một bản sao được lưu thành _admin/content.corrupt-*.json. Vào tab Lịch sử trong admin để khôi phục bản gần nhất.`
       );
     }
   } catch (error) {

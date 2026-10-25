@@ -16,9 +16,57 @@ import { NextResponse } from "next/server";
 
 export const NO_STORE_HEADERS = { "Cache-Control": "no-store, max-age=0" };
 
+// Errors the content store raises on purpose (error.code, see
+// lib/contentStore.js). They already carry their meaning, so they get a
+// plain Vietnamese message instead of the R2/SDK diagnostics below.
+const STORE_ERRORS = {
+  STORE_CORRUPT: {
+    status: 500,
+    message: "File nội dung trên R2 bị hỏng.",
+    hint: "Vào tab Lịch sử để khôi phục bản gần nhất.",
+  },
+  CORRUPT_COPY_FAILED: {
+    status: 503,
+    message: "Chưa giữ được bản sao của file nội dung bị hỏng, nên chưa ghi đè để tránh mất dữ liệu.",
+    hint: "Thử lại sau ít phút. Nếu vẫn lỗi, hãy báo người kỹ thuật.",
+  },
+  NOT_CORRUPT: {
+    status: 409,
+    message: "Nội dung hiện tại vẫn đọc được bình thường, không cần bắt đầu lại.",
+    hint: "Bấm Làm mới để tải lại tab Lịch sử.",
+  },
+  SNAPSHOT_CORRUPT: {
+    status: 500,
+    message: "Bản lưu này bị hỏng, không đọc được.",
+    hint: "Hãy chọn một bản khác trong Lịch sử.",
+  },
+  NOT_FOUND: {
+    status: 404,
+    message: "Không tìm thấy bản lưu này (có thể đã bị xoá do quá cũ).",
+    hint: "Bấm Làm mới để tải lại danh sách Lịch sử.",
+  },
+  BAD_KEY: {
+    status: 400,
+    message: "Bản lưu không hợp lệ.",
+    hint: "Bấm Làm mới để tải lại danh sách Lịch sử.",
+  },
+};
+
+function storeErrorInfo(error) {
+  const code = typeof error?.code === "string" ? error.code : "";
+  return Object.prototype.hasOwnProperty.call(STORE_ERRORS, code)
+    ? { code, ...STORE_ERRORS[code] }
+    : null;
+}
+
 // Map an exception thrown by the content store / R2 SDK to a readable
 // message + an actionable hint (in Vietnamese, matching the admin UI).
 export function describeServerError(error) {
+  const known = storeErrorInfo(error);
+  if (known) {
+    return { message: known.message, hint: known.hint, code: known.code };
+  }
+
   const rawName = String(error?.name || error?.Code || "").trim();
   // Generic JS error classes carry no diagnostic value as a prefix
   // ("Error: R2 is not configured…"); SDK codes (InvalidAccessKeyId,
@@ -72,7 +120,8 @@ export function describeServerError(error) {
   };
 }
 
-// Build the JSON 500 response for an unexpected error in an admin route.
+// Build the JSON error response for an exception in an admin route (500,
+// or the 400/404 of a known store error such as a bad history key).
 // `prefix` lets the route say what it was doing ("Không đọc được kho nội dung
 // trên R2 —") so the admin sees both the operation and the underlying cause.
 export function serverErrorResponse(error, { context = "", prefix = "" } = {}) {
@@ -84,6 +133,6 @@ export function serverErrorResponse(error, { context = "", prefix = "" } = {}) {
       hint,
       code,
     },
-    { status: 500, headers: NO_STORE_HEADERS }
+    { status: storeErrorInfo(error)?.status || 500, headers: NO_STORE_HEADERS }
   );
 }

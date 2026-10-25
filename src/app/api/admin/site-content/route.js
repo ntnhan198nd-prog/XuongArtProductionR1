@@ -68,7 +68,7 @@ export async function PUT(request) {
       oldKeys = collectAssetKeysFromSite(store.site);
       store.site = next;
       return store;
-    });
+    }, { action: "site.update" });
 
     const orphans = keysToDelete(oldKeys, collectAssetKeysFromSite(next));
     if (orphans.length > 0) {
@@ -93,7 +93,7 @@ export async function DELETE(request) {
       oldKeys = collectAssetKeysFromSite(store.site);
       store.site = null;
       return store;
-    });
+    }, { action: "site.reset" });
 
     if (oldKeys.length > 0) {
       await deleteR2Keys(oldKeys);

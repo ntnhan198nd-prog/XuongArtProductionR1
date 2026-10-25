@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
+import HistoryPanel from "@/components/admin/HistoryPanel";
 import ProjectsAdminPanel from "@/components/admin/ProjectsAdminPanel";
 import SiteContentAdminPanel from "@/components/admin/SiteContentAdminPanel";
 import { fetchJson, readJsonSafe } from "@/lib/apiClient";
@@ -16,9 +17,19 @@ const MAIN_TABS = [
   { key: "showreel-featured", label: "Video Showreel + Nổi Bật" },
   { key: "other-videos", label: "Video Khác" },
   { key: "images", label: "Dự Án Ảnh" },
+  { key: "history", label: "Lịch sử" },
 ];
 
 const DEFAULT_TAB = "content";
+
+// Panels that can have uploads in flight / unsaved uploads. They report it
+// through onBusyChange so the history tab can warn before a restore reloads
+// the page (and kills that work).
+const BUSY_PANEL_KEYS = ["showreel-featured", "other-videos", "images"];
+
+// After a history restore the page reloads; if it is still alive after this
+// long, another panel's "leave site?" prompt was answered with Stay.
+const RELOAD_FALLBACK_MS = 3000;
 
 const LEGACY_TAB_ALIASES = {
   projects: "showreel-featured",
@@ -49,6 +60,22 @@ export default function AdminPage() {
   const initialTab = resolveTabKey(tabFromUrl) || DEFAULT_TAB;
   const [tab, setTab] = useState(initialTab);
   const [contentDirty, setContentDirty] = useState(false);
+  // Per-panel "uploading or unsaved uploads" flags (see BUSY_PANEL_KEYS).
+  const [panelBusy, setPanelBusy] = useState({});
+  const busyHandlers = useMemo(
+    () =>
+      Object.fromEntries(
+        BUSY_PANEL_KEYS.map((key) => [
+          key,
+          (busy) =>
+            setPanelBusy((prev) =>
+              Boolean(prev[key]) === Boolean(busy) ? prev : { ...prev, [key]: Boolean(busy) }
+            ),
+        ])
+      ),
+    []
+  );
+  const otherWorkPending = Object.values(panelBusy).some(Boolean);
   // Lazy-mount each panel on first visit, then keep it mounted (just hidden)
   // so internal state — form drafts, active block, scroll position — survives
   // tab switches.
@@ -99,10 +126,24 @@ export default function AdminPage() {
     checkSession();
   }, []);
 
+  // Set right before the reload that follows a history restore: the admin
+  // already confirmed that unsaved edits will be lost, so don't ask again.
+  const skipUnloadGuardRef = useRef(false);
+  const reloadAfterRestore = useCallback(() => {
+    skipUnloadGuardRef.current = true;
+    window.location.reload();
+    // Still here a moment later = another panel's unload prompt was
+    // answered with "Stay": turn our own guard back on.
+    setTimeout(() => {
+      skipUnloadGuardRef.current = false;
+    }, RELOAD_FALLBACK_MS);
+  }, []);
+
   // beforeunload: shell-level warning so it covers any tab with unsaved edits.
   useEffect(() => {
     if (!contentDirty) return undefined;
     const handler = (event) => {
+      if (skipUnloadGuardRef.current) return;
       event.preventDefault();
       event.returnValue = "";
     };
@@ -133,9 +174,13 @@ export default function AdminPage() {
   };
 
   const handleLogout = async () => {
+    const pending = [
+      contentDirty ? "nội dung trang chưa lưu" : null,
+      otherWorkPending ? "video/ảnh đang tải lên hoặc đã tải lên nhưng chưa lưu" : null,
+    ].filter(Boolean);
     if (
-      contentDirty &&
-      !window.confirm("Có thay đổi Site Content chưa lưu. Logout sẽ mất. Tiếp tục?")
+      pending.length > 0 &&
+      !window.confirm(`Đang có ${pending.join(" và ")}. Đăng xuất sẽ mất các thay đổi này. Tiếp tục?`)
     ) {
       return;
     }
@@ -218,10 +263,13 @@ export default function AdminPage() {
           </div>
         </div>
 
+        {/* Five tabs: tighter padding on phones so the row fits 375px; the
+            scroll wrapper only kicks in on even narrower screens. */}
+        <div className="mt-6 overflow-x-auto">
         <div
           role="tablist"
           aria-label="Admin sections"
-          className="mt-6 flex gap-2 border-b border-gray-200"
+          className="flex w-fit min-w-full gap-1 border-b border-gray-200 sm:gap-2"
         >
           {MAIN_TABS.map((item) => {
             const isActive = tab === item.key;
@@ -233,7 +281,7 @@ export default function AdminPage() {
                 role="tab"
                 aria-selected={isActive}
                 onClick={() => switchTab(item.key)}
-                className={`relative -mb-px flex items-center gap-1.5 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+                className={`relative -mb-px flex items-center gap-1.5 border-b-2 px-2.5 py-2.5 text-sm font-medium transition-colors sm:px-4 ${
                   isActive
                     ? "border-black text-black"
                     : "border-transparent text-gray-600 hover:text-black"
@@ -250,6 +298,7 @@ export default function AdminPage() {
             );
           })}
         </div>
+        </div>
 
         <div className="mt-2">
           {visitedTabs.has("content") ? (
@@ -259,17 +308,33 @@ export default function AdminPage() {
           ) : null}
           {visitedTabs.has("showreel-featured") ? (
             <div hidden={tab !== "showreel-featured"}>
-              <ProjectsAdminPanel mode="showreel-featured" />
+              <ProjectsAdminPanel
+                mode="showreel-featured"
+                onBusyChange={busyHandlers["showreel-featured"]}
+              />
             </div>
           ) : null}
           {visitedTabs.has("other-videos") ? (
             <div hidden={tab !== "other-videos"}>
-              <ProjectsAdminPanel mode="other-videos" />
+              <ProjectsAdminPanel
+                mode="other-videos"
+                onBusyChange={busyHandlers["other-videos"]}
+              />
             </div>
           ) : null}
           {visitedTabs.has("images") ? (
             <div hidden={tab !== "images"}>
-              <ProjectsAdminPanel mode="images" />
+              <ProjectsAdminPanel mode="images" onBusyChange={busyHandlers.images} />
+            </div>
+          ) : null}
+          {visitedTabs.has("history") ? (
+            <div hidden={tab !== "history"}>
+              <HistoryPanel
+                active={tab === "history"}
+                contentDirty={contentDirty}
+                otherWorkPending={otherWorkPending}
+                onRestored={reloadAfterRestore}
+              />
             </div>
           ) : null}
         </div>

@@ -62,7 +62,7 @@ export async function POST(request) {
       store.imageProjects = insertAtOrder(store.imageProjects, created, payload.order);
       created = store.imageProjects.find((item) => Number(item.id) === id) || created;
       return store;
-    });
+    }, { action: "image-project.create", detail: () => created?.id });
 
     return NextResponse.json({ data: created }, { status: 201 });
   } catch (error) {

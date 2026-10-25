@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { resolveContentType } from "@/lib/uploadClient";
+import { UploadError, uploadFile, validateUploadFile } from "@/lib/uploadClient";
 import { fetchJson } from "@/lib/apiClient";
 import { ABOUT_SECTION_LABELS } from "@/lib/siteContent";
 
@@ -265,60 +265,30 @@ function StatsBlock({ value, onChange }) {
   );
 }
 
-async function uploadImageToR2(file, folder = "brands") {
-  const contentType = resolveContentType(file, "image/png");
-  // Step 1 — same-origin presign request. fetchJson tolerates empty /
-  // non-JSON error bodies and always yields a readable message.
-  const presignPayload = await fetchJson(
-    "/api/admin/r2/upload-url",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "same-origin",
-      body: JSON.stringify({
-        filename: file.name,
-        contentType,
-        folder,
-      }),
-    },
-    { fallbackError: "Không lấy được upload URL" }
-  );
-  const { key, uploadUrl, publicUrl } = presignPayload.data || {};
-  if (!uploadUrl) throw new Error("Server không trả về upload URL.");
-
-  // Step 2 — PUT direct to R2 via XHR (matches the existing project upload flow
-  // so CORS handling is identical to what's already working).
-  await new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("PUT", uploadUrl);
-    xhr.setRequestHeader("Content-Type", contentType);
-    // Logos/site images are small, so a fixed timeout is enough to stop a
-    // stalled connection from hanging the upload forever (onerror does not
-    // fire on a black-holed socket).
-    xhr.timeout = 120000;
-    xhr.ontimeout = () => reject(new Error("Upload quá thời gian — kiểm tra mạng và thử lại."));
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve();
-      } else {
-        reject(new Error(`R2 upload thất bại (HTTP ${xhr.status}).`));
-      }
-    };
-    xhr.onerror = () =>
-      reject(
-        new Error(
-          "Không kết nối được R2 (kiểm tra CORS bucket cho phép PUT từ origin này)."
-        )
-      );
-    xhr.onabort = () => reject(new Error("Upload bị hủy."));
-    xhr.send(file);
+// Thin wrapper over the shared uploader (presign + XHR PUT with progress,
+// stall watchdog, Vietnamese UploadError). onProgress receives 0–100.
+async function uploadImageToR2(file, folder = "brands", onProgress) {
+  // Image-only check first, so a HEIC/SVG logo gets an image-only message
+  // (the generic 'type' hint also lists videos and PDF).
+  const problem = validateUploadFile(file, { kind: "image" });
+  if (problem) throw new UploadError("type", { message: problem, hint: "" });
+  const asset = await uploadFile(file, folder, {
+    fallbackContentType: "image/png",
+    onProgress:
+      typeof onProgress === "function" ? (info) => onProgress(info.pct) : undefined,
   });
+  return { url: asset.url, key: asset.key };
+}
 
-  return { url: publicUrl, key };
+// UploadError (and ApiError) carry a Vietnamese message + optional hint.
+function uploadErrorText(error) {
+  const message = error?.message || "Tải ảnh lên thất bại.";
+  return error?.hint ? `${message} ${error.hint}` : message;
 }
 
 function BrandLogoSlot({ idx, value, onChange }) {
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [localError, setLocalError] = useState("");
   const safe = value || { alt: "", logoUrl: "", logoKey: "" };
 
@@ -329,12 +299,13 @@ function BrandLogoSlot({ idx, value, onChange }) {
       return;
     }
     setLocalError("");
+    setProgress(0);
     setUploading(true);
     try {
-      const result = await uploadImageToR2(file, "brands");
+      const result = await uploadImageToR2(file, "brands", setProgress);
       onChange({ ...safe, logoUrl: result.url, logoKey: result.key });
     } catch (e) {
-      setLocalError(e.message);
+      setLocalError(uploadErrorText(e));
     } finally {
       setUploading(false);
     }
@@ -374,11 +345,16 @@ function BrandLogoSlot({ idx, value, onChange }) {
         type="file"
         accept="image/*"
         disabled={uploading}
-        onChange={(event) => handleFile(event.target.files?.[0])}
+        onChange={(event) => {
+          const input = event.target;
+          handleFile(input.files?.[0]);
+          // Allow picking the same file again after an error (retry).
+          input.value = "";
+        }}
         className="block w-full text-xs file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-black file:px-3 file:py-1.5 file:text-white hover:file:bg-gray-800 disabled:opacity-50"
       />
       {uploading ? (
-        <p className="text-xs text-gray-500">Đang tải lên…</p>
+        <p className="text-xs text-gray-500">Đang tải lên… {Math.round(progress)}%</p>
       ) : localError ? (
         <p className="text-xs text-red-600">{localError}</p>
       ) : null}
@@ -500,6 +476,7 @@ function ImageUploadField({
   altPlaceholder = "Mô tả ảnh (alt text)",
 }) {
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [localError, setLocalError] = useState("");
   const safe = value || { url: "", key: "", alt: "" };
 
@@ -510,12 +487,13 @@ function ImageUploadField({
       return;
     }
     setLocalError("");
+    setProgress(0);
     setUploading(true);
     try {
-      const result = await uploadImageToR2(file, folder);
+      const result = await uploadImageToR2(file, folder, setProgress);
       onChange({ ...safe, url: result.url, key: result.key });
     } catch (e) {
-      setLocalError(e.message);
+      setLocalError(uploadErrorText(e));
     } finally {
       setUploading(false);
     }
@@ -561,11 +539,16 @@ function ImageUploadField({
         type="file"
         accept="image/*"
         disabled={uploading}
-        onChange={(event) => handleFile(event.target.files?.[0])}
+        onChange={(event) => {
+          const input = event.target;
+          handleFile(input.files?.[0]);
+          // Allow picking the same file again after an error (retry).
+          input.value = "";
+        }}
         className="block w-full text-xs file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-black file:px-3 file:py-1.5 file:text-white hover:file:bg-gray-800 disabled:opacity-50"
       />
       {uploading ? (
-        <p className="text-xs text-gray-500">Đang tải lên…</p>
+        <p className="text-xs text-gray-500">Đang tải lên… {Math.round(progress)}%</p>
       ) : localError ? (
         <p className="text-xs text-red-600">{localError}</p>
       ) : null}

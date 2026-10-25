@@ -69,7 +69,7 @@ export async function POST(request) {
       }));
 
       return store;
-    });
+    }, { action: "image-projects.reorder" });
 
     return NextResponse.json({ ok: true });
   } catch (error) {

@@ -61,7 +61,7 @@ export async function PUT(request, { params }) {
       store.projects = replaceAtOrder(store.projects, updated, updated.order);
       updated = store.projects.find((item) => Number(item.id) === id) || updated;
       return store;
-    });
+    }, { action: "project.update", detail: id });
 
     // Delete only assets the new payload no longer references. Cleanup is
     // best-effort and runs after the store write succeeds so a failed
@@ -100,7 +100,7 @@ export async function DELETE(request, { params }) {
       store.projects = compactOrder(store.projects);
       removed = store.projects.length !== before;
       return store;
-    });
+    }, { action: "project.delete", detail: id });
 
     if (!removed) {
       return NextResponse.json({ error: "Project not found." }, { status: 404 });

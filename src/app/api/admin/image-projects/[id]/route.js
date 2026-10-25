@@ -66,7 +66,7 @@ export async function PUT(request, { params }) {
       store.imageProjects = replaceAtOrder(store.imageProjects, updated, updated.order);
       updated = store.imageProjects.find((item) => Number(item.id) === id) || updated;
       return store;
-    });
+    }, { action: "image-project.update", detail: id });
 
     const orphans = keysToDelete(oldKeys, collectAssetKeysFromImageProject(updated));
     if (orphans.length > 0) {
@@ -102,7 +102,7 @@ export async function DELETE(request, { params }) {
       store.imageProjects = compactOrder(store.imageProjects);
       removed = store.imageProjects.length !== before;
       return store;
-    });
+    }, { action: "image-project.delete", detail: id });
 
     if (!removed) {
       return NextResponse.json({ error: "Image project not found." }, { status: 404 });

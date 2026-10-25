@@ -1,5 +1,5 @@
 import "server-only";
-import { DeleteObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
 function buildEndpoint() {
   if (process.env.R2_ENDPOINT) return process.env.R2_ENDPOINT;
@@ -125,4 +125,62 @@ export async function deleteR2Keys(keys) {
         })
     )
   );
+}
+
+function isNotFoundError(error) {
+  if (!error) return false;
+  if (error.name === "NoSuchBucket" || error.Code === "NoSuchBucket") return false;
+  if (error.name === "NotFound" || error.name === "NoSuchKey" || error.Code === "NoSuchKey") {
+    return true;
+  }
+  return error?.$metadata?.httpStatusCode === 404;
+}
+
+// Which of these keys no longer exist in the bucket? HeadObject for at most
+// `limit` distinct keys, a few at a time. A key whose check fails for any
+// other reason (network, permissions) is counted in `failed`, never as
+// missing. Read-only: nothing is created or deleted.
+export async function findMissingR2Keys(keys, { limit = 150, concurrency = 12 } = {}) {
+  const unique = [
+    ...new Set(
+      (Array.isArray(keys) ? keys : [])
+        .filter((key) => typeof key === "string" && key.trim().length > 0)
+        .map((key) => key.trim())
+    ),
+  ];
+  const toCheck = unique.slice(0, Math.max(0, limit));
+  const result = { total: unique.length, checked: 0, failed: 0, missing: [] };
+  if (toCheck.length === 0) return result;
+
+  const validation = validateR2Config();
+  if (!validation.valid) {
+    throw new Error(
+      `R2 is not configured for the content store. Missing: ${validation.missing.join(", ")}`
+    );
+  }
+  const client = getR2Client();
+  const { bucket } = getR2Config();
+
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < toCheck.length) {
+      const key = toCheck[cursor];
+      cursor += 1;
+      try {
+        await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+        result.checked += 1;
+      } catch (error) {
+        if (isNotFoundError(error)) {
+          result.checked += 1;
+          result.missing.push(key);
+        } else {
+          result.failed += 1;
+        }
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(Math.max(1, concurrency), toCheck.length) }, worker)
+  );
+  return result;
 }

@@ -66,7 +66,7 @@ export async function POST(request) {
       };
       saved = store.showreel;
       return store;
-    });
+    }, { action: "showreel.update" });
 
     // Replace, not append: drop the previous showreel video from R2 once the
     // store has switched over.
@@ -92,7 +92,7 @@ export async function DELETE(request) {
       if (store.showreel?.key) oldKey = store.showreel.key;
       store.showreel = null;
       return store;
-    });
+    }, { action: "showreel.delete" });
 
     if (oldKey) {
       await deleteR2Keys([oldKey]);

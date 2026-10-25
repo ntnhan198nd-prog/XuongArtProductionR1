@@ -61,7 +61,7 @@ export async function POST(request) {
       store.projects = insertAtOrder(store.projects, created, payload.order);
       created = store.projects.find((item) => Number(item.id) === id) || created;
       return store;
-    });
+    }, { action: "project.create", detail: () => created?.id });
 
     return NextResponse.json({ data: created }, { status: 201 });
   } catch (error) {

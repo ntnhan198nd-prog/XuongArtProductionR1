@@ -1,124 +1,55 @@
 "use client";
-import { useEffect, useState } from "react";
-import { resolveContentType, cleanupUploadedKeys } from "@/lib/uploadClient";
+import { useEffect, useRef, useState } from "react";
+import {
+  ACCEPT,
+  cleanupUploadedKeys,
+  formatUploadProgress,
+  uploadFile,
+  validateUploadFile,
+} from "@/lib/uploadClient";
 import { fetchJson } from "@/lib/apiClient";
 
-// Watchdog: some videos fire neither onloadedmetadata nor onerror (codec the
-// browser can't decode). Without a timeout the awaited read deadlocks the
-// whole upload, so resolve with nulls (metadata is optional) and continue.
-async function readVideoMetadata(file) {
-  return new Promise((resolve) => {
-    const objectUrl = URL.createObjectURL(file);
-    const video = document.createElement("video");
-    video.preload = "metadata";
-    let timer = null;
-    let settled = false;
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      URL.revokeObjectURL(objectUrl);
-      resolve(result);
-    };
-    video.onloadedmetadata = () =>
-      finish({
-        width: video.videoWidth || null,
-        height: video.videoHeight || null,
-        duration: Number.isFinite(video.duration) ? Number(video.duration.toFixed(2)) : null,
-      });
-    video.onerror = () => finish({ width: null, height: null, duration: null });
-    timer = setTimeout(() => finish({ width: null, height: null, duration: null }), 12000);
-    video.src = objectUrl;
-  });
-}
+// Above this size the upload can take many minutes on a typical connection.
+const LARGE_VIDEO_BYTES = 500 * 1024 * 1024;
 
-async function uploadShowreelToR2(file, onProgress) {
-  const meta = await readVideoMetadata(file);
-  const contentType = resolveContentType(file, "video/mp4");
-
-  // fetchJson tolerates empty / non-JSON error bodies and always yields a
-  // message that includes the HTTP status.
-  const presignPayload = await fetchJson(
-    "/api/admin/r2/upload-url",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ filename: file.name, contentType, folder: "showreel" }),
-    },
-    { fallbackError: "Không lấy được upload URL" }
-  );
-  const { key, uploadUrl, publicUrl } = presignPayload.data || {};
-  if (!uploadUrl) throw new Error("Server did not return an upload URL.");
-
-  await new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("PUT", uploadUrl);
-    xhr.setRequestHeader("Content-Type", contentType);
-
-    // Stall watchdog: onerror does not fire on a black-holed connection, so a
-    // stalled upload (common for 200-500MB showreels on slow links) would hang
-    // forever. Reset on each progress tick; abort only when truly stuck.
-    const STALL_MS = 60000;
-    let stallTimer = null;
-    const clearStall = () => {
-      if (stallTimer) clearTimeout(stallTimer);
-      stallTimer = null;
-    };
-    const armStall = () => {
-      clearStall();
-      stallTimer = setTimeout(() => {
-        try {
-          xhr.abort();
-        } catch {}
-        reject(new Error("Upload stalled (no progress). Check your connection and try again."));
-      }, STALL_MS);
-    };
-
-    xhr.upload.onprogress = (event) => {
-      armStall();
-      if (event.lengthComputable && typeof onProgress === "function") {
-        onProgress(event.loaded / event.total);
-      }
-    };
-    xhr.onload = () => {
-      clearStall();
-      xhr.status >= 200 && xhr.status < 300
-        ? resolve()
-        : reject(new Error(`R2 upload failed (${xhr.status}).`));
-    };
-    xhr.onerror = () => {
-      clearStall();
-      reject(new Error("Network error during upload."));
-    };
-    xhr.onabort = () => {
-      clearStall();
-      reject(new Error("Upload was aborted."));
-    };
-    armStall();
-    xhr.send(file);
-  });
-
-  return {
-    key,
-    url: publicUrl,
-    name: file.name,
-    mime: contentType,
-    size: file.size,
-    width: meta.width,
-    height: meta.height,
-    duration: meta.duration,
-  };
-}
-
-export default function ShowreelPanel() {
+// `onBusyChange(busy)` (optional) reports while an upload is running.
+export default function ShowreelPanel({ onBusyChange } = {}) {
   const [showreel, setShowreel] = useState(null);
   const [loading, setLoading] = useState(true);
   // True when the initial GET failed: we then don't know whether a showreel
   // exists, so the "Chưa có showreel" empty state must not be shown.
   const [loadFailed, setLoadFailed] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [progress, setProgress] = useState(0);
+  // Live upload state: { name, size, pct, loaded, total, etaSec, retry } | null.
+  const [progress, setProgress] = useState(null);
+  // "uploading" (Huỷ allowed) → "saving" (record write, cannot be cancelled).
+  const [phase, setPhase] = useState("");
   const [error, setError] = useState("");
+  const [errorHint, setErrorHint] = useState("");
+  const [notice, setNotice] = useState("");
+  const abortRef = useRef(null);
+
+  // Leaving the admin tab mid-upload: stop the transfer (nothing was stored).
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  const onBusyChangeRef = useRef(onBusyChange);
+  useEffect(() => {
+    onBusyChangeRef.current = onBusyChange;
+  }, [onBusyChange]);
+  useEffect(() => {
+    if (typeof onBusyChangeRef.current === "function") onBusyChangeRef.current(uploading);
+  }, [uploading]);
+
+  // Closing the browser tab would kill the upload — ask first.
+  useEffect(() => {
+    if (!uploading) return undefined;
+    const onBeforeUnload = (event) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [uploading]);
 
   useEffect(() => {
     let alive = true;
@@ -139,6 +70,7 @@ export default function ShowreelPanel() {
         if (alive) {
           setLoadFailed(true);
           setError(loadError.message);
+          setErrorHint(loadError.hint || "");
         }
       } finally {
         if (alive) setLoading(false);
@@ -154,11 +86,39 @@ export default function ShowreelPanel() {
     event.target.value = "";
     if (!file) return;
 
+    setNotice("");
+    const problem = validateUploadFile(file, { kind: "video" });
+    if (problem) {
+      setError(problem);
+      setErrorHint("");
+      return;
+    }
+
+    const controller = new AbortController();
+    abortRef.current = controller;
     setUploading(true);
-    setProgress(0);
+    setPhase("uploading");
+    setProgress({
+      name: file.name,
+      size: file.size,
+      pct: 0,
+      loaded: 0,
+      total: file.size,
+      etaSec: null,
+      retry: false,
+    });
     setError("");
+    setErrorHint("");
     try {
-      const asset = await uploadShowreelToR2(file, setProgress);
+      const asset = await uploadFile(file, "showreel", {
+        signal: controller.signal,
+        // Keep the old behaviour for extension-less files picked as video.
+        fallbackContentType: "video/mp4",
+        onProgress: (info) => setProgress((prev) => ({ ...prev, ...info })),
+      });
+      // From here on the record is being written — no more cancelling.
+      abortRef.current = null;
+      setPhase("saving");
       let payload;
       try {
         payload = await fetchJson(
@@ -168,7 +128,7 @@ export default function ShowreelPanel() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(asset),
           },
-          { fallbackError: "Lưu thất bại" }
+          { fallbackError: "Lưu showreel thất bại" }
         );
       } catch (saveError) {
         // Upload succeeded but the save didn't persist — delete the orphaned
@@ -179,16 +139,29 @@ export default function ShowreelPanel() {
       setShowreel(payload?.data || null);
       setLoadFailed(false);
     } catch (err) {
-      setError(err.message);
+      if (err?.code === "aborted") {
+        setNotice("Đã huỷ tải lên showreel. Video cũ vẫn được giữ nguyên.");
+      } else {
+        setError(err?.message || "Tải showreel thất bại.");
+        setErrorHint(err?.hint || "");
+      }
     } finally {
+      abortRef.current = null;
       setUploading(false);
-      setProgress(0);
+      setPhase("");
+      setProgress(null);
     }
+  };
+
+  const handleCancel = () => {
+    abortRef.current?.abort();
   };
 
   const handleClear = async () => {
     if (!window.confirm("Xoá showreel hiện tại? Trang chủ sẽ rơi về video mặc định.")) return;
     setError("");
+    setErrorHint("");
+    setNotice("");
     try {
       await fetchJson(
         "/api/admin/showreel",
@@ -198,6 +171,7 @@ export default function ShowreelPanel() {
       setShowreel(null);
     } catch (err) {
       setError(err.message);
+      setErrorHint(err.hint || "");
     }
   };
 
@@ -218,13 +192,15 @@ export default function ShowreelPanel() {
             }`}
           >
             {uploading
-              ? `Đang tải... ${Math.round(progress * 100)}%`
+              ? phase === "saving"
+                ? "Đang lưu..."
+                : `Đang tải... ${Math.round(progress?.pct || 0)}%`
               : showreel
               ? "Thay video"
               : "Upload showreel"}
             <input
               type="file"
-              accept="video/*"
+              accept={ACCEPT.video}
               className="hidden"
               onChange={handleChoose}
               disabled={uploading}
@@ -242,9 +218,62 @@ export default function ShowreelPanel() {
         </div>
       </div>
 
+      {uploading && progress ? (
+        <div
+          className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs"
+          aria-live="polite"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <p className="min-w-0 break-words text-gray-800">
+              <span className="font-medium">
+                {phase === "saving" ? "Đã tải xong — đang lưu showreel…" : "Đang tải showreel"}
+              </span>{" "}
+              · {progress.name}
+              {phase === "saving" ? null : <> — {formatUploadProgress(progress)}</>}
+            </p>
+            {phase === "uploading" ? (
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="shrink-0 rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-100"
+              >
+                Huỷ
+              </button>
+            ) : null}
+          </div>
+          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
+            <div
+              className="h-full rounded-full bg-black transition-[width] duration-300"
+              style={{ width: `${phase === "saving" ? 100 : Math.round(progress.pct || 0)}%` }}
+            />
+          </div>
+          {progress.retry && phase === "uploading" ? (
+            <p className="mt-1.5 text-amber-700">
+              Mạng chập chờn — đang tự tải lại từ đầu (lần 2)…
+            </p>
+          ) : null}
+          {progress.size > LARGE_VIDEO_BYTES ? (
+            <p className="mt-1.5 text-amber-800">
+              File lớn, upload có thể mất nhiều phút — giữ tab này mở.
+            </p>
+          ) : (
+            <p className="mt-1.5 text-gray-500">Giữ tab này mở cho đến khi tải xong.</p>
+          )}
+        </div>
+      ) : null}
+
+      {notice && !uploading ? (
+        <div className="mt-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700">
+          {notice}
+        </div>
+      ) : null}
+
       {error ? (
         <div className="mt-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {error}
+          <p className="break-words">{error}</p>
+          {errorHint ? (
+            <p className="mt-1 leading-relaxed text-red-800">💡 {errorHint}</p>
+          ) : null}
         </div>
       ) : null}
 
