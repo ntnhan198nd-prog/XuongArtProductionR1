@@ -461,7 +461,9 @@ export function normalizeSiteContent(input) {
           value: pickNumber(item.value, 0),
           suffix: pickString(item.suffix, ""),
           label: pickString(item.label, ""),
-          decimals: pickNumber(item.decimals, 0),
+          // Clamp: Number#toFixed throws above 100, which would crash the
+          // homepage counter; 0–20 covers every sensible stat.
+          decimals: Math.min(20, Math.max(0, Math.round(pickNumber(item.decimals, 0)) || 0)),
         };
       }),
     },

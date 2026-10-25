@@ -16,8 +16,7 @@ import { formatBytes, formatClockDuration } from "@/lib/uploadClient";
 const ISSUES_VISIBLE = 8;
 
 const TAB_KIND_LABELS = {
-  "showreel-featured": "Video nổi bật",
-  "other-videos": "Video",
+  videos: "Video",
   images: "Dự án ảnh",
 };
 
@@ -193,7 +192,7 @@ export default function OverviewPanel({ active = true, onOpenTab, pendingTabLabe
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={() => openTab("other-videos")}
+          onClick={() => openTab("videos")}
           className="rounded-lg bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-800"
         >
           + Thêm video
@@ -268,15 +267,15 @@ export default function OverviewPanel({ active = true, onOpenTab, pendingTabLabe
                   ? `ô lưới trang chủ · ${grid.slides} trang`
                   : "chưa có video nổi bật"
               }
-              onClick={() => openTab("showreel-featured")}
-              title="Mở Trang chủ: Showreel & Nổi bật"
+              onClick={() => openTab("home")}
+              title="Mở Trang chủ"
             />
             <StatCard
               label="Video khác"
               value={counts.otherVideos ?? 0}
-              note="trong thư viện video"
-              onClick={() => openTab("other-videos")}
-              title="Mở Thư viện video"
+              note="chưa bật Nổi bật"
+              onClick={() => openTab("videos")}
+              title="Mở Video"
             />
             <StatCard
               label="Dự án ảnh"

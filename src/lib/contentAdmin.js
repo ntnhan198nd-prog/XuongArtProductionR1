@@ -133,53 +133,85 @@ export function resolveRecordSlug({
 // `options.id` = id the record is (or will be) saved under; the create
 // routes pass the id they are about to assign so an empty slug can fall
 // back to "video-<id>".
+//
+// Partial updates: when `currentItem` is given (PUT), a field the payload
+// does not carry at all keeps its stored value verbatim — e.g. the admin
+// list's star toggle sends only { featured } and the inline rating only
+// { adminRating }; neither may touch the slug, the files or anything else.
+// The edit form always sends every field, so it is normalized as before.
 export function normalizeProjectPayload(payload, store, currentItem = null, options = {}) {
   const now = new Date().toISOString();
+  const body = payload && typeof payload === "object" ? payload : {};
+  const sent = (key) => Object.prototype.hasOwnProperty.call(body, key);
+  const partial = Boolean(currentItem);
+  // Stored value for a field the payload left out; otherwise `normalize()`.
+  const field = (key, normalize) =>
+    partial && !sent(key) ? currentItem[key] : normalize();
 
-  const title = normalizeText(payload.title, currentItem?.title || "");
+  const title = normalizeText(body.title, currentItem?.title || "");
   // Unique within store.projects (another video's slug gets "-2", "-3", …).
-  const slug = resolveRecordSlug({
-    requested: payload.slug,
-    title,
-    currentItem,
-    id: options?.id ?? currentItem?.id ?? null,
-    items: store?.projects,
-    fallbackPrefix: "video",
-  });
-  const featured = normalizeBoolean(payload.featured ?? currentItem?.featured);
+  // Neither slug nor title sent → the stored slug stays exactly as it is.
+  const slug =
+    partial && !sent("slug") && !sent("title")
+      ? currentItem.slug
+      : resolveRecordSlug({
+          requested: body.slug,
+          title,
+          currentItem,
+          id: options?.id ?? currentItem?.id ?? null,
+          items: store?.projects,
+          fallbackPrefix: "video",
+        });
+  const featured = normalizeBoolean(body.featured ?? currentItem?.featured);
 
   return {
-    title,
+    title: field("title", () => title),
     slug,
-    client: normalizeText(payload.client, currentItem?.client || ""),
-    tagline: normalizeText(payload.tagline, currentItem?.tagline || ""),
-    category: normalizeText(payload.category, currentItem?.category || ""),
-    categories: normalizeCategories(payload.categories ?? currentItem?.categories ?? []),
+    client: field("client", () => normalizeText(body.client, currentItem?.client || "")),
+    tagline: field("tagline", () => normalizeText(body.tagline, currentItem?.tagline || "")),
+    category: field("category", () => normalizeText(body.category, currentItem?.category || "")),
+    categories: field("categories", () =>
+      normalizeCategories(body.categories ?? currentItem?.categories ?? [])
+    ),
     featured,
-    order: normalizeNumber(payload.order ?? currentItem?.order),
+    order: normalizeNumber(body.order ?? currentItem?.order),
     // Pinned cell on the homepage featured grid, written by the admin
     // layout panel through /api/admin/projects/reorder. The edit form
     // never sends it, so an edit keeps the existing pin; un-featuring a
     // project releases its cell.
     featuredSlot: featured
-      ? toSlotIndex(payload.featuredSlot ?? currentItem?.featuredSlot)
+      ? toSlotIndex(body.featuredSlot ?? currentItem?.featuredSlot)
       : null,
-    duration: normalizeText(payload.duration, currentItem?.duration || ""),
-    orientation: normalizeOrientation(payload.orientation ?? currentItem?.orientation),
-    description: normalizeText(payload.description, currentItem?.description || ""),
-    fullDescription: normalizeText(payload.fullDescription, currentItem?.fullDescription || ""),
-    completionDate: parseOptionalDate(payload.completionDate ?? currentItem?.completionDate),
-    media: normalizeAssetInput(payload.media ?? currentItem?.media, store, now),
+    duration: field("duration", () => normalizeText(body.duration, currentItem?.duration || "")),
+    orientation: field("orientation", () =>
+      normalizeOrientation(body.orientation ?? currentItem?.orientation)
+    ),
+    description: field("description", () =>
+      normalizeText(body.description, currentItem?.description || "")
+    ),
+    fullDescription: field("fullDescription", () =>
+      normalizeText(body.fullDescription, currentItem?.fullDescription || "")
+    ),
+    completionDate: field("completionDate", () =>
+      parseOptionalDate(body.completionDate ?? currentItem?.completionDate)
+    ),
+    media: field("media", () => normalizeAssetInput(body.media ?? currentItem?.media, store, now)),
     // `preview` is the optional WebM (VP9, no audio) used in the homepage
     // featured gallery. Falls back to `media` at render time so existing
     // projects without a preview keep working unchanged.
-    preview: normalizeAssetInput(payload.preview ?? currentItem?.preview, store, now),
+    preview: field("preview", () =>
+      normalizeAssetInput(body.preview ?? currentItem?.preview, store, now)
+    ),
     // `adminRating` is a private 0–5 score the admin assigns to mark
-    // their favourites. Used only inside the admin "Video Khác" tab for
+    // their favourites. Used only inside the admin "Video" tab for
     // sorting; never serialised to the public /api/projects payload, so
     // homepage / videos page can't expose it accidentally.
-    adminRating: normalizeNumber(payload.adminRating ?? currentItem?.adminRating),
-    thumbnail: normalizeAssetInput(payload.thumbnail ?? currentItem?.thumbnail, store, now),
+    adminRating: field("adminRating", () =>
+      normalizeNumber(body.adminRating ?? currentItem?.adminRating)
+    ),
+    thumbnail: field("thumbnail", () =>
+      normalizeAssetInput(body.thumbnail ?? currentItem?.thumbnail, store, now)
+    ),
     createdAt: currentItem?.createdAt || now,
     updatedAt: now,
     publishedAt: currentItem?.publishedAt || now,

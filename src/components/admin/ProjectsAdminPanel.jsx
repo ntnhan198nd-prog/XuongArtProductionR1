@@ -3,8 +3,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import FeaturedLayoutPanel from "@/components/admin/FeaturedLayoutPanel";
-import ShowreelPanel from "@/components/admin/ShowreelPanel";
 import AutocompleteInput from "@/components/admin/AutocompleteInput";
 import { useToast, useToastAvoid } from "@/components/admin/ToastProvider";
 import { notifyTrashChanged } from "@/components/admin/TrashPanel";
@@ -26,11 +24,6 @@ import {
   validateUploadFile,
 } from "@/lib/uploadClient";
 import { fetchJson } from "@/lib/apiClient";
-
-const TABS = [
-  { key: "projects", label: "Dự án video" },
-  { key: "image-projects", label: "Dự án ảnh" },
-];
 
 const EMPTY_FORM = {
   title: "",
@@ -57,7 +50,7 @@ const EMPTY_FORM = {
   // still uses `media` (full-quality MP4).
   preview: null,
   // `adminRating` is the 0–5 favourite rating used inside the admin to
-  // sort "Video Khác". Never sent to the public site.
+  // sort the "Video" list. Never sent to the public site.
   adminRating: 0,
   thumbnail: null,
 };
@@ -302,6 +295,39 @@ function ImageDropzone({
   );
 }
 
+// Rating on a list row, saved right away (see changeRating in the panel).
+// Pressing the current value again clears it.
+function RowRatingInput({ value = 0, onChange, disabled = false, title = "", name = "" }) {
+  const safeValue = Math.max(0, Math.min(5, Number(value) || 0));
+  return (
+    <span
+      role="group"
+      aria-label={`Đánh giá “${name}”: ${safeValue > 0 ? `${safeValue}/5 sao` : "chưa đánh giá"}`}
+      title={title || (safeValue > 0 ? `${safeValue}/5 — bấm lại để xoá` : "Chưa đánh giá")}
+      className="inline-flex items-center"
+    >
+      {[1, 2, 3, 4, 5].map((star) => {
+        const filled = star <= safeValue;
+        return (
+          <button
+            key={star}
+            type="button"
+            draggable={false}
+            disabled={disabled}
+            onClick={() => onChange(safeValue === star ? 0 : star)}
+            aria-label={safeValue === star ? `Xoá đánh giá ${star} sao` : `${star} sao`}
+            className={`flex h-7 w-6 items-center justify-center text-base leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+              filled ? "text-amber-500" : "text-gray-300 hover:text-amber-300"
+            }`}
+          >
+            ★
+          </button>
+        );
+      })}
+    </span>
+  );
+}
+
 function StarRatingDisplay({ value = 0 }) {
   const safeValue = Math.max(0, Math.min(5, Number(value) || 0));
   if (safeValue === 0) return null;
@@ -350,23 +376,81 @@ function publicSlugify(value = "") {
     .replace(/^-|-$/g, "");
 }
 
-// Create-form defaults for the admin section: a video added from the
-// "Trang chủ: Showreel & Nổi bật" section starts as featured.
-function emptyFormFor(mode) {
-  return { ...EMPTY_FORM, featured: mode === "showreel-featured" };
+// Create-form defaults. A new video starts NOT featured ("Nổi bật" off):
+// it is put on the homepage with the row's star or from the "Trang chủ" tab.
+function emptyFormFor() {
+  return { ...EMPTY_FORM };
 }
 
-// Note added to the "saved" message when the saved video belongs to the
-// other video section (so it is not in the list on screen).
-function savedSectionNote(mode, savedItem) {
-  if (!savedItem) return "";
-  if (mode === "showreel-featured" && !savedItem.featured) {
-    return "Video này chưa bật “Nổi bật” nên nằm ở thẻ Thư viện video.";
+// --- "Video" list: health and filter chips ------------------------------------
+
+function hasFileAsset(asset) {
+  return Boolean(asset) && typeof asset.url === "string" && asset.url.trim() !== "";
+}
+
+// What a video is missing (same rules as the "Tổng quan" issues):
+// no main file, no thumbnail, featured without the WebM preview.
+export function videoHealthIssues(item) {
+  const issues = [];
+  if (!item) return issues;
+  if (!hasFileAsset(item.media)) issues.push({ key: "no-media", label: "Chưa có file" });
+  if (!hasFileAsset(item.thumbnail)) issues.push({ key: "no-thumbnail", label: "Thiếu thumbnail" });
+  if (item.featured && !hasFileAsset(item.preview)) {
+    issues.push({ key: "featured-no-preview", label: "Thiếu WebM" });
   }
-  if (mode === "other-videos" && savedItem.featured) {
-    return "Video này đã bật “Nổi bật” nên nằm ở thẻ Trang chủ: Showreel & Nổi bật.";
-  }
-  return "";
+  return issues;
+}
+
+// "Cần sửa" chip.
+export function videoNeedsFix(item) {
+  return videoHealthIssues(item).length > 0;
+}
+
+// Filter chips of the "Video" list, in order.
+export const VIDEO_FILTERS = [
+  { key: "all", label: "Tất cả", test: () => true },
+  { key: "featured", label: "★ Nổi bật", test: (item) => Boolean(item?.featured) },
+  { key: "other", label: "Khác", test: (item) => !item?.featured },
+  { key: "needs-fix", label: "Cần sửa", test: videoNeedsFix },
+];
+
+// True when a list reorder changes the reading order of the featured
+// videos — which re-flows the homepage grid (see the reorder route).
+export function featuredOrderChanged(before, after) {
+  const seq = (list) =>
+    (Array.isArray(list) ? list : []).filter((it) => it?.featured).map((it) => Number(it.id));
+  const a = seq(before);
+  const b = seq(after);
+  return a.length !== b.length || a.some((id, index) => id !== b[index]);
+}
+
+// Search box of the list: title, client, slug, categories.
+function matchesListSearch(item, text) {
+  const query = String(text || "").trim().toLowerCase();
+  if (!query) return true;
+  const haystack = [
+    item?.title,
+    item?.client,
+    item?.slug,
+    item?.category,
+    Array.isArray(item?.categories) ? item.categories.join(" ") : "",
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return haystack.includes(query);
+}
+
+export function filterVideos(items, filterKey) {
+  const filter = VIDEO_FILTERS.find((entry) => entry.key === filterKey) || VIDEO_FILTERS[0];
+  return (Array.isArray(items) ? items : []).filter((item) => item && filter.test(item));
+}
+
+// { all, featured, other, "needs-fix" } → number of videos.
+export function videoFilterCounts(items) {
+  return Object.fromEntries(
+    VIDEO_FILTERS.map((entry) => [entry.key, filterVideos(items, entry.key).length])
+  );
 }
 
 // --- Auto-fill from the picked video ----------------------------------------
@@ -650,10 +734,21 @@ function CategoryPicker({ value, onChange, publicList, fallback = [], mainHint =
   );
 }
 
+// Video thumbnails in the list: 96 px on the long side, in the video's own
+// shape (portrait / square / landscape).
+const VIDEO_THUMB_BOX = {
+  portrait: "h-24 w-[54px]",
+  square: "h-24 w-24",
+  landscape: "h-[54px] w-24",
+};
+
 // Small preview in the list: thumbnail, else a frame of the video, else the
-// first photo.
-function RowThumb({ item }) {
-  const box = "relative h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-gray-100";
+// first photo. `video`: size it like the video (see VIDEO_THUMB_BOX).
+function RowThumb({ item, video = false }) {
+  const size = video
+    ? VIDEO_THUMB_BOX[item?.orientation] || VIDEO_THUMB_BOX.landscape
+    : "h-16 w-16";
+  const box = `relative ${size} shrink-0 overflow-hidden rounded-lg bg-gray-100`;
   const thumbUrl = item?.thumbnail?.url || "";
   const first = Array.isArray(item?.media) ? item.media[0] : item?.media;
   const mediaUrl = first?.url || "";
@@ -1278,8 +1373,8 @@ function isFormDirty({ form, baseline, files = [], uploadedCount = 0 } = {}) {
 }
 
 // --- Manual order of the list on screen ---------------------------------------
-// A panel shows only part of the stored list (e.g. "Video Khác" hides the
-// featured videos), but the reorder API takes the order of EVERY item. These
+// A list can show only part of the stored items (e.g. a search), but the
+// reorder API takes the order of EVERY item. These
 // helpers move an item next to its neighbour in the list on screen and
 // return the full array to send (null = nothing to do).
 
@@ -1358,16 +1453,11 @@ function dropWithinVisible(allItems, visibleItems, dragId, targetId) {
 // --- Links to the public site -------------------------------------------------
 
 // Where a record can be seen on the public site: { href, title, toastLabel }
-// or null (a video without a stored slug has no page yet). A featured video
-// seen from the "Trang chủ: Showreel & Nổi bật" section links to the homepage
-// grid it plays in.
-function publicLinkFor(item, { isVideo, mode } = {}) {
+// or null (a video without a stored slug has no page yet).
+function publicLinkFor(item, { isVideo } = {}) {
   if (!item) return null;
   if (!isVideo) {
     return { href: "/images", title: "Xem trên trang Ảnh", toastLabel: "Xem trang Ảnh ↗" };
-  }
-  if (mode === "showreel-featured" && item.featured) {
-    return { href: "/", title: "Xem trên trang chủ", toastLabel: "Xem trang chủ ↗" };
   }
   const slug = String(item.slug || "").trim();
   if (!slug) return null;
@@ -1419,21 +1509,24 @@ function prefersReducedMotion() {
   }
 }
 
-// `mode` prop locks the panel into one of four admin shells:
-//   - undefined          → legacy combined panel (kept for backwards compat)
-//   - "showreel-featured" → Showreel + FeaturedLayoutPanel + only featured videos
-//   - "other-videos"     → only non-featured videos, no showreel/featured layout
-//   - "images"           → image projects only
-// When mode is set, the inner sub-tabs UI is hidden because the outer
-// admin shell drives the section choice.
+// Old ?tab= keys of the "Video" tab. The admin shell rewrites them to
+// "videos" on load; this panel only acts once the URL says tab=videos, and
+// clearEditParam rewrites a leftover old key too (without `edit`, an old
+// key could resolve to another tab).
+const LEGACY_VIDEO_TAB_KEYS = ["other-videos", "showreel-featured", "projects"];
+
+// `mode` = the admin tab this panel is:
+//   - "videos" → every video in ONE list (filter chips Tất cả / ★ Nổi bật /
+//     Khác / Cần sửa, star toggle + rating on each row). The homepage grid
+//     itself is arranged in the "Trang chủ" tab (HomeAdminPanel).
+//   - "images" → image projects.
 // `onBusyChange(busy)` (optional) tells the admin shell when an upload is
 // running or uploaded files are not saved yet (e.g. to confirm Logout).
 // `active` (optional boolean) = this section is the visible admin tab. When
 // it turns true again the list is re-read, since another section may have
 // changed the same records meanwhile.
 // `onDirtyChange(dirty)` (optional) is true while the form has unsaved edits
-// or picked / uploaded-but-unsaved files, the featured layout has an unsaved
-// arrangement, or a save is running.
+// or picked / uploaded-but-unsaved files, or a save is running.
 // Deep link: /admin?tab=<mode>&edit=<id> opens that record in the form (as
 // if "Sửa" was pressed, unsaved-changes confirm included) once this panel
 // is the active tab, then removes only the `edit` param from the URL.
@@ -1472,20 +1565,13 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
   const formGenRef = useRef(0);
   // Bumped by every reorder: a retry of an older failed move does nothing.
   const orderGenRef = useRef(0);
-  // Element ids are prefixed per instance: three panels can be mounted at
+  // Element ids are prefixed per instance: two panels can be mounted at
   // once (hidden), and getElementById must find THIS panel's fields.
   const uid = useId().replace(/:/g, "");
   const fieldId = (name) => `${uid}-${name}`;
-  // Resolve the current data domain ("projects" or "image-projects") from
-  // the mode prop. Without a mode prop, the legacy behaviour kicks in: the
-  // user picks the sub-tab.
-  const resolvedTabFromMode = mode === "images" ? "image-projects" : "projects";
-  const [tab, setTab] = useState(mode ? resolvedTabFromMode : TABS[0].key);
-  // Re-sync tab when mode prop changes at runtime (defensive — admin shell
-  // remounts panels on tab switch, but this guards against future re-use).
-  useEffect(() => {
-    if (mode) setTab(resolvedTabFromMode);
-  }, [mode, resolvedTabFromMode]);
+  // API collection of this panel: /api/admin/projects (videos) or
+  // /api/admin/image-projects.
+  const tab = mode === "images" ? "image-projects" : "projects";
 
   const [items, setItems] = useState([]);
   const [loadingItems, setLoadingItems] = useState(false);
@@ -1564,8 +1650,6 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
   // Shown when this section became visible again while the form had unsaved
   // edits (or a save was running), so the list was not re-read on its own.
   const [staleNotice, setStaleNotice] = useState(false);
-  // Unsaved arrangement in FeaturedLayoutPanel.
-  const [layoutDirty, setLayoutDirty] = useState(false);
 
   // --- Upload state (see UploadProgressCard / EMPTY_UPLOAD_CACHE) ---------
   const [uploadProgress, setUploadProgress] = useState(null);
@@ -1590,28 +1674,27 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
   // Short red line in the save bar after a failed save (the toast has the
   // details and "Thử lại"; this one stays visible once the toast is closed).
   const [saveFailedText, setSaveFailedText] = useState("");
-  // Showreel upload running (it lives in its own panel above).
-  const [showreelBusy, setShowreelBusy] = useState(false);
 
   const isEditing = editingId !== null;
   const [listFilter, setListFilter] = useState("");
+  // "Video" list chip (VIDEO_FILTERS key); always "all" for image projects.
+  const [videoFilter, setVideoFilter] = useState("all");
   const [reordering, setReordering] = useState(false);
   const [dragId, setDragId] = useState(null);
-  // Other-videos defaults to rating-desc so the user's favourites float
-  // up; everywhere else the canonical manual order is the most useful
-  // default. Drag-and-drop is only enabled when sort === "order" because
-  // reordering a sort that isn't manual would just be confusing.
-  const [listSort, setListSort] = useState(
-    mode === "other-videos" ? "rating-desc" : "order"
-  );
+  // The manual order is the default. Drag-and-drop / ↑↓ only work with it
+  // (and on the full list): reordering another sort would be confusing.
+  const [listSort, setListSort] = useState("order");
+  // Rows whose star / rating is being saved (id → field name).
+  const [patchingIds, setPatchingIds] = useState({});
+  const patchingRef = useRef(new Map());
 
   const isVideoTab = tab === "projects";
-  const listTitle =
-    mode === "showreel-featured"
-      ? "Video nổi bật"
-      : mode === "other-videos"
-      ? "Video trong thư viện (không nổi bật)"
-      : TABS.find((item) => item.key === tab)?.label || tab;
+  const activeChip = VIDEO_FILTERS.find((entry) => entry.key === videoFilter) || VIDEO_FILTERS[0];
+  const listTitle = isVideoTab
+    ? activeChip.key === "all"
+      ? "Tất cả video"
+      : `Video — ${activeChip.label}`
+    : "Dự án ảnh";
   const createLabel = isVideoTab ? "Thêm video mới" : "Thêm dự án ảnh mới";
 
   const suggestions = useMemo(() => {
@@ -1644,35 +1727,21 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
     );
   }, [items]);
 
-  // Mode-based pre-filter: showreel-featured shows only featured videos,
-  // other-videos shows only non-featured. Other modes pass everything
-  // through and let the search box do the work.
-  const modeFilteredItems = useMemo(() => {
-    if (mode === "showreel-featured") {
-      return items.filter((item) => Boolean(item?.featured));
-    }
-    if (mode === "other-videos") {
-      return items.filter((item) => !item?.featured);
-    }
-    return items;
-  }, [items, mode]);
+  // "Video" chips (Tất cả / ★ Nổi bật / Khác / Cần sửa) with their counts;
+  // the search box filters what the chip shows.
+  const activeVideoFilter = isVideoTab ? videoFilter : "all";
+  const filterCounts = useMemo(
+    () => (isVideoTab ? videoFilterCounts(items) : null),
+    [items, isVideoTab]
+  );
+  const modeFilteredItems = useMemo(
+    () => (activeVideoFilter === "all" ? items : filterVideos(items, activeVideoFilter)),
+    [items, activeVideoFilter]
+  );
 
   const filteredItems = useMemo(() => {
-    const query = listFilter.trim().toLowerCase();
-    if (!query) return modeFilteredItems;
-    return modeFilteredItems.filter((item) => {
-      const haystack = [
-        item.title,
-        item.client,
-        item.slug,
-        item.category,
-        Array.isArray(item.categories) ? item.categories.join(" ") : "",
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(query);
-    });
+    if (!listFilter.trim()) return modeFilteredItems;
+    return modeFilteredItems.filter((item) => matchesListSearch(item, listFilter));
   }, [modeFilteredItems, listFilter]);
 
   // sortedFilteredItems is what the list actually renders. The canonical
@@ -1858,7 +1927,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [saving, hasUnsavedUploads]);
 
-  const busy = saving || hasUnsavedUploads || showreelBusy;
+  const busy = saving || hasUnsavedUploads;
   const onBusyChangeRef = useRef(onBusyChange);
   useEffect(() => {
     onBusyChangeRef.current = onBusyChange;
@@ -1880,14 +1949,15 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
     files: [mediaFile, previewFile, thumbnailFile, ...mediaFiles],
     uploadedCount: uploadCacheKeys(uploadCache).length,
   });
-  const panelDirty = formDirty || layoutDirty || saving;
+  const panelDirty = formDirty || saving;
+  const patching = Object.keys(patchingIds).length > 0;
   // Read when the section becomes visible again (see the `active` effect).
   const keepListRef = useRef(false);
   useEffect(() => {
-    // Re-reading the list now could disturb running work or an unsaved
-    // layout arrangement: offer it in a banner instead.
-    keepListRef.current = formDirty || layoutDirty || saving || reordering || deletingId !== null;
-  }, [formDirty, layoutDirty, saving, reordering, deletingId]);
+    // Re-reading the list now could disturb running work: offer it in a
+    // banner instead.
+    keepListRef.current = formDirty || saving || reordering || patching || deletingId !== null;
+  }, [formDirty, saving, reordering, patching, deletingId]);
   const onDirtyChangeRef = useRef(onDirtyChange);
   useEffect(() => {
     onDirtyChangeRef.current = onDirtyChange;
@@ -2264,21 +2334,22 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
   // tabs, the previous panel can still be `active` for a render).
   const editParam = searchParams?.get("edit") || "";
   const tabParam = searchParams?.get("tab") || "";
-  const ownsTabParam = Boolean(
-    mode && (tabParam === mode || (mode === "showreel-featured" && tabParam === "projects"))
-  );
+  const ownsTabParam = Boolean(mode && tabParam === mode);
   // Removes only `edit` (keeps `tab` and anything else) without scrolling.
   const clearEditParam = useCallback(() => {
     try {
       const params = new URLSearchParams(window.location.search);
       if (!params.has("edit")) return;
       params.delete("edit");
+      if (mode === "videos" && LEGACY_VIDEO_TAB_KEYS.includes(params.get("tab") || "")) {
+        params.set("tab", "videos");
+      }
       const qs = params.toString();
       router.replace(`${window.location.pathname}${qs ? `?${qs}` : ""}`, { scroll: false });
     } catch {
       // Leaving the param in the URL is harmless: it is handled once.
     }
-  }, [router]);
+  }, [router, mode]);
   const openFromDeepLink = async (raw) => {
     const id = Number(raw);
     const validId = Number.isInteger(id) && id > 0;
@@ -2291,6 +2362,10 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
       else unreadable = true;
     }
     if (item) {
+      // A chip or search that hides this record would leave the form
+      // without its highlighted row: show the full list instead.
+      if (isVideoTab && !filterVideos([item], videoFilter).length) setVideoFilter("all");
+      if (listFilter.trim() && !matchesListSearch(item, listFilter)) setListFilter("");
       startEditRef.current?.(item);
     } else if (unreadable) {
       notify("info", `Chưa mở được mục #${raw} vì danh sách chưa tải được — bấm “Tải lại danh sách” rồi mở lại mục này.`);
@@ -2355,7 +2430,17 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
           itemsRef.current = result.data;
           setItems(result.data);
         }
-        notify("success", "Đã lưu thứ tự");
+        notify(
+          "success",
+          "Đã lưu thứ tự",
+          featuredOrderChanged(previous, nextItems)
+            ? {
+                hint: "Hai video này đều ở lưới trang chủ — vị trí của chúng trong lưới cũng đổi theo. Xem lưới ở thẻ “Trang chủ”.",
+                href: "/",
+                hrefLabel: "Xem trang chủ ↗",
+              }
+            : undefined
+        );
       } catch (reorderError) {
         // Put the list back as stored (or as it was, when even the reload
         // fails), then report. "Thử lại" redoes the same MOVE on the list as
@@ -2392,8 +2477,9 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
     persistOrderRef.current = persistOrder;
   }, [persistOrder]);
 
-  // ↑/↓ and drag-and-drop work on the list ON SCREEN (e.g. "Video Khác"
-  // hides the featured videos): the item moves past its visible neighbour
+  // ↑/↓ and drag-and-drop work on the list ON SCREEN (in practice the full
+  // list: they are off while a search or chip filters it): the item moves
+  // past its visible neighbour
   // and the full order is rebuilt around it (see moveWithinVisible).
   // The reorder API rewrites the WHOLE order from this panel's list, so a
   // list that may be out of date (being re-read, or the "đã đổi ở tab khác"
@@ -2403,7 +2489,13 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
   useEffect(() => {
     reorderBlockedRef.current = reorderBlocked;
   }, [reorderBlocked]);
-  const canReorderList = !listFilter && !reordering && !reorderBlocked && listSort === "order";
+  const canReorderList =
+    !listFilter &&
+    activeVideoFilter === "all" &&
+    !reordering &&
+    !patching &&
+    !reorderBlocked &&
+    listSort === "order";
 
   // ↑/↓ buttons by `${id}:up|down`, and the one pressed with the keyboard
   // focus on it: the buttons are disabled while the order saves (focus would
@@ -2441,6 +2533,157 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
     const next = applyMove(items, move);
     setDragId(null);
     if (next) persistOrder(next, move);
+  };
+
+  // --- Row star ("Nổi bật") and rating, saved on their own ----------------
+  // PUT /api/admin/projects/<id> with ONLY the changed field ({ featured }
+  // or { adminRating }); the server keeps every other stored field.
+  // Optimistic: the row changes at once and goes back if the save fails.
+  const setRowFields = useCallback((id, fields) => {
+    const apply = (list) => list.map((it) => (sameId(it?.id, id) ? { ...it, ...fields } : it));
+    itemsRef.current = apply(itemsRef.current);
+    setItems(apply);
+  }, []);
+  // `field` = what is being saved for that row ("featured" / "adminRating"),
+  // null when done.
+  const markPatching = (id, field) => {
+    const key = Number(id);
+    if (field) patchingRef.current.set(key, field);
+    else patchingRef.current.delete(key);
+    setPatchingIds(Object.fromEntries(patchingRef.current));
+  };
+  const patchRecordRef = useRef(null);
+  const editingIdRef = useRef(editingId);
+  useEffect(() => {
+    editingIdRef.current = editingId;
+  }, [editingId]);
+  const patchRecord = async (id, patch, { success, hint = "", fallbackError }) => {
+    const key = Number(id);
+    if (patchingRef.current.has(key)) return;
+    // A "Thử lại" pressed after the record was opened in the form: the form
+    // owns it now (its save would send its own copy of the field).
+    if (sameId(editingIdRef.current, id)) {
+      notify("info", "Video này đang mở trong form — đổi ở form rồi bấm “Cập nhật”.");
+      return;
+    }
+    const current = itemsRef.current.find((it) => sameId(it?.id, id));
+    if (!current) return;
+    const field = Object.keys(patch)[0];
+    if (current[field] === patch[field]) return;
+    const before = { [field]: current[field] };
+    markPatching(id, field);
+    // A list read still in flight must not put the old value back.
+    loadSeqRef.current += 1;
+    setRowFields(id, patch);
+    try {
+      const result = await fetchJson(
+        `/api/admin/${tab}/${id}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        },
+        { fallbackError }
+      );
+      if (result?.data && sameId(result.data.id, id)) setRowFields(id, result.data);
+      notify("success", success, hint ? { hint } : undefined);
+    } catch (patchError) {
+      setRowFields(id, before);
+      const title = current.title || "(Chưa có tiêu đề)";
+      notify(
+        "error",
+        `${patchError?.message || fallbackError} — “${title}”`,
+        errorToastOptions(patchError, () =>
+          patchRecordRef.current?.(id, patch, { success, hint, fallbackError })
+        )
+      );
+    } finally {
+      markPatching(id, null);
+    }
+  };
+  useEffect(() => {
+    patchRecordRef.current = patchRecord;
+  });
+
+  // Row ★ buttons by id, and the chip group: when a ★ click makes its row
+  // leave the filtered list (e.g. ★ off under "★ Nổi bật"), keyboard focus
+  // goes to the next row's ★ (else the previous one, else the chips)
+  // instead of falling to the top of the page.
+  const starButtonRefs = useRef(new Map());
+  const chipGroupRef = useRef(null);
+  const pendingStarFocusRef = useRef(null);
+  useEffect(() => {
+    const pending = pendingStarFocusRef.current;
+    if (!pending) return;
+    if (sortedFilteredItems.some((it) => sameId(it?.id, pending.fromId))) return;
+    pendingStarFocusRef.current = null;
+    const star = pending.toId !== null ? starButtonRefs.current.get(Number(pending.toId)) : null;
+    const target =
+      star && !star.disabled
+        ? star
+        : chipGroupRef.current?.querySelector?.('button[aria-pressed="true"]') || null;
+    target?.focus?.();
+  }, [sortedFilteredItems]);
+
+  const toggleFeatured = (item, event) => {
+    const next = !item.featured;
+    const title = item.title || "(Chưa có tiêu đề)";
+    const button = event?.currentTarget;
+    const hadFocus =
+      Boolean(button) && typeof document !== "undefined" && document.activeElement === button;
+    let pendingFocus = null;
+    if (hadFocus && filterVideos([{ ...item, featured: next }], activeVideoFilter).length === 0) {
+      const index = sortedFilteredItems.findIndex((it) => sameId(it?.id, item.id));
+      const neighbour = sortedFilteredItems[index + 1] || sortedFilteredItems[index - 1] || null;
+      pendingFocus = { fromId: item.id, toId: neighbour ? neighbour.id : null };
+    }
+    pendingStarFocusRef.current = pendingFocus;
+    patchRecord(
+      item.id,
+      { featured: next },
+      {
+        success: next
+          ? `Đã bật Nổi bật cho “${title}” — video hiện trong lưới trang chủ`
+          : `Đã tắt Nổi bật cho “${title}” — video không còn ở lưới trang chủ`,
+        hint: next
+          ? [
+              !hasFileAsset(item.media)
+                ? "Chưa có file video — ô này sẽ trống trên trang chủ. Thêm file bằng nút “Sửa”."
+                : hasFileAsset(item.preview)
+                ? ""
+                : "Chưa có bản WebM — lưới trang chủ sẽ dùng video gốc (nặng hơn).",
+              "Đổi vị trí trong lưới ở thẻ “Trang chủ”.",
+            ]
+              .filter(Boolean)
+              .join(" ")
+          : "",
+        fallbackError: next ? "Bật Nổi bật thất bại" : "Tắt Nổi bật thất bại",
+      }
+    );
+    // patchRecord changes the row synchronously (before its request); when
+    // it did not (busy, open in the form) there is nothing to refocus.
+    if (
+      pendingFocus &&
+      Boolean(itemsRef.current.find((it) => sameId(it?.id, item.id))?.featured) !== next
+    ) {
+      pendingStarFocusRef.current = null;
+    }
+  };
+
+  const changeRating = (item, value) => {
+    const rating = Math.max(0, Math.min(5, Number(value) || 0));
+    const title = item.title || "(Chưa có tiêu đề)";
+    patchRecord(
+      item.id,
+      { adminRating: rating },
+      {
+        success:
+          rating > 0
+            ? `Đã chấm ${rating} sao cho “${title}”`
+            : `Đã xoá đánh giá của “${title}”`,
+        fallbackError: "Lưu đánh giá thất bại",
+      }
+    );
   };
 
   // Called from the in-row confirmation ("Xoá “…” (#id)? … [Huỷ] [Xoá]").
@@ -2691,7 +2934,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
       loadPublicCategories();
 
       const savedTitle = savedItem?.title || form.title || "(Chưa có tiêu đề)";
-      const link = publicLinkFor(savedItem, { isVideo: isVideoTab, mode });
+      const link = publicLinkFor(savedItem, { isVideo: isVideoTab });
       notify(
         "success",
         isEditing ? `Đã lưu “${savedTitle}”` : `Đã thêm “${savedTitle}”`,
@@ -2833,6 +3076,16 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
       };
 
       payload = { ...basePayload };
+      // A video edit sends "Nổi bật" and the rating only when the form
+      // changed them: both can also change outside this form (row ★ /
+      // rating, the "Trang chủ" grid), and the server keeps a field the
+      // body leaves out — so an older form cannot switch them back.
+      if (isVideoTab && isEditing) {
+        if (Boolean(form.featured) === Boolean(formBaseline?.featured)) delete payload.featured;
+        if ((Number(form.adminRating) || 0) === (Number(formBaseline?.adminRating) || 0)) {
+          delete payload.adminRating;
+        }
+      }
 
       if (isVideoTab) {
         payload = {
@@ -2876,10 +3129,9 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
       const savedText = showCard
         ? "Đã lưu xong ✓ — file đã được tải lên và lưu."
         : "Đã lưu xong ✓";
-      const sectionNote = isVideoTab ? savedSectionNote(mode, responsePayload?.data) : "";
       await finishSaved(
         responsePayload?.data,
-        [savedText, slugNote, sectionNote].filter(Boolean).join(" ")
+        [savedText, slugNote].filter(Boolean).join(" ")
       );
     } catch (saveError) {
       // A pending throttled tick must not resurrect the card after this.
@@ -2966,14 +3218,6 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
     }
   };
 
-  // Section visibility derived from mode prop. The legacy combined panel
-  // (mode === undefined) keeps its original behaviour so anything still
-  // importing ProjectsAdminPanel without a mode renders unchanged.
-  const showShowreelSection = !mode || mode === "showreel-featured";
-  const showFeaturedLayoutSection =
-    (!mode && tab === "projects") || mode === "showreel-featured";
-  const showSubTabs = !mode;
-
   // --- Values derived for the form ----------------------------------------
   const publicList = publicCategories
     ? isVideoTab
@@ -3019,49 +3263,6 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
 
   return (
     <div ref={rootRef}>
-      {showShowreelSection ? (
-        <div className="mt-6">
-          <ShowreelPanel onBusyChange={setShowreelBusy} />
-        </div>
-      ) : null}
-
-      {/* Sub-tabs row only shows in legacy mode; in the four-tab admin
-          shell the outer page handles tab switching, and the "+ Tạo mới"
-          button has been moved to the list panel toolbar where it's
-          contextual to the list. */}
-      {showSubTabs ? (
-        <div className="mt-8 flex flex-wrap gap-2">
-          {TABS.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              disabled={saving}
-              onClick={() => {
-                if (!confirmLeaveForm()) return;
-                setTab(item.key);
-                resetEditor();
-                setListFilter("");
-              }}
-              className={`rounded-full px-4 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                tab === item.key
-                  ? "bg-black text-white"
-                  : "border border-gray-300 text-gray-700 hover:bg-gray-50"
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
-          <button
-            type="button"
-            disabled={saving}
-            onClick={() => startCreate()}
-            className="rounded-full border border-gray-300 px-4 py-2 text-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            + Thêm mới
-          </button>
-        </div>
-      ) : null}
-
       {error ? (
         <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
           <p className="break-words">{error}</p>
@@ -3109,14 +3310,6 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
           <button
             type="button"
             onClick={() => {
-              if (
-                layoutDirty &&
-                !window.confirm(
-                  "Bố cục trang chủ chưa lưu có thể bị thay bằng dữ liệu mới. Vẫn tải lại?"
-                )
-              ) {
-                return;
-              }
               setStaleNotice(false);
               loadItems(tab, { background: true });
             }}
@@ -3125,19 +3318,6 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
           >
             Tải lại danh sách
           </button>
-        </div>
-      ) : null}
-
-      {/* Stay mounted while re-fetching once we have items, so an unsaved
-          layout the admin is arranging survives a save/delete elsewhere on
-          the page (the panel only re-syncs when the server layout changed). */}
-      {showFeaturedLayoutSection && (!loadingItems || items.length > 0) ? (
-        <div className="mt-8">
-          <FeaturedLayoutPanel
-            items={items}
-            onSaved={() => loadItems(tab, { background: true })}
-            onDirtyChange={setLayoutDirty}
-          />
         </div>
       ) : null}
 
@@ -3718,9 +3898,9 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
             <div>
               <h2 className="text-lg font-semibold">{listTitle}</h2>
               <p className="mt-1 text-xs text-gray-600">
-                {listFilter
-                  ? `${sortedFilteredItems.length} / ${modeFilteredItems.length}`
-                  : `Tổng: ${modeFilteredItems.length}`}
+                {listFilter || activeVideoFilter !== "all"
+                  ? `${sortedFilteredItems.length} / ${items.length}`
+                  : `Tổng: ${items.length}`}
                 {reordering ? (
                   <span className="ml-2 text-amber-700">· đang lưu thứ tự…</span>
                 ) : refreshing ? (
@@ -3748,28 +3928,60 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
                   </option>
                 ))}
               </select>
-              {/* Mode-specific "+ Tạo mới" button. Sits in the list
-                  toolbar where the user is already managing items, so
-                  they don't need to scroll back up to the legacy top
-                  row to add a new one. */}
-              {!showSubTabs ? (
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => startCreate()}
-                  className="min-h-[36px] rounded-lg bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  + Tạo mới
-                </button>
-              ) : null}
+              {/* "+ Tạo mới" sits in the list toolbar, where the owner is
+                  already managing items. */}
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => startCreate()}
+                className="min-h-[36px] rounded-lg bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                + Tạo mới
+              </button>
             </div>
           </div>
 
+          {isVideoTab ? (
+            <div
+              ref={chipGroupRef}
+              role="group"
+              aria-label="Lọc danh sách video"
+              className="mt-3 flex flex-wrap gap-1.5"
+            >
+              {VIDEO_FILTERS.map((entry) => {
+                const on = videoFilter === entry.key;
+                const count = filterCounts?.[entry.key] ?? 0;
+                return (
+                  <button
+                    key={entry.key}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => setVideoFilter(entry.key)}
+                    className={`${CHIP_BASE} min-h-[32px] ${
+                      on
+                        ? "border-black bg-black text-white"
+                        : entry.key === "needs-fix" && count > 0
+                        ? "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
+                        : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                    }`}
+                  >
+                    {entry.label}{" "}
+                    <span className={on ? "text-white/80" : "text-gray-500"}>({count})</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+
           <p className="mt-2 text-xs text-gray-500">
-            {listFilter || listSort !== "order"
-              ? "Để bật kéo-thả / ↑↓ đổi thứ tự, chọn “Thứ tự thủ công” và xoá ô tìm kiếm."
+            {listFilter || listSort !== "order" || activeVideoFilter !== "all"
+              ? isVideoTab
+                ? "Để bật kéo-thả / ↑↓ đổi thứ tự, chọn “Tất cả”, “Thứ tự thủ công” và xoá ô tìm kiếm."
+                : "Để bật kéo-thả / ↑↓ đổi thứ tự, chọn “Thứ tự thủ công” và xoá ô tìm kiếm."
               : staleNotice
               ? "Tải lại danh sách (nút ở trên) trước khi đổi thứ tự."
+              : isVideoTab
+              ? "Kéo-thả thẻ hoặc dùng ↑/↓ để đổi thứ tự hiển thị trên trang Video. Đổi thứ tự hai video ★ Nổi bật cũng đổi vị trí của chúng trên lưới trang chủ. Bấm ★ Nổi bật để đưa video lên lưới — xếp ô ở thẻ “Trang chủ”."
               : "Kéo-thả thẻ hoặc dùng ↑/↓ để đổi thứ tự hiển thị trên trang công khai."}
           </p>
 
@@ -3781,10 +3993,12 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
             <p className="mt-4 text-sm text-gray-500">
               {listFilter.trim()
                 ? `Không có mục nào khớp với “${listFilter.trim()}”.`
-                : mode === "showreel-featured"
-                ? "Chưa có video nổi bật nào. Bấm “+ Tạo mới” để thêm, hoặc tích ô Nổi bật cho một video ở thẻ Thư viện video."
-                : mode === "other-videos"
-                ? "Chưa có video nào trong thư viện (ngoài các video nổi bật)."
+                : activeVideoFilter === "featured"
+                ? "Chưa có video nổi bật nào. Bấm ★ Nổi bật trên một video (ở mục “Tất cả”) để đưa video lên lưới trang chủ."
+                : activeVideoFilter === "other"
+                ? "Mọi video đều đang bật Nổi bật."
+                : activeVideoFilter === "needs-fix"
+                ? "Không có video nào cần sửa ✓"
                 : "Chưa có mục nào."}
             </p>
           ) : (
@@ -3799,13 +4013,25 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
                   // Place in the manual order on screen, e.g. "Vị trí 3/12";
                   // only shown while the list IS the manual order (no other
                   // sort, no search), where it matches what ↑/↓ change.
-                  const showPosition = listSort === "order" && !listFilter;
+                  const showPosition =
+                    listSort === "order" && !listFilter && activeVideoFilter === "all";
+                  const rowPatching = patchingIds[Number(item.id)] || "";
+                  // Star / rating: not while the form edits this record (it
+                  // would save its own copy), nor while other work runs.
+                  const quickEditOff = isCurrent || rowLocked || reordering || rowPatching;
+                  const quickEditHint = isCurrent
+                    ? "Đang sửa video này trong form — đổi ở form rồi bấm “Cập nhật”"
+                    : "";
+                  const healthIssues = isVideoTab ? videoHealthIssues(item) : [];
+                  const itemName = item.title || "(Chưa có tiêu đề)";
                   const canReorder = canReorderList;
                   // ↑ / ↓ move past the neighbour ON SCREEN.
                   const isFirstShown = shownIndex === 0;
                   const isLastShown = shownIndex === sortedFilteredItems.length - 1;
                   const reorderOffHint = listFilter
                     ? "Xoá ô tìm kiếm để sắp xếp"
+                    : activeVideoFilter !== "all"
+                    ? "Chọn “Tất cả” để sắp xếp"
                     : listSort !== "order"
                     ? "Chọn “Thứ tự thủ công” để sắp xếp"
                     : staleNotice
@@ -3813,7 +4039,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
                     : refreshing || loadingItems
                     ? "Đang tải lại danh sách…"
                     : "";
-                  const publicLink = publicLinkFor(item, { isVideo: isVideoTab, mode });
+                  const publicLink = publicLinkFor(item, { isVideo: isVideoTab });
                   const isDragging = dragId !== null && Number(dragId) === Number(item.id);
                   return (
                     <motion.div
@@ -3884,11 +4110,22 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
                             ↓
                           </button>
                         </div>
-                        <RowThumb item={item} />
+                        <RowThumb item={item} video={isVideoTab} />
                         <div className="min-w-0 flex-1">
                           {/* Phones: Sửa / Xoá go under the text so the
                               title and client stay readable. */}
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div
+                            className={
+                              isVideoTab
+                                ? // Video rows carry 4 buttons next to a 96 px
+                                  // thumbnail: side by side only where the
+                                  // list is full width and wide enough (md
+                                  // to lg); in the half-width column (lg+,
+                                  // next to the form) they go under the text.
+                                  "flex flex-col gap-2 md:flex-row md:items-start md:justify-between lg:flex-col lg:items-stretch lg:justify-start"
+                                : "flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"
+                            }
+                          >
                             <div className="min-w-0">
                               <div className="truncate font-semibold">
                                 {item.title || "(Chưa có tiêu đề)"}
@@ -3897,12 +4134,29 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
                                 {item.client || "Chưa ghi khách hàng"} · #{item.id}
                               </div>
                               <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                                {item.featured ? (
-                                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
-                                    ★ Nổi bật
+                                {isVideoTab ? (
+                                  <RowRatingInput
+                                    value={item.adminRating}
+                                    name={itemName}
+                                    disabled={quickEditOff}
+                                    title={quickEditHint}
+                                    onChange={(value) => changeRating(item, value)}
+                                  />
+                                ) : (
+                                  <StarRatingDisplay value={item.adminRating} />
+                                )}
+                                {healthIssues.map((issue) => (
+                                  <span
+                                    key={issue.key}
+                                    className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                                      issue.key === "no-media"
+                                        ? "bg-red-100 text-red-800"
+                                        : "bg-amber-100 text-amber-900"
+                                    }`}
+                                  >
+                                    {issue.label}
                                   </span>
-                                ) : null}
-                                <StarRatingDisplay value={item.adminRating} />
+                                ))}
                                 {showPosition ? (
                                   <span
                                     className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-700"
@@ -3927,6 +4181,35 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
                               </div>
                             </div>
                             <div className="flex shrink-0 flex-wrap gap-2">
+                              {isVideoTab ? (
+                                <button
+                                  type="button"
+                                  draggable={false}
+                                  aria-pressed={Boolean(item.featured)}
+                                  aria-label={`Nổi bật: “${itemName}”`}
+                                  title={
+                                    quickEditHint ||
+                                    (item.featured
+                                      ? "Đang ở lưới trang chủ — bấm để tắt Nổi bật"
+                                      : "Bấm để đưa video lên lưới trang chủ")
+                                  }
+                                  disabled={quickEditOff}
+                                  ref={(node) => {
+                                    const key = Number(item.id);
+                                    if (node) starButtonRefs.current.set(key, node);
+                                    else starButtonRefs.current.delete(key);
+                                  }}
+                                  onClick={(event) => toggleFeatured(item, event)}
+                                  className={`inline-flex min-h-[36px] items-center gap-1 rounded-md border px-3 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                                    item.featured
+                                      ? "border-amber-400 bg-amber-100 text-amber-900 hover:bg-amber-200"
+                                      : "border-gray-300 text-gray-600 hover:bg-gray-50"
+                                  }`}
+                                >
+                                  <span aria-hidden="true">{item.featured ? "★" : "☆"}</span>
+                                  {rowPatching === "featured" ? "Đang lưu…" : "Nổi bật"}
+                                </button>
+                              ) : null}
                               {publicLink ? (
                                 <a
                                   href={publicLink.href}
@@ -3978,7 +4261,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
                           }}
                         >
                           <div className="flex gap-3">
-                            <RowThumb item={item} />
+                            <RowThumb item={item} video={isVideoTab} />
                             <div className="min-w-0">
                               <p className="break-words font-semibold text-red-900">
                                 {item.title || "(Chưa có tiêu đề)"}{" "}

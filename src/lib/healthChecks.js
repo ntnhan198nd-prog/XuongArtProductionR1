@@ -483,10 +483,11 @@ function hasFile(asset) {
   return isPlainObject(asset) && typeof asset.url === "string" && asset.url.trim().length > 0;
 }
 
-// Admin tab that edits a video: featured ones live under "Trang chủ:
-// Showreel & Nổi bật", the rest under "Thư viện video".
-export function videoTabFor(project) {
-  return project?.featured ? "showreel-featured" : "other-videos";
+// Admin tab that edits a video: every video, featured or not, is in the
+// "Video" tab (/admin?tab=videos&edit=<id>). Callers pass the project;
+// it no longer matters which one.
+export function videoTabFor() {
+  return "videos";
 }
 
 // Slug the public site resolves a record under (contentStore serializers:
@@ -573,7 +574,7 @@ export function buildOverview(store, { now = Date.now() } = {}) {
   });
   const issues = [];
   if (!showreel.present) {
-    issues.push({ type: "no-showreel", id: null, title: "Showreel", tab: "showreel-featured" });
+    issues.push({ type: "no-showreel", id: null, title: "Showreel", tab: "home" });
   }
   for (const project of orderedVideos) {
     if (!hasFile(project.media)) issues.push(videoIssue("no-media", project));

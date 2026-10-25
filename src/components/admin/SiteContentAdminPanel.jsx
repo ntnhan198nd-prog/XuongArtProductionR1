@@ -1,11 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { UploadError, uploadFile, validateUploadFile } from "@/lib/uploadClient";
 import { fetchJson } from "@/lib/apiClient";
 import { useToast } from "@/components/admin/ToastProvider";
 import { ABOUT_SECTION_LABELS, DEFAULT_SITE_CONTENT } from "@/lib/siteContent";
+import SitePreviewFrame from "@/components/admin/SitePreviewFrame";
+import {
+  accentHeadingParts,
+  formatStatDisplay,
+  statDecimalsLevel,
+  statsHaveBrokenDecimals,
+} from "@/app/admin/preview/previewShared";
 
 const URL_REGEX = /^https?:\/\/[^\s]+$/i;
 // Button links: absolute http(s), mailto:/tel:, or an internal path/anchor.
@@ -477,6 +484,33 @@ const THEME_OPTIONS = [
   { value: "light", label: "Nền xám nhạt, chữ đen" },
 ];
 
+// One-line look at a two-part heading as the page prints it: main part, a
+// space, then the accent part in the site's orange (text-accent-400).
+// `kind` = the content key (hero / featuredHeader / intro / services).
+function HeadingPreview({ kind, value, dark = false }) {
+  const parts = accentHeadingParts(kind, value);
+  if (!parts) return null;
+  return (
+    <div
+      className={`flex min-w-0 items-baseline gap-2 rounded-lg border px-3 py-2 ${
+        dark ? "border-neutral-800 bg-neutral-950" : "border-gray-200 bg-white"
+      }`}
+    >
+      <span className={`shrink-0 text-[10px] font-semibold uppercase tracking-wider ${dark ? "text-neutral-400" : "text-gray-500"}`}>
+        Hiển thị
+      </span>
+      <span
+        className={`min-w-0 truncate font-display text-base font-medium tracking-tight ${
+          dark ? "text-white" : "text-neutral-950"
+        }`}
+        data-heading-preview={kind}
+      >
+        {parts.main} <span className="text-accent-400">{parts.accent}</span>
+      </span>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Image upload
 
@@ -692,6 +726,11 @@ function ImageUploadField({
 // ---------------------------------------------------------------------------
 // Homepage editors
 
+// True while the live preview is docked beside the editor: the editor column
+// is then only ~450–620px wide whatever the window size, so editors that
+// pick columns from viewport breakpoints use fewer columns.
+const CompactEditorContext = createContext(false);
+
 function HeroBlock({ value, onChange }) {
   const set = (k, v) => onChange({ ...value, [k]: v });
   return (
@@ -700,6 +739,9 @@ function HeroBlock({ value, onChange }) {
       <TextField label="Dòng chữ nhỏ phía trên tiêu đề" value={value.tagline} onChange={(v) => set("tagline", v)} />
       <TextField label="Tiêu đề (phần chữ trắng)" value={value.headingMain} onChange={(v) => set("headingMain", v)} />
       <TextField label="Tiêu đề (phần chữ màu cam)" value={value.headingAccent} onChange={(v) => set("headingAccent", v)} />
+      <div className="lg:col-span-2">
+        <HeadingPreview kind="hero" value={value} dark />
+      </div>
       <div className="lg:col-span-2">
         <TextField label="Câu mô tả ngắn (góc dưới bên phải)" value={value.description} onChange={(v) => set("description", v)} multiline rows={2} />
       </div>
@@ -710,17 +752,47 @@ function HeroBlock({ value, onChange }) {
 
 function FeaturedHeaderBlock({ value, onChange }) {
   const set = (k, v) => onChange({ ...value, [k]: v });
+  const compact = useContext(CompactEditorContext);
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+    <div className={`grid grid-cols-1 gap-4 ${compact ? "" : "lg:grid-cols-3"}`}>
       <TextField label="Dòng chữ nhỏ phía trên tiêu đề" value={value.eyebrow} onChange={(v) => set("eyebrow", v)} />
       <TextField label="Tiêu đề (phần chữ đen)" value={value.headingMain} onChange={(v) => set("headingMain", v)} />
       <TextField label="Tiêu đề (phần chữ màu cam)" value={value.headingAccent} onChange={(v) => set("headingAccent", v)} />
+      <div className={compact ? undefined : "lg:col-span-3"}>
+        <HeadingPreview kind="featuredHeader" value={value} />
+      </div>
     </div>
+  );
+}
+
+// "Hiển thị: 1.2M" under a stats row — the number the homepage counter
+// stops at (same normalizer + formatting as components/Stats.jsx).
+function StatDisplayHint({ item }) {
+  const shown = formatStatDisplay(item);
+  const level = statDecimalsLevel(item);
+  if (level === "error" || shown === null) {
+    return (
+      <p className="mt-2 text-xs text-red-600">
+        Số chữ số thập phân quá lớn — số này làm trang chủ bị lỗi. Dùng từ 0 đến 2.
+      </p>
+    );
+  }
+  return (
+    <p className="mt-2 text-xs text-gray-600">
+      Hiển thị:{" "}
+      <span className="font-display text-sm font-semibold text-neutral-950" data-stat-preview>
+        {shown}
+      </span>
+      {level === "warn" ? (
+        <span className="ml-2 text-amber-700">Nên dùng 0–2 chữ số thập phân.</span>
+      ) : null}
+    </p>
   );
 }
 
 function StatsBlock({ value, onChange }) {
   const set = (k, v) => onChange({ ...value, [k]: v });
+  const compact = useContext(CompactEditorContext);
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -734,11 +806,14 @@ function StatsBlock({ value, onChange }) {
         emptyItem={{ value: 0, suffix: "", label: "", decimals: 0 }}
         addLabel="Thêm con số"
         renderItem={(item, update) => (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <NumberField label="Con số" value={item.value} onChange={(v) => update({ ...item, value: v })} step={0.1} />
-            <TextField label="Ký hiệu sau số (+, M, %)" value={item.suffix} onChange={(v) => update({ ...item, suffix: v })} placeholder="+ / M / %" />
-            <NumberField label="Số chữ số thập phân" value={item.decimals} onChange={(v) => update({ ...item, decimals: v })} hint="0 = số nguyên; 1 = hiện kiểu 1.2" />
-            <TextField label="Chú thích dưới số" value={item.label} onChange={(v) => update({ ...item, label: v })} />
+          <div>
+            <div className={`grid grid-cols-2 gap-3 ${compact ? "" : "sm:grid-cols-4"}`}>
+              <NumberField label="Con số" value={item.value} onChange={(v) => update({ ...item, value: v })} step={0.1} />
+              <TextField label="Ký hiệu sau số (+, M, %)" value={item.suffix} onChange={(v) => update({ ...item, suffix: v })} placeholder="+ / M / %" />
+              <NumberField label="Số chữ số thập phân" value={item.decimals} onChange={(v) => update({ ...item, decimals: v })} hint="0 = số nguyên; 1 = hiện kiểu 1.2" />
+              <TextField label="Chú thích dưới số" value={item.label} onChange={(v) => update({ ...item, label: v })} />
+            </div>
+            <StatDisplayHint item={item} />
           </div>
         )}
       />
@@ -834,6 +909,7 @@ function IntroBlock({ value, onChange }) {
         <TextField label="Tiêu đề (phần chữ đen)" value={value.headingMain} onChange={(v) => set("headingMain", v)} />
         <TextField label="Tiêu đề (phần chữ màu cam)" value={value.headingAccent} onChange={(v) => set("headingAccent", v)} />
       </div>
+      <HeadingPreview kind="intro" value={value} />
       <TextField label="Đoạn mô tả dưới tiêu đề" value={value.description} onChange={(v) => set("description", v)} multiline rows={3} />
     </div>
   );
@@ -976,9 +1052,10 @@ function AboutHeroEditor({ value, onChange }) {
 function AboutFounderEditor({ value, onChange }) {
   const founder = value || {};
   const set = (k, v) => onChange({ ...founder, [k]: v });
+  const compact = useContext(CompactEditorContext);
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <div className={`grid grid-cols-1 gap-4 ${compact ? "" : "lg:grid-cols-3"}`}>
         <TextField label="Dòng chữ nhỏ phía trên" value={founder.eyebrow} onChange={(v) => set("eyebrow", v)} />
         <TextField label="Tên" value={founder.name} onChange={(v) => set("name", v)} />
         <TextField label="Chức danh" value={founder.role} onChange={(v) => set("role", v)} />
@@ -1218,6 +1295,9 @@ function ServicesBlock({ value, onChange, content, updateContent, goTo }) {
         <TextField label="Câu ngắn dưới tiêu đề" value={value.tagline} onChange={(v) => set("tagline", v)} />
         <TextField label="Tiêu đề (phần chữ đen)" value={value.headingMain} onChange={(v) => set("headingMain", v)} multiline rows={2} />
         <TextField label="Tiêu đề (phần chữ màu cam)" value={value.headingAccent} onChange={(v) => set("headingAccent", v)} />
+        <div className="lg:col-span-2">
+          <HeadingPreview kind="services" value={value} />
+        </div>
       </div>
       <ImageUploadField
         label="Ảnh minh hoạ (bên trái danh sách dịch vụ)"
@@ -1451,7 +1531,7 @@ export const ENTRIES = [
     label: "Banner video đầu trang",
     where: "đầu trang chủ",
     whereLong: "Trang chủ — chữ nằm trên video lớn ở đầu trang",
-    note: "Video nền đổi ở thẻ “Trang chủ: Showreel & Nổi bật”.",
+    note: "Video nền đổi ở thẻ “Trang chủ”.",
     href: "/",
     parts: [{ path: ["hero"] }],
     Editor: HeroBlock,
@@ -1462,7 +1542,7 @@ export const ENTRIES = [
     label: "Tiêu đề lưới dự án nổi bật",
     where: "trên lưới dự án",
     whereLong: "Trang chủ — ngay phía trên lưới video nổi bật",
-    note: "Các video trong lưới chọn ở thẻ “Trang chủ: Showreel & Nổi bật”.",
+    note: "Video trong lưới: bật ★ Nổi bật ở thẻ “Video”, xếp vị trí ở thẻ “Trang chủ”.",
     href: "/#projects-section",
     parts: [{ path: ["featuredHeader"] }],
     Editor: FeaturedHeaderBlock,
@@ -1665,6 +1745,28 @@ const RESET_WORD = "RESET";
 // ToastProvider's replacesToast) but never another panel's error.
 const SAVE_ERROR_TOAST_KEY = "site-content-save";
 
+// "Xem trước" on/off, remembered per browser.
+const PREVIEW_STORAGE_KEY = "xuongart.admin.siteContentPreview";
+// Same width as Tailwind's `lg`: from here the preview is a right column,
+// below it a bottom sheet.
+const PREVIEW_DOCK_QUERY = "(min-width: 1024px)";
+
+function readPreviewPreference() {
+  try {
+    return window.localStorage.getItem(PREVIEW_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writePreviewPreference(on) {
+  try {
+    window.localStorage.setItem(PREVIEW_STORAGE_KEY, on ? "1" : "0");
+  } catch {
+    // Private mode / blocked storage: the toggle still works for this visit.
+  }
+}
+
 // Case-insensitive: phones auto-capitalise "reset" to "Reset".
 export function isResetWordTyped(value) {
   return String(value ?? "").trim().toUpperCase() === RESET_WORD;
@@ -1753,6 +1855,25 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
   // ⌘/Ctrl+S shortcut and the toast's "Thử lại", so a retry never sends an
   // older copy of the content).
   const saveLatestRef = useRef(null);
+
+  // Live preview (iframe of /admin/preview): docked on the right from `lg`,
+  // a bottom sheet on phones.
+  const [previewOn, setPreviewOn] = useState(false);
+  const [previewDocked, setPreviewDocked] = useState(false);
+  useEffect(() => {
+    setPreviewOn(readPreviewPreference());
+    if (typeof window.matchMedia !== "function") return undefined;
+    const query = window.matchMedia(PREVIEW_DOCK_QUERY);
+    const update = () => setPreviewDocked(query.matches);
+    update();
+    query.addEventListener?.("change", update);
+    return () => query.removeEventListener?.("change", update);
+  }, []);
+  const previewToggleRef = useRef(null);
+  const setPreview = useCallback((on) => {
+    setPreviewOn(on);
+    writePreviewPreference(on);
+  }, []);
 
   // The Save bar sticks to the top of the window; a 1px sentinel right above
   // it tells when it is stuck, to add a separating shadow.
@@ -1895,6 +2016,14 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
   // down is only for the first load.
   const handleSave = async () => {
     if (!content || saving) return;
+    // A huge "Số chữ số thập phân" makes the homepage counter throw.
+    if (statsHaveBrokenDecimals(content.stats)) {
+      saveErrorToastRef.current = toast.error(
+        "Chưa lưu: ở mục “Dãy con số”, ô “Số chữ số thập phân” quá lớn sẽ làm trang chủ bị lỗi — dùng từ 0 đến 2.",
+        { key: SAVE_ERROR_TOAST_KEY, actionLabel: "Mở mục Dãy con số", onAction: () => goTo("stats") }
+      );
+      return;
+    }
     const sent = content;
     const savedEntry = activeEntry;
     setSaving(true);
@@ -2077,6 +2206,28 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
   const editorValue = mainPath ? getAt(content, mainPath) : undefined;
   const activeHiddenNote = entryHiddenNote(activeEntry, content);
   const activeDirty = Boolean(dirtyByEntry[activeEntry.id]);
+  // Only while this tab is on screen (a hidden tab keeps no iframe alive).
+  const showPreview = previewOn && active;
+  const docked = showPreview && previewDocked;
+  const sheet = showPreview && !previewDocked;
+  const previewFrame = showPreview ? (
+    <SitePreviewFrame
+      site={content}
+      entryId={activeEntry.id}
+      entryLabel={activeEntry.label}
+      href={activeEntry.href}
+      dirty={activeDirty}
+      otherDirty={dirty}
+      variant={docked ? "dock" : "sheet"}
+      onClose={() => {
+        setPreview(false);
+        // The close button unmounts with the preview: hand focus back to
+        // the toggle instead of dropping it to <body>.
+        previewToggleRef.current?.focus();
+      }}
+      onSaveShortcut={() => saveLatestRef.current?.()}
+    />
+  ) : null;
   const advancedReset = (
     <AdvancedResetBox
       value={resetAllText}
@@ -2088,7 +2239,9 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
   );
 
   return (
-    <div>
+    // On phones the preview sheet covers the bottom 60%: leave room so the
+    // last fields can still scroll above it.
+    <div className={sheet ? "pb-[60vh]" : undefined}>
       <div ref={stickySentinelRef} aria-hidden="true" className="-mb-px h-px" />
       {/* Sticky Save bar. The negative margins match Container's padding so
           the bar's background reaches past the content column's edges. On
@@ -2155,199 +2308,231 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
         </button>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
-        {/* Desktop: sticky below the Save bar, with its own scroll when the
-            list is taller than the window (every group stays reachable). */}
-        <aside
-          ref={sidebarRef}
-          className="space-y-4 lg:sticky lg:top-16 lg:max-h-[calc(100vh-5rem)] lg:self-start lg:overflow-y-auto lg:overscroll-contain"
+      {/* With the preview docked, the page is two columns (editor | preview)
+          and the entry list shrinks to the dropdown used on phones. */}
+      <div className={docked ? "mt-4 grid grid-cols-[minmax(0,1fr)_45%] gap-6" : "mt-4"}>
+        <div
+          className={`grid grid-cols-1 gap-6 ${docked ? "self-start" : "lg:grid-cols-[300px_minmax(0,1fr)]"}`}
         >
-          <div className="lg:hidden">
-            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-gray-600">
-              Chọn phần cần sửa
-            </label>
-            <select
-              value={activeEntry.id}
-              onChange={(event) => setActiveId(event.target.value)}
-              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-black focus:outline-none"
-            >
-              {ENTRY_GROUPS.map((group) => (
-                <optgroup key={group.key} label={group.label}>
-                  {ENTRIES.filter((entry) => entry.group === group.key).map((entry) => (
-                    <option key={entry.id} value={entry.id}>
-                      {dirtyByEntry[entry.id] ? "● " : ""}
-                      {entry.label}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </div>
-          <nav className="hidden flex-col rounded-2xl border border-gray-200 p-2 lg:flex">
-            {ENTRY_GROUPS.map((group, groupIdx) => (
-              <div key={group.key} className={groupIdx > 0 ? "mt-3" : ""}>
-                <div className="px-3 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-500">
-                  {group.label}
-                </div>
-                <div className="flex flex-col gap-1">
-                  {ENTRIES.filter((entry) => entry.group === group.key).map((entry) => {
-                    const isActive = activeEntry.id === entry.id;
-                    const isDirty = dirtyByEntry[entry.id];
-                    const hiddenNote = entryHiddenNote(entry, content);
-                    const caption = `Hiện ở: ${entry.where}`;
-                    return (
-                      <div
-                        key={entry.id}
-                        className={`relative rounded-lg transition ${
-                          isActive ? "bg-black text-white" : "text-gray-800 hover:bg-gray-100"
-                        }`}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => setActiveId(entry.id)}
-                          aria-current={isActive ? "true" : undefined}
-                          className="block w-full rounded-lg px-3 py-2 text-left"
-                        >
-                          <span className="flex items-center gap-2">
-                            <span className="min-w-0 flex-1 truncate text-sm">{entry.label}</span>
-                            {hiddenNote ? (
-                              <span
-                                className={`shrink-0 rounded-full px-1.5 py-px text-[10px] font-medium ${
-                                  isActive ? "bg-white/15 text-amber-200" : "bg-amber-100 text-amber-800"
-                                }`}
-                                title={hiddenNote}
-                              >
-                                đang ẩn
-                              </span>
-                            ) : null}
-                            {isDirty ? (
-                              <span
-                                className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                                  isActive ? "bg-amber-300" : "bg-amber-500"
-                                }`}
-                                title="Có thay đổi chưa lưu"
-                              />
-                            ) : null}
-                          </span>
-                          <span
-                            className={`mt-0.5 block pr-[4.75rem] text-[11px] leading-snug ${
-                              isActive ? "text-gray-300" : "text-gray-500"
-                            }`}
-                            title={caption}
-                          >
-                            {caption}
-                          </span>
-                        </button>
-                        <a
-                          href={entry.href}
-                          target="_blank"
-                          rel="noreferrer"
-                          className={`absolute bottom-2 right-3 text-[11px] font-medium hover:underline ${
-                            isActive ? "text-white" : "text-gray-600"
+          {/* Desktop: sticky below the Save bar, with its own scroll when the
+              list is taller than the window (every group stays reachable). */}
+          <aside
+            ref={sidebarRef}
+            className={
+              docked
+                ? "space-y-4"
+                : "space-y-4 lg:sticky lg:top-16 lg:max-h-[calc(100vh-5rem)] lg:self-start lg:overflow-y-auto lg:overscroll-contain"
+            }
+          >
+            <div className={docked ? undefined : "lg:hidden"}>
+              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-gray-600">
+                Chọn phần cần sửa
+              </label>
+              <select
+                value={activeEntry.id}
+                onChange={(event) => setActiveId(event.target.value)}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-black focus:outline-none"
+              >
+                {ENTRY_GROUPS.map((group) => (
+                  <optgroup key={group.key} label={group.label}>
+                    {ENTRIES.filter((entry) => entry.group === group.key).map((entry) => (
+                      <option key={entry.id} value={entry.id}>
+                        {dirtyByEntry[entry.id] ? "● " : ""}
+                        {entry.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+            <nav className={docked ? "hidden" : "hidden flex-col rounded-2xl border border-gray-200 p-2 lg:flex"}>
+              {ENTRY_GROUPS.map((group, groupIdx) => (
+                <div key={group.key} className={groupIdx > 0 ? "mt-3" : ""}>
+                  <div className="px-3 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-500">
+                    {group.label}
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    {ENTRIES.filter((entry) => entry.group === group.key).map((entry) => {
+                      const isActive = activeEntry.id === entry.id;
+                      const isDirty = dirtyByEntry[entry.id];
+                      const hiddenNote = entryHiddenNote(entry, content);
+                      const caption = `Hiện ở: ${entry.where}`;
+                      return (
+                        <div
+                          key={entry.id}
+                          className={`relative rounded-lg transition ${
+                            isActive ? "bg-black text-white" : "text-gray-800 hover:bg-gray-100"
                           }`}
-                          title="Mở trang này trong tab mới"
                         >
-                          Mở trang ↗
-                        </a>
-                      </div>
-                    );
-                  })}
+                          <button
+                            type="button"
+                            onClick={() => setActiveId(entry.id)}
+                            aria-current={isActive ? "true" : undefined}
+                            className="block w-full rounded-lg px-3 py-2 text-left"
+                          >
+                            <span className="flex items-center gap-2">
+                              <span className="min-w-0 flex-1 truncate text-sm">{entry.label}</span>
+                              {hiddenNote ? (
+                                <span
+                                  className={`shrink-0 rounded-full px-1.5 py-px text-[10px] font-medium ${
+                                    isActive ? "bg-white/15 text-amber-200" : "bg-amber-100 text-amber-800"
+                                  }`}
+                                  title={hiddenNote}
+                                >
+                                  đang ẩn
+                                </span>
+                              ) : null}
+                              {isDirty ? (
+                                <span
+                                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                                    isActive ? "bg-amber-300" : "bg-amber-500"
+                                  }`}
+                                  title="Có thay đổi chưa lưu"
+                                />
+                              ) : null}
+                            </span>
+                            <span
+                              className={`mt-0.5 block pr-[4.75rem] text-[11px] leading-snug ${
+                                isActive ? "text-gray-300" : "text-gray-500"
+                              }`}
+                              title={caption}
+                            >
+                              {caption}
+                            </span>
+                          </button>
+                          <a
+                            href={entry.href}
+                            target="_blank"
+                            rel="noreferrer"
+                            className={`absolute bottom-2 right-3 text-[11px] font-medium hover:underline ${
+                              isActive ? "text-white" : "text-gray-600"
+                            }`}
+                            title="Mở trang này trong tab mới"
+                          >
+                            Mở trang ↗
+                          </a>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </nav>
-          <div className="hidden lg:block">{advancedReset}</div>
-        </aside>
+              ))}
+            </nav>
+            {docked ? null : <div className="hidden lg:block">{advancedReset}</div>}
+          </aside>
 
-        <section className="min-w-0 rounded-2xl border border-gray-200 p-5">
-          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2
-                  ref={editorHeadingRef}
-                  tabIndex={-1}
-                  className="scroll-mt-2 text-lg font-semibold focus:outline-none"
-                >
-                  {activeEntry.label}
-                </h2>
-                {activeDirty ? (
-                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">
-                    chưa lưu
-                  </span>
+          <section className="min-w-0 rounded-2xl border border-gray-200 p-5">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2
+                    ref={editorHeadingRef}
+                    tabIndex={-1}
+                    className="scroll-mt-2 text-lg font-semibold focus:outline-none"
+                  >
+                    {activeEntry.label}
+                  </h2>
+                  {activeDirty ? (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">
+                      chưa lưu
+                    </span>
+                  ) : null}
+                  <button
+                    ref={previewToggleRef}
+                    type="button"
+                    onClick={() => setPreview(!previewOn)}
+                    aria-pressed={previewOn}
+                    className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition ${
+                      previewOn
+                        ? "border-black bg-black text-white hover:bg-gray-800"
+                        : "border-gray-300 text-gray-700 hover:bg-gray-50"
+                    }`}
+                    title="Xem bản nháp trên giao diện trang thật, ngay khi gõ"
+                  >
+                    {/* The state is carried by aria-pressed + styling; the
+                        tick is visual only. */}
+                    Xem trước
+                    {previewOn ? <span aria-hidden="true"> ✓</span> : null}
+                  </button>
+                </div>
+                <p className="mt-1 text-xs text-gray-600">
+                  Hiện ở: {activeEntry.whereLong || activeEntry.where}.{" "}
+                  <a
+                    href={activeEntry.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="whitespace-nowrap font-medium text-black underline underline-offset-2"
+                  >
+                    Mở trang ↗
+                  </a>
+                </p>
+                {activeHiddenNote ? (
+                  <p className="mt-1 text-xs font-medium text-amber-700">{activeHiddenNote}.</p>
                 ) : null}
               </div>
-              <p className="mt-1 text-xs text-gray-600">
-                Hiện ở: {activeEntry.whereLong || activeEntry.where}.{" "}
-                <a
-                  href={activeEntry.href}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="whitespace-nowrap font-medium text-black underline underline-offset-2"
+              <div className="flex shrink-0 gap-2">
+                <button
+                  type="button"
+                  onClick={handleDiscardEntry}
+                  disabled={!activeDirty || saving}
+                  className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  title="Bỏ thay đổi chưa lưu của phần này"
                 >
-                  Mở trang ↗
-                </a>
-              </p>
-              {activeHiddenNote ? (
-                <p className="mt-1 text-xs font-medium text-amber-700">{activeHiddenNote}.</p>
-              ) : null}
+                  Hủy thay đổi
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResetEntry}
+                  disabled={!defaults || saving}
+                  className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  title="Đưa phần này về nội dung ban đầu"
+                >
+                  Khôi phục mặc định
+                </button>
+              </div>
             </div>
-            <div className="flex shrink-0 gap-2">
-              <button
-                type="button"
-                onClick={handleDiscardEntry}
-                disabled={!activeDirty || saving}
-                className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
-                title="Bỏ thay đổi chưa lưu của phần này"
+            {activeEntry.note ? (
+              <div className="mb-4">
+                <InfoNote>{activeEntry.note}</InfoNote>
+              </div>
+            ) : null}
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={activeEntry.id}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
               >
-                Hủy thay đổi
-              </button>
-              <button
-                type="button"
-                onClick={handleResetEntry}
-                disabled={!defaults || saving}
-                className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
-                title="Đưa phần này về nội dung ban đầu"
-              >
-                Khôi phục mặc định
-              </button>
-            </div>
-          </div>
-          {activeEntry.note ? (
-            <div className="mb-4">
-              <InfoNote>{activeEntry.note}</InfoNote>
-            </div>
-          ) : null}
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={activeEntry.id}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              transition={{ duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
-            >
-              {Editor ? (
-                <Editor
-                  key={editorNonce}
-                  value={editorValue ?? {}}
-                  onChange={(next) => updateContent((prev) => setAt(prev, mainPath, next))}
-                  // Composite / cross-key editors (Chân trang & liên hệ, the
-                  // Dịch vụ switch, Liên hệ) read `content` and write through
-                  // `updateContent`; the others ignore these.
-                  content={content}
-                  updateContent={updateContent}
-                  goTo={goTo}
-                />
-              ) : (
-                <p className="text-sm text-gray-500">Phần này chưa có trình sửa.</p>
-              )}
-            </motion.div>
-          </AnimatePresence>
-        </section>
+                {Editor ? (
+                  <CompactEditorContext.Provider value={docked}>
+                    <Editor
+                      key={editorNonce}
+                      value={editorValue ?? {}}
+                      onChange={(next) => updateContent((prev) => setAt(prev, mainPath, next))}
+                      // Composite / cross-key editors (Chân trang & liên hệ, the
+                      // Dịch vụ switch, Liên hệ) read `content` and write through
+                      // `updateContent`; the others ignore these.
+                      content={content}
+                      updateContent={updateContent}
+                      goTo={goTo}
+                    />
+                  </CompactEditorContext.Provider>
+                ) : (
+                  <p className="text-sm text-gray-500">Phần này chưa có trình sửa.</p>
+                )}
+              </motion.div>
+            </AnimatePresence>
+          </section>
 
-        {/* Phones: the sidebar sits above the editor, so keep the
-            whole-site reset at the very bottom instead. */}
-        <div className="lg:hidden">{advancedReset}</div>
+          {/* Phones (and the docked-preview layout): the entry list sits
+              above the editor, so keep the whole-site reset at the very
+              bottom instead. */}
+          <div className={docked ? undefined : "lg:hidden"}>{advancedReset}</div>
+        </div>
+        {docked ? previewFrame : null}
       </div>
+      {sheet ? previewFrame : null}
     </div>
   );
 }

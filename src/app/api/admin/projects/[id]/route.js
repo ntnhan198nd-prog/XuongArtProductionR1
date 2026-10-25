@@ -9,6 +9,8 @@ import {
   trashUnreferencedAssets,
   updateStore,
 } from "@/lib/contentStore";
+import { HISTORY_ACTION_LABELS } from "@/lib/contentHistory";
+import { isDenseLayout, resolveFeaturedSlots } from "@/lib/featuredLayout";
 import { deleteR2Keys } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +25,33 @@ function unauthorized() {
 
 function invalidId() {
   return NextResponse.json({ error: "Invalid project id." }, { status: 400 });
+}
+
+// History action for a PUT. The "Video" list's quick saves (row star sends
+// only { featured }, inline rating only { adminRating }) get their own
+// action so "Lịch sử" can tell them from real edits — once
+// lib/contentHistory.js has a label for it; until then "project.update".
+function updateActionFor(body) {
+  const keys = Object.keys(body);
+  const quick =
+    keys.length === 1 && keys[0] === "featured"
+      ? "project.featured"
+      : keys.length === 1 && keys[0] === "adminRating"
+      ? "project.rating"
+      : null;
+  return quick && HISTORY_ACTION_LABELS[quick] ? quick : "project.update";
+}
+
+// Cell (0-based slot index) of every featured video on the homepage grid
+// as it renders now: Map(id → slot).
+function featuredCells(projects) {
+  const cells = new Map();
+  resolveFeaturedSlots((projects || []).filter((project) => project?.featured)).forEach(
+    (project, slot) => {
+      if (project) cells.set(Number(project.id), slot);
+    }
+  );
+  return cells;
 }
 
 export async function PUT(request, { params }) {
@@ -52,14 +81,40 @@ export async function PUT(request, { params }) {
       }
 
       const previous = store.projects[index];
+      const cellsBefore = featuredCells(store.projects);
 
       // The slug is made unique among the OTHER videos (this one excluded);
-      // the response carries the final slug.
+      // the response carries the final slug. A partial body (the admin
+      // list's star toggle sends only { featured }, the inline rating only
+      // { adminRating }) changes just those fields: everything it leaves
+      // out keeps its stored value (see normalizeProjectPayload).
       updated = {
+        ...previous,
         id,
         ...normalizeProjectPayload(body, store, previous, { id }),
       };
       store.projects = replaceAtOrder(store.projects, updated, updated.order);
+
+      // Switching "Nổi bật" off empties that cell only, like "Bỏ khỏi lưới"
+      // + "Lưu bố cục" in the "Trang chủ" tab: the other featured videos
+      // stay in the cells they hold now instead of sliding up into it.
+      // Pins are only written when the layout now has a gap (see
+      // lib/featuredLayout.js); without a gap nothing moves anyway.
+      if (previous.featured && !updated.featured) {
+        const remaining = store.projects.filter(
+          (item) => item.featured && cellsBefore.has(Number(item.id))
+        );
+        const occupied = remaining
+          .map((item) => cellsBefore.get(Number(item.id)))
+          .sort((a, b) => a - b);
+        if (!isDenseLayout(occupied)) {
+          store.projects = store.projects.map((item) =>
+            item.featured && cellsBefore.has(Number(item.id))
+              ? { ...item, featuredSlot: cellsBefore.get(Number(item.id)) }
+              : item
+          );
+        }
+      }
       updated = store.projects.find((item) => Number(item.id) === id) || updated;
 
       // Files this edit stopped using (replaced video / preview / thumbnail)
@@ -68,7 +123,7 @@ export async function PUT(request, { params }) {
       // Files still used elsewhere in the store are left alone.
       trashedFiles = trashUnreferencedAssets(store, collectAssetRefsFromProject(previous)).length;
       return store;
-    }, { action: "project.update", detail: id });
+    }, { action: updateActionFor(body), detail: id });
 
     return NextResponse.json({ data: updated, trashedFiles });
   } catch (error) {

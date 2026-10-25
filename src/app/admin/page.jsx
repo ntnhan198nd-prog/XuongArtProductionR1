@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
 import HistoryPanel from "@/components/admin/HistoryPanel";
+import HomeAdminPanel from "@/components/admin/HomeAdminPanel";
 import OverviewPanel from "@/components/admin/OverviewPanel";
 import ProjectsAdminPanel from "@/components/admin/ProjectsAdminPanel";
 import SiteContentAdminPanel from "@/components/admin/SiteContentAdminPanel";
@@ -20,18 +21,16 @@ const SITE_LINKS = [
   { key: "about", href: "/whoweare", label: "Về chúng tôi" },
 ];
 
-// Tab order: "Tổng quan" (what /admin opens on) first, then "Nội dung
-// trang", the video / image sections grouped by purpose, and the
-// maintenance tabs last. The "projects" key from the previous 2-tab layout
-// is kept as a soft alias so old bookmarks (?tab=projects) land on the
-// showreel+featured tab instead of 404-ing. `site` = the SITE_LINKS entry
+// Tab order: "Tổng quan" (what /admin opens on) first, then the homepage
+// (showreel + featured grid), the ONE list of all videos, image projects,
+// page texts, and the maintenance tabs last. `site` = the SITE_LINKS entry
 // highlighted while the tab is open.
 const MAIN_TABS = [
   { key: "overview", label: "Tổng quan", site: null },
-  { key: "content", label: "Nội dung trang", site: "home" },
-  { key: "showreel-featured", label: "Trang chủ: Showreel & Nổi bật", site: "home" },
-  { key: "other-videos", label: "Thư viện video", site: "videos" },
+  { key: "home", label: "Trang chủ", site: "home" },
+  { key: "videos", label: "Video", site: "videos" },
   { key: "images", label: "Dự án ảnh", site: "images" },
+  { key: "content", label: "Nội dung trang", site: "home" },
   { key: "trash", label: "Thùng rác", site: null },
   { key: "history", label: "Lịch sử", site: null },
   { key: "system", label: "Hệ thống", site: null },
@@ -44,18 +43,26 @@ const DEFAULT_TAB = "overview";
 const TRANSIENT_PARAMS = ["edit"];
 
 // Panels that report unsaved edits through onDirtyChange.
-const DIRTY_PANEL_KEYS = ["content", "showreel-featured", "other-videos", "images"];
+const DIRTY_PANEL_KEYS = ["content", "home", "videos", "images"];
 // Panels that can have uploads in flight / unsaved uploads. They report it
 // through onBusyChange so the history tab can warn before a restore reloads
 // the page (and kills that work).
-const BUSY_PANEL_KEYS = ["showreel-featured", "other-videos", "images"];
+const BUSY_PANEL_KEYS = ["home", "videos", "images"];
+// The record lists (ProjectsAdminPanel `mode` = tab key).
+const RECORD_PANEL_KEYS = ["videos", "images"];
 
 // After a history restore the page reloads; if it is still alive after this
 // long, another panel's "leave site?" prompt was answered with Stay.
 const RELOAD_FALLBACK_MS = 3000;
 
+// Tab keys of earlier admin layouts (bookmarks, old links). They keep
+// working: the URL is rewritten to the new key on load, other params kept.
+// A legacy homepage key that carries `edit=<id>` names a video to open,
+// which only the "Video" tab can do, so it lands there instead.
 const LEGACY_TAB_ALIASES = {
-  projects: "showreel-featured",
+  "showreel-featured": "home",
+  "other-videos": "videos",
+  projects: "home",
 };
 
 // Per-panel boolean flag setter (dirty / busy); keeps the same state object
@@ -93,10 +100,28 @@ function isValidTab(key) {
   return MAIN_TABS.some((t) => t.key === key);
 }
 
-function resolveTabKey(rawKey) {
+function hasEditParam(edit) {
+  return edit !== null && edit !== undefined && String(edit) !== "";
+}
+
+// ?tab= value (+ ?edit=) → current tab key, or null when unknown.
+function resolveTabKey(rawKey, edit = null) {
   if (!rawKey) return null;
-  const aliased = LEGACY_TAB_ALIASES[rawKey] || rawKey;
+  let aliased = LEGACY_TAB_ALIASES[rawKey] || rawKey;
+  if (aliased === "home" && rawKey !== "home" && hasEditParam(edit)) aliased = "videos";
   return isValidTab(aliased) ? aliased : null;
+}
+
+// For a legacy ?tab= key: the query string to replace the URL with (other
+// params such as edit kept), else null.
+function legacyTabRedirect(search) {
+  const params = new URLSearchParams(search || "");
+  const raw = params.get("tab");
+  if (!raw || !Object.prototype.hasOwnProperty.call(LEGACY_TAB_ALIASES, raw)) return null;
+  const next = resolveTabKey(raw, params.get("edit"));
+  if (!next || next === DEFAULT_TAB) params.delete("tab");
+  else params.set("tab", next);
+  return params.toString();
 }
 
 // Show/hide password toggle icon (inline so the login screen needs no icon
@@ -286,7 +311,7 @@ function AdminWorkspace({ onLoggedOut }) {
   // Sync the active tab with the ?tab= query param so direct links and
   // back/forward navigation both work. Default to "Tổng quan" on mount.
   const tabFromUrl = searchParams?.get("tab");
-  const initialTab = resolveTabKey(tabFromUrl) || DEFAULT_TAB;
+  const initialTab = resolveTabKey(tabFromUrl, searchParams?.get("edit")) || DEFAULT_TAB;
   const [tab, setTab] = useState(initialTab);
 
   // Per-panel flags: unsaved edits (onDirtyChange, see DIRTY_PANEL_KEYS) and
@@ -325,12 +350,20 @@ function AdminWorkspace({ onLoggedOut }) {
   // If the URL changes (e.g. /admin-content redirected here, or back nav),
   // pick that up.
   useEffect(() => {
-    const next = resolveTabKey(searchParams?.get("tab"));
+    const next = resolveTabKey(searchParams?.get("tab"), searchParams?.get("edit"));
     if (next && next !== tab) {
       setTab(next);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
+
+  // Old tab keys (?tab=showreel-featured, other-videos, projects) → put the
+  // current key in the URL, keeping edit=<id> and anything else.
+  useEffect(() => {
+    const qs = legacyTabRedirect(searchParams?.toString() || "");
+    if (qs === null) return;
+    router.replace(qs ? `/admin?${qs}` : "/admin", { scroll: false });
+  }, [searchParams, router]);
 
   const switchTab = useCallback(
     (nextTab) => {
@@ -669,7 +702,15 @@ function AdminWorkspace({ onLoggedOut }) {
               onDirtyChange={dirtyHandlers.content}
             />
           )}
-          {BUSY_PANEL_KEYS.map((mode) =>
+          {panel(
+            "home",
+            <HomeAdminPanel
+              active={tab === "home"}
+              onBusyChange={busyHandlers.home}
+              onDirtyChange={dirtyHandlers.home}
+            />
+          )}
+          {RECORD_PANEL_KEYS.map((mode) =>
             panel(
               mode,
               <ProjectsAdminPanel

@@ -269,7 +269,7 @@ export default function TrashPanel({ active = true } = {}) {
       toastRef.current?.success?.(`Đã khôi phục “${title}”`, {
         hint: payload?.slugChanged
           ? `Đường dẫn cũ đã có mục khác dùng nên đổi thành “${record?.slug}”.`
-          : `Mục đã về lại tab ${isVideo ? (record?.featured ? "Trang chủ: Showreel & Nổi bật" : "Thư viện video") : "Dự án ảnh"}.`,
+          : `Mục đã về lại thẻ “${isVideo ? "Video" : "Dự án ảnh"}”.`,
         ...(link ? { href: link.href, hrefLabel: link.label } : {}),
         duration: 6000,
       });

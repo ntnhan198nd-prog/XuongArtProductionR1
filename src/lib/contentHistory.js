@@ -24,6 +24,9 @@ const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
 export const HISTORY_ACTION_LABELS = {
   "project.create": "thêm video",
   "project.update": "sửa video",
+  // Quick row actions in the Video tab (star toggle / inline rating).
+  "project.featured": "bật/tắt Nổi bật",
+  "project.rating": "chấm sao video",
   "project.delete": "xoá video",
   "projects.reorder": "sắp xếp video",
   "projects.featured-layout": "đổi bố cục nổi bật",

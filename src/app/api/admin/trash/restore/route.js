@@ -99,11 +99,7 @@ export async function POST(request) {
         type: result.entry.type,
         data: result.record,
         // Admin tab that lists the record (for an "open" link).
-        tab: isVideo
-          ? result.record.featured
-            ? "showreel-featured"
-            : "other-videos"
-          : "images",
+        tab: isVideo ? "videos" : "images",
         slugChanged: result.slugChanged,
         previousSlug: result.previousSlug,
       },
