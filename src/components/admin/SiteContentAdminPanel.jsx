@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { UploadError, uploadFile, validateUploadFile } from "@/lib/uploadClient";
 import { fetchJson } from "@/lib/apiClient";
+import { useToast } from "@/components/admin/ToastProvider";
 import { ABOUT_SECTION_LABELS, DEFAULT_SITE_CONTENT } from "@/lib/siteContent";
 
 const URL_REGEX = /^https?:\/\/[^\s]+$/i;
@@ -844,7 +845,7 @@ function IntroBlock({ value, onChange }) {
 // Plain names for the page parts, used by the layout editor.
 const ABOUT_PART_NAMES = {
   hero: "Mở đầu + số liệu",
-  founder: "Founder",
+  founder: "Người sáng lập",
   values: "Giá trị",
   process: "Quy trình",
   testimonials: "Khách nói gì",
@@ -992,7 +993,7 @@ function AboutFounderEditor({ value, onChange }) {
         altPlaceholder="vd: Nguyễn Trọng Nhân trên phim trường"
       />
       <ParagraphList title="Câu chuyện (mỗi ô là một đoạn)" items={founder.story} onChange={(v) => set("story", v)} />
-      <TextField label="Câu nói của founder (hiện có gạch cam bên trái)" value={founder.quote} onChange={(v) => set("quote", v)} multiline rows={2} />
+      <TextField label="Câu nói của người sáng lập (hiện có gạch cam bên trái)" value={founder.quote} onChange={(v) => set("quote", v)} multiline rows={2} />
     </div>
   );
 }
@@ -1450,7 +1451,7 @@ export const ENTRIES = [
     label: "Banner video đầu trang",
     where: "đầu trang chủ",
     whereLong: "Trang chủ — chữ nằm trên video lớn ở đầu trang",
-    note: "Video nền đổi ở thẻ “Video Showreel + Nổi Bật”.",
+    note: "Video nền đổi ở thẻ “Trang chủ: Showreel & Nổi bật”.",
     href: "/",
     parts: [{ path: ["hero"] }],
     Editor: HeroBlock,
@@ -1461,7 +1462,7 @@ export const ENTRIES = [
     label: "Tiêu đề lưới dự án nổi bật",
     where: "trên lưới dự án",
     whereLong: "Trang chủ — ngay phía trên lưới video nổi bật",
-    note: "Các video trong lưới chọn ở thẻ “Video Showreel + Nổi Bật”.",
+    note: "Các video trong lưới chọn ở thẻ “Trang chủ: Showreel & Nổi bật”.",
     href: "/#projects-section",
     parts: [{ path: ["featuredHeader"] }],
     Editor: FeaturedHeaderBlock,
@@ -1524,7 +1525,7 @@ export const ENTRIES = [
   {
     id: "about.founder",
     group: "about",
-    label: "Founder",
+    label: "Người sáng lập",
     section: "founder",
     where: "trang Về chúng tôi",
     whereLong: "Trang Về chúng tôi — ảnh, tên và câu chuyện của người sáng lập",
@@ -1649,7 +1650,20 @@ export function entryHiddenNote(entry, content) {
   return "";
 }
 
+// "14:05" for the "Lưu lần cuối" note next to the Save button.
+function formatClock(date) {
+  try {
+    return date.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+
 const RESET_WORD = "RESET";
+
+// Toast source key: a new save error replaces the previous one (see
+// ToastProvider's replacesToast) but never another panel's error.
+const SAVE_ERROR_TOAST_KEY = "site-content-save";
 
 // Case-insensitive: phones auto-capitalise "reset" to "Reset".
 export function isResetWordTyped(value) {
@@ -1705,6 +1719,7 @@ function AdvancedResetBox({ value, onChange, onReset, available, done }) {
 }
 
 export default function SiteContentAdminPanel({ onDirtyChange, active = true }) {
+  const toast = useToast();
   const [content, setContent] = useState(null);
   const [defaults, setDefaults] = useState(null);
   const [original, setOriginal] = useState(null);
@@ -1730,6 +1745,54 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
   // heading (the clicked cross-link button has just unmounted).
   const focusEditorRef = useRef(false);
   const editorHeadingRef = useRef(null);
+  const sidebarRef = useRef(null);
+  // Id of the open "Lưu thất bại" toast; closed once a save goes through or
+  // the changes are discarded.
+  const saveErrorToastRef = useRef(null);
+  // Always the current "save if there is something to save" (used by the
+  // ⌘/Ctrl+S shortcut and the toast's "Thử lại", so a retry never sends an
+  // older copy of the content).
+  const saveLatestRef = useRef(null);
+
+  // The Save bar sticks to the top of the window; a 1px sentinel right above
+  // it tells when it is stuck, to add a separating shadow.
+  const [toolbarStuck, setToolbarStuck] = useState(false);
+  const toolbarRef = useRef(null);
+  const stickyObserverRef = useRef(null);
+  const stickySentinelRef = useCallback((node) => {
+    stickyObserverRef.current?.disconnect();
+    stickyObserverRef.current = null;
+    if (!node || typeof IntersectionObserver !== "function") return;
+    const observer = new IntersectionObserver((entries) => {
+      const entry = entries[entries.length - 1];
+      const rootTop = entry.rootBounds ? entry.rootBounds.top : 0;
+      setToolbarStuck(!entry.isIntersecting && entry.boundingClientRect.top < rootTop);
+    });
+    observer.observe(node);
+    stickyObserverRef.current = observer;
+  }, []);
+
+  // While this tab is on screen, keep the page's scroll-padding equal to
+  // the Save bar's height, so focusing a field (Tab / Shift+Tab) or jumping
+  // to an entry never leaves it hidden under the bar.
+  const toolbarReady = Boolean(content) && !loading;
+  useEffect(() => {
+    const node = toolbarRef.current;
+    if (!active || !toolbarReady || !node || typeof document === "undefined") return undefined;
+    const root = document.documentElement;
+    const previous = root.style.scrollPaddingTop;
+    const apply = () => {
+      const height = node.getBoundingClientRect().height;
+      root.style.scrollPaddingTop = height > 0 ? `${Math.ceil(height) + 8}px` : previous;
+    };
+    apply();
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(apply) : null;
+    observer?.observe(node);
+    return () => {
+      observer?.disconnect();
+      root.style.scrollPaddingTop = previous;
+    };
+  }, [active, toolbarReady]);
 
   const activeEntry = ENTRY_BY_ID[activeId] || ENTRIES[0];
 
@@ -1750,10 +1813,12 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
     [content, original]
   );
 
-  // Notify the shell so it can warn when switching main tabs while unsaved.
+  // Notify the shell (unsaved dot on the tab, leave-page and logout
+  // warnings). A save in flight counts too: leaving now could lose it.
+  const pending = dirty || saving;
   useEffect(() => {
-    if (typeof onDirtyChange === "function") onDirtyChange(dirty);
-  }, [dirty, onDirtyChange]);
+    if (typeof onDirtyChange === "function") onDirtyChange(pending);
+  }, [pending, onDirtyChange]);
 
   const updateContent = useCallback(
     (updater) => setContent((prev) => (prev ? updater(prev) : prev)),
@@ -1775,6 +1840,19 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
     heading.focus({ preventScroll: true });
   }, [activeId]);
 
+  // Desktop: the sidebar is sticky with its own scroll; keep the selected
+  // entry visible in it (e.g. after a "Sửa ở mục …" jump).
+  useEffect(() => {
+    const aside = sidebarRef.current;
+    if (!aside || aside.scrollHeight <= aside.clientHeight + 1) return;
+    const item = aside.querySelector('[aria-current="true"]');
+    if (!item) return;
+    const box = aside.getBoundingClientRect();
+    const rect = item.getBoundingClientRect();
+    if (rect.top < box.top) aside.scrollTop += rect.top - box.top - 8;
+    else if (rect.bottom > box.bottom) aside.scrollTop += rect.bottom - box.bottom + 8;
+  }, [activeId]);
+
   const loadContent = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -1790,7 +1868,7 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
         { fallbackError: "Không tải được nội dung" }
       );
       if (!payload?.data || typeof payload.data !== "object") {
-        throw new Error("Server trả về dữ liệu không đúng định dạng (thiếu `data`).");
+        throw new Error("Server trả về dữ liệu không đúng định dạng.");
       }
       setContent(payload.data);
       setOriginal(payload.data);
@@ -1808,40 +1886,75 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
     loadContent();
   }, [loadContent]);
 
+  const dismissSaveError = () => {
+    if (saveErrorToastRef.current) toast.dismiss?.(saveErrorToastRef.current);
+    saveErrorToastRef.current = null;
+  };
+
+  // Save errors are shown as a toast (with "Thử lại"); the red box further
+  // down is only for the first load.
   const handleSave = async () => {
-    if (!content) return;
+    if (!content || saving) return;
+    const sent = content;
+    const savedEntry = activeEntry;
     setSaving(true);
-    setError("");
-    setErrorHint("");
-    setErrorStatus(null);
     try {
       const payload = await fetchJson(
         "/api/admin/site-content",
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(content),
+          body: JSON.stringify(sent),
         },
         { fallbackError: "Lưu thất bại" }
       );
       if (!payload?.data || typeof payload.data !== "object") {
         throw new Error("Server trả về dữ liệu không đúng định dạng sau khi lưu.");
       }
-      setContent(payload.data);
+      // Edits typed while the save was in flight stay on screen (and stay
+      // "chưa lưu"); otherwise show the stored version.
+      setContent((prev) => (prev === sent ? payload.data : prev));
       setOriginal(payload.data);
       setSavedAt(new Date());
       setResetAllDone(false);
+      dismissSaveError();
+      toast.success("Đã lưu nội dung trang", { href: savedEntry?.href || "/" });
     } catch (e) {
-      setError(e.message);
-      setErrorHint(e.hint || "");
-      setErrorStatus(e.status ?? null);
+      const status = e?.status;
+      const retry = { actionLabel: "Thử lại", onAction: () => saveLatestRef.current?.() };
+      if (status === 401) {
+        // Expired login: reloading here would throw the edits away. Log in
+        // again in a new tab (the session cookie is shared), then retry.
+        saveErrorToastRef.current = toast.error("Phiên đăng nhập đã hết hạn — chưa lưu được.", {
+          key: SAVE_ERROR_TOAST_KEY,
+          hint: "Đăng nhập ở tab mới rồi quay lại bấm “Thử lại” — thay đổi ở đây vẫn còn.",
+          href: "/admin",
+          hrefLabel: "Đăng nhập lại ở tab mới ↗",
+          ...retry,
+        });
+      } else {
+        // Server / network trouble: also offer the R2 check, like the
+        // first-load error box does.
+        const serverSide =
+          status === null || status === undefined || status === 0 || status >= 500;
+        saveErrorToastRef.current = toast.error(e?.message || "Lưu thất bại", {
+          key: SAVE_ERROR_TOAST_KEY,
+          hint: e?.hint || "",
+          ...retry,
+          ...(serverSide ? { href: "/api/admin/health", hrefLabel: "Kiểm tra kết nối R2 ↗" } : {}),
+        });
+      }
     } finally {
       setSaving(false);
     }
   };
 
+  // Discard / reset are locked while a save is in flight: they work from the
+  // pre-save `original`, so mixing them with the save's result could put
+  // the old text back on screen as "unsaved" (and a second save would
+  // write it to the live site).
   const handleResetEntry = () => {
-    if (!defaults || !content) return;
+    if (!defaults || !content || saving) return;
     if (
       !window.confirm(
         `Khôi phục nội dung mặc định cho “${activeEntry.label}”?\nThay đổi chỉ được lưu khi bạn bấm “Lưu thay đổi”.`
@@ -1854,7 +1967,7 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
   };
 
   const handleResetAll = () => {
-    if (!defaults || !isResetWordTyped(resetAllText)) return;
+    if (!defaults || saving || !isResetWordTyped(resetAllText)) return;
     setContent(structuredClone(defaults));
     setResetAllText("");
     setResetAllDone(true);
@@ -1867,7 +1980,7 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
   };
 
   const handleDiscardEntry = () => {
-    if (!original || !content) return;
+    if (!original || !content || saving) return;
     if (!dirtyByEntry[activeEntry.id]) return;
     if (!window.confirm(`Hủy các thay đổi chưa lưu của “${activeEntry.label}”?`)) return;
     updateContent((prev) => discardEntry(activeEntry, prev, original));
@@ -1875,18 +1988,19 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
   };
 
   const handleDiscardAll = () => {
-    if (!original || !dirty) return;
+    if (!original || !dirty || saving) return;
     if (!window.confirm("Hủy TẤT CẢ thay đổi chưa lưu?")) return;
     setContent(structuredClone(original));
     setResetAllDone(false);
     setEditorNonce((n) => n + 1);
+    dismissSaveError();
+    toast.info("Đã huỷ các thay đổi chưa lưu");
   };
 
   // ⌘/Ctrl+S saves — only while this tab is the one on screen, so the
   // shortcut never saves (or swallows the key for) a hidden panel.
-  const saveShortcutRef = useRef(null);
   useEffect(() => {
-    saveShortcutRef.current = () => {
+    saveLatestRef.current = () => {
       if (dirty && !saving) handleSave();
     };
   });
@@ -1897,7 +2011,7 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
       const ctrlKey = isMac ? event.metaKey : event.ctrlKey;
       if (ctrlKey && (event.key === "s" || event.key === "S")) {
         event.preventDefault();
-        saveShortcutRef.current?.();
+        saveLatestRef.current?.();
       }
     };
     window.addEventListener("keydown", handler);
@@ -1968,14 +2082,25 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
       value={resetAllText}
       onChange={handleResetAllTextChange}
       onReset={handleResetAll}
-      available={Boolean(defaults)}
+      available={Boolean(defaults) && !saving}
       done={resetAllDone}
     />
   );
 
   return (
     <div>
-      <div className="flex flex-wrap items-center justify-end gap-2">
+      <div ref={stickySentinelRef} aria-hidden="true" className="-mb-px h-px" />
+      {/* Sticky Save bar. The negative margins match Container's padding so
+          the bar's background reaches past the content column's edges. On
+          phones it stays on one row (short "Hủy" label). */}
+      <div
+        ref={toolbarRef}
+        className={`sticky top-0 z-20 -mx-4 flex flex-wrap items-center justify-end gap-2 border-b bg-white/90 px-4 py-2 backdrop-blur-sm transition-shadow sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 ${
+          toolbarStuck
+            ? "border-gray-200 shadow-[0_8px_16px_-12px_rgba(0,0,0,0.3)]"
+            : "border-transparent"
+        }`}
+      >
         <AnimatePresence mode="wait" initial={false}>
           {dirty ? (
             <motion.span
@@ -1987,7 +2112,14 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
               className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800"
             >
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
-              {dirtyCount > 0 ? `${dirtyCount} mục chưa lưu` : "Có thay đổi chưa lưu"}
+              {dirtyCount > 0 ? (
+                `${dirtyCount} mục chưa lưu`
+              ) : (
+                <>
+                  <span className="sm:hidden">Chưa lưu</span>
+                  <span className="hidden sm:inline">Có thay đổi chưa lưu</span>
+                </>
+              )}
             </motion.span>
           ) : savedAt ? (
             <motion.span
@@ -1997,18 +2129,20 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
               exit={{ opacity: 0 }}
               className="text-xs text-gray-500"
             >
-              ✓ Đã lưu lúc {savedAt.toLocaleTimeString()}
+              Lưu lần cuối {formatClock(savedAt)}
             </motion.span>
           ) : null}
         </AnimatePresence>
         <button
           type="button"
           onClick={handleDiscardAll}
-          disabled={!dirty}
+          disabled={!dirty || saving}
+          aria-label="Hủy mọi thay đổi"
           className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
           title="Bỏ mọi thay đổi chưa lưu, quay về bản đã lưu gần nhất"
         >
-          Hủy mọi thay đổi
+          <span className="sm:hidden">Hủy</span>
+          <span className="hidden sm:inline">Hủy mọi thay đổi</span>
         </button>
         <button
           type="button"
@@ -2021,17 +2155,13 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
         </button>
       </div>
 
-      {error ? (
-        <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
-          <p className="break-words">{error}</p>
-          {errorHint ? (
-            <p className="mt-1.5 text-xs leading-relaxed text-red-800">💡 {errorHint}</p>
-          ) : null}
-        </div>
-      ) : null}
-
-      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
-        <aside className="space-y-4 lg:self-start">
+      <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
+        {/* Desktop: sticky below the Save bar, with its own scroll when the
+            list is taller than the window (every group stays reachable). */}
+        <aside
+          ref={sidebarRef}
+          className="space-y-4 lg:sticky lg:top-16 lg:max-h-[calc(100vh-5rem)] lg:self-start lg:overflow-y-auto lg:overscroll-contain"
+        >
           <div className="lg:hidden">
             <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-gray-600">
               Chọn phần cần sửa
@@ -2136,7 +2266,7 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
                 <h2
                   ref={editorHeadingRef}
                   tabIndex={-1}
-                  className="scroll-mt-28 text-lg font-semibold focus:outline-none"
+                  className="scroll-mt-2 text-lg font-semibold focus:outline-none"
                 >
                   {activeEntry.label}
                 </h2>
@@ -2165,7 +2295,7 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
               <button
                 type="button"
                 onClick={handleDiscardEntry}
-                disabled={!activeDirty}
+                disabled={!activeDirty || saving}
                 className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
                 title="Bỏ thay đổi chưa lưu của phần này"
               >
@@ -2174,7 +2304,7 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
               <button
                 type="button"
                 onClick={handleResetEntry}
-                disabled={!defaults}
+                disabled={!defaults || saving}
                 className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
                 title="Đưa phần này về nội dung ban đầu"
               >

@@ -28,6 +28,9 @@ export default function AutocompleteInput({
   emptyHint = "Chưa có giá trị nào được lưu trước đó.",
   maxItems = 8,
   inputProps = {},
+  // false: focusing the field (e.g. programmatically after "Sửa") does not
+  // pop the suggestion list; it opens on click, arrow keys or typing.
+  openOnFocus = true,
 }) {
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(-1);
@@ -132,8 +135,13 @@ export default function AutocompleteInput({
   const sharedProps = {
     ref: inputRef,
     value: value ?? "",
-    onChange: (event) => onChange(event.target.value),
-    onFocus: () => setOpen(true),
+    onChange: (event) => {
+      onChange(event.target.value);
+      if (!openOnFocus) setOpen(true);
+    },
+    onFocus: () => {
+      if (openOnFocus) setOpen(true);
+    },
     onClick: () => setOpen(true),
     onKeyDown: handleKeyDown,
     placeholder,

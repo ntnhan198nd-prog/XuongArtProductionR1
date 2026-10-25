@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import FeaturedLayoutPanel from "@/components/admin/FeaturedLayoutPanel";
 import ShowreelPanel from "@/components/admin/ShowreelPanel";
 import AutocompleteInput from "@/components/admin/AutocompleteInput";
+import { useToast, useToastAvoid } from "@/components/admin/ToastProvider";
 import {
   ACCEPT,
   UploadError,
@@ -348,7 +349,7 @@ function publicSlugify(value = "") {
 }
 
 // Create-form defaults for the admin section: a video added from the
-// "Video Showreel + Nổi Bật" section starts as featured.
+// "Trang chủ: Showreel & Nổi bật" section starts as featured.
 function emptyFormFor(mode) {
   return { ...EMPTY_FORM, featured: mode === "showreel-featured" };
 }
@@ -358,10 +359,10 @@ function emptyFormFor(mode) {
 function savedSectionNote(mode, savedItem) {
   if (!savedItem) return "";
   if (mode === "showreel-featured" && !savedItem.featured) {
-    return "Video này chưa bật “Nổi bật” nên nằm ở mục Video Khác.";
+    return "Video này chưa bật “Nổi bật” nên nằm ở thẻ Thư viện video.";
   }
   if (mode === "other-videos" && savedItem.featured) {
-    return "Video này đã bật “Nổi bật” nên nằm ở mục Video Showreel + Nổi Bật.";
+    return "Video này đã bật “Nổi bật” nên nằm ở thẻ Trang chủ: Showreel & Nổi bật.";
   }
   return "";
 }
@@ -634,8 +635,8 @@ function CategoryPicker({ value, onChange, publicList, fallback = [], mainHint =
 
       {missing.length > 0 ? (
         <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
-          “{missing.join("”, “")}”: Chưa có trong bộ lọc của trang công khai — thêm ở tab Nội dung
-          trang › Bộ lọc thể loại.
+          “{missing.join("”, “")}”: Chưa có trong bộ lọc của trang công khai — thêm ở thẻ “Nội dung
+          trang” › Bộ lọc thể loại.
         </p>
       ) : null}
       {mainHint && selected.length > 1 && (main || selected[0]) ? (
@@ -1021,7 +1022,7 @@ function PickedFileInfo({ file, uploaded = false }) {
       </div>
       {video && file.size > LARGE_VIDEO_BYTES ? (
         <p className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
-          File lớn, upload có thể mất nhiều phút — giữ tab này mở.
+          File lớn, tải lên có thể mất nhiều phút — giữ tab này mở.
         </p>
       ) : null}
     </div>
@@ -1229,6 +1230,171 @@ function toForm(item, tab) {
   };
 }
 
+// --- Unsaved form edits -----------------------------------------------------
+
+// Field-by-field comparison of two form states (toForm / emptyFormFor shape).
+// Asset objects and category lists are compared by value.
+function sameFormValues(a, b) {
+  const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
+  for (const key of keys) {
+    if (JSON.stringify(a?.[key] ?? null) !== JSON.stringify(b?.[key] ?? null)) return false;
+  }
+  return true;
+}
+
+// True while the form holds something that is not saved yet:
+//   - a field that differs from `baseline` (toForm(original item) when
+//     editing, emptyFormFor(mode) when creating),
+//   - a picked file (`files`: single files and photos, falsy entries ignored),
+//   - files already uploaded by a failed save (`uploadedCount`).
+function isFormDirty({ form, baseline, files = [], uploadedCount = 0 } = {}) {
+  if ((Array.isArray(files) ? files : []).some(Boolean)) return true;
+  if (Number(uploadedCount) > 0) return true;
+  return !sameFormValues(form, baseline);
+}
+
+// --- Manual order of the list on screen ---------------------------------------
+// A panel shows only part of the stored list (e.g. "Video Khác" hides the
+// featured videos), but the reorder API takes the order of EVERY item. These
+// helpers move an item next to its neighbour in the list on screen and
+// return the full array to send (null = nothing to do).
+
+function sameId(a, b) {
+  if (a === null || a === undefined || b === null || b === undefined) return false;
+  return Number(a) === Number(b);
+}
+
+// Full list with `movingId` taken out and put right before / after
+// `anchorId` (`placement`: "before" | "after").
+function moveNextTo(allItems, movingId, anchorId, placement) {
+  const list = Array.isArray(allItems) ? allItems : [];
+  if (sameId(movingId, anchorId)) return null;
+  const from = list.findIndex((item) => sameId(item?.id, movingId));
+  if (from < 0) return null;
+  const rest = list.filter((_, index) => index !== from);
+  const anchor = rest.findIndex((item) => sameId(item?.id, anchorId));
+  if (anchor < 0) return null;
+  const at = placement === "after" ? anchor + 1 : anchor;
+  const next = [...rest.slice(0, at), list[from], ...rest.slice(at)];
+  return next.every((item, index) => item === list[index]) ? null : next;
+}
+
+// Position of an item in the list on screen: { index (0-based, -1 when not
+// shown), total }. ↑ is off for index 0, ↓ for the last row.
+function visiblePosition(visibleItems, itemId) {
+  const visible = Array.isArray(visibleItems) ? visibleItems : [];
+  return {
+    index: visible.findIndex((item) => sameId(item?.id, itemId)),
+    total: visible.length,
+  };
+}
+
+// A move on screen as { movingId, anchorId, placement } (null = nothing to
+// do). Kept apart from the full array so a "Thử lại" can apply the SAME move
+// to whatever the list holds by then (applyMove), never an old full order.
+//   ↑ (direction -1) / ↓ (+1): past the neighbour on screen.
+function visibleMoveFor(visibleItems, itemId, direction) {
+  const visible = Array.isArray(visibleItems) ? visibleItems : [];
+  const { index } = visiblePosition(visible, itemId);
+  if (index < 0) return null;
+  const up = Number(direction) < 0;
+  const neighbour = visible[index + (up ? -1 : 1)];
+  if (!neighbour) return null;
+  return { movingId: itemId, anchorId: neighbour.id, placement: up ? "before" : "after" };
+}
+
+// Drag-and-drop on screen: dropped on a row further down → lands after it,
+// further up → lands before it (the dropped-on row moves one step aside).
+function visibleDropFor(visibleItems, dragId, targetId) {
+  const from = visiblePosition(visibleItems, dragId).index;
+  const to = visiblePosition(visibleItems, targetId).index;
+  if (from < 0 || to < 0 || from === to) return null;
+  return { movingId: dragId, anchorId: targetId, placement: from < to ? "after" : "before" };
+}
+
+// Key of a row's ↑ (direction < 0) / ↓ button in the panel's button map.
+function arrowKey(id, direction) {
+  return `${Number(id)}:${Number(direction) < 0 ? "up" : "down"}`;
+}
+
+// Full list after `move` (null when it no longer applies / changes nothing).
+function applyMove(allItems, move) {
+  if (!move) return null;
+  return moveNextTo(allItems, move.movingId, move.anchorId, move.placement);
+}
+
+function moveWithinVisible(allItems, visibleItems, itemId, direction) {
+  return applyMove(allItems, visibleMoveFor(visibleItems, itemId, direction));
+}
+
+function dropWithinVisible(allItems, visibleItems, dragId, targetId) {
+  return applyMove(allItems, visibleDropFor(visibleItems, dragId, targetId));
+}
+
+// --- Links to the public site -------------------------------------------------
+
+// Where a record can be seen on the public site: { href, title, toastLabel }
+// or null (a video without a stored slug has no page yet). A featured video
+// seen from the "Trang chủ: Showreel & Nổi bật" section links to the homepage
+// grid it plays in.
+function publicLinkFor(item, { isVideo, mode } = {}) {
+  if (!item) return null;
+  if (!isVideo) {
+    return { href: "/images", title: "Xem trên trang Ảnh", toastLabel: "Xem trang Ảnh ↗" };
+  }
+  if (mode === "showreel-featured" && item.featured) {
+    return { href: "/", title: "Xem trên trang chủ", toastLabel: "Xem trang chủ ↗" };
+  }
+  const slug = String(item.slug || "").trim();
+  if (!slug) return null;
+  return {
+    href: `/videos/${encodeURIComponent(slug)}`,
+    title: "Xem trang chi tiết video",
+    toastLabel: "Xem trên trang ↗",
+  };
+}
+
+// Options for toast.error from an API / upload error: hint, a retry button
+// when `retry` is given, and the R2 check link for server / network errors
+// (an expired login offers a page reload instead).
+function errorToastOptions(err, retry) {
+  const status = err?.status ?? null;
+  const opts = { hint: err?.hint || "" };
+  if (typeof retry === "function") {
+    opts.actionLabel = "Thử lại";
+    opts.onAction = retry;
+  }
+  if (status === 401) {
+    // Expired login: a reload would throw away the form. Same handling as
+    // the content panel — log in again in a new tab, then retry here.
+    opts.hint = "Phiên đăng nhập đã hết hạn. Đăng nhập ở tab mới rồi quay lại bấm “Thử lại” — dữ liệu trong form vẫn còn.";
+    opts.href = "/admin";
+    opts.hrefLabel = "Đăng nhập lại ở tab mới ↗";
+    return opts;
+  }
+  if (status === null || status === undefined || status === 0 || status >= 500) {
+    opts.href = "/api/admin/health";
+    opts.hrefLabel = "Kiểm tra kết nối R2 ↗";
+  }
+  return opts;
+}
+
+function isCoarsePointer() {
+  try {
+    return Boolean(window.matchMedia?.("(pointer: coarse)")?.matches);
+  } catch {
+    return false;
+  }
+}
+
+function prefersReducedMotion() {
+  try {
+    return Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+  } catch {
+    return false;
+  }
+}
+
 // `mode` prop locks the panel into one of four admin shells:
 //   - undefined          → legacy combined panel (kept for backwards compat)
 //   - "showreel-featured" → Showreel + FeaturedLayoutPanel + only featured videos
@@ -1238,7 +1404,49 @@ function toForm(item, tab) {
 // admin shell drives the section choice.
 // `onBusyChange(busy)` (optional) tells the admin shell when an upload is
 // running or uploaded files are not saved yet (e.g. to confirm Logout).
-export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
+// `active` (optional boolean) = this section is the visible admin tab. When
+// it turns true again the list is re-read, since another section may have
+// changed the same records meanwhile.
+// `onDirtyChange(dirty)` (optional) is true while the form has unsaved edits
+// or picked / uploaded-but-unsaved files, the featured layout has an unsaved
+// arrangement, or a save is running.
+export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirtyChange } = {}) {
+  const toast = useToast();
+  // Keep phone toasts from covering the form's sticky save bar.
+  const saveBarRef = useRef(null);
+  useToastAvoid(saveBarRef, active !== false);
+  // Async callbacks read the latest toast API through this ref.
+  const toastRef = useRef(toast);
+  useEffect(() => {
+    toastRef.current = toast;
+  }, [toast]);
+  // notify("success" | "error" | "info", message, opts) — never throws, also
+  // when the panel is rendered without a ToastProvider.
+  // Returns the toast id (null when none was shown).
+  const notify = useCallback((kind, message, opts) => {
+    const api = toastRef.current;
+    return api && typeof api[kind] === "function" ? api[kind](message, opts) ?? null : null;
+  }, []);
+  // Error toasts stay until closed. The last save / reorder failure is
+  // remembered so the next attempt (or a new form) closes it: its "Thử lại"
+  // must never act on a different record or on a later order.
+  const saveErrorToastRef = useRef(null);
+  const reorderErrorToastRef = useRef(null);
+  const dismissToast = useCallback((holder) => {
+    if (holder.current !== null && holder.current !== undefined) {
+      toastRef.current?.dismiss?.(holder.current);
+    }
+    holder.current = null;
+  }, []);
+  // Bumped whenever the form is replaced (new / other record / cleared): a
+  // save retry captured for an older form does nothing.
+  const formGenRef = useRef(0);
+  // Bumped by every reorder: a retry of an older failed move does nothing.
+  const orderGenRef = useRef(0);
+  // Element ids are prefixed per instance: three panels can be mounted at
+  // once (hidden), and getElementById must find THIS panel's fields.
+  const uid = useId().replace(/:/g, "");
+  const fieldId = (name) => `${uid}-${name}`;
   // Resolve the current data domain ("projects" or "image-projects") from
   // the mode prop. Without a mode prop, the legacy behaviour kicks in: the
   // user picks the sub-tab.
@@ -1263,6 +1471,9 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
 
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(() => emptyFormFor(mode));
+  // What the form was opened with (toForm(item) / emptyFormFor(mode)): the
+  // form is "dirty" while it differs from this (see isFormDirty).
+  const [formBaseline, setFormBaseline] = useState(() => emptyFormFor(mode));
   const [mediaFile, setMediaFile] = useState(null);
   const [mediaFiles, setMediaFiles] = useState([]);
   const [previewFile, setPreviewFile] = useState(null);
@@ -1313,6 +1524,16 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
   const confirmCancelRef = useRef(null);
   // Root element: used to notice when the (kept-mounted) panel is shown again.
   const rootRef = useRef(null);
+  // Editor card: scrolled into view by "Sửa" / "+ Tạo mới" (on phones the
+  // list comes first, so the form is further down).
+  const formCardRef = useRef(null);
+  // Background re-read of the list (no "Đang tải…" placeholder).
+  const [refreshing, setRefreshing] = useState(false);
+  // Shown when this section became visible again while the form had unsaved
+  // edits (or a save was running), so the list was not re-read on its own.
+  const [staleNotice, setStaleNotice] = useState(false);
+  // Unsaved arrangement in FeaturedLayoutPanel.
+  const [layoutDirty, setLayoutDirty] = useState(false);
 
   // --- Upload state (see UploadProgressCard / EMPTY_UPLOAD_CACHE) ---------
   const [uploadProgress, setUploadProgress] = useState(null);
@@ -1334,6 +1555,9 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
   const [cancelNotice, setCancelNotice] = useState("");
   // Green "saved" confirmation in the save bar after a successful save.
   const [savedNotice, setSavedNotice] = useState("");
+  // Short red line in the save bar after a failed save (the toast has the
+  // details and "Thử lại"; this one stays visible once the toast is closed).
+  const [saveFailedText, setSaveFailedText] = useState("");
   // Showreel upload running (it lives in its own panel above).
   const [showreelBusy, setShowreelBusy] = useState(false);
 
@@ -1354,7 +1578,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
     mode === "showreel-featured"
       ? "Video nổi bật"
       : mode === "other-videos"
-      ? "Video khác"
+      ? "Video trong thư viện (không nổi bật)"
       : TABS.find((item) => item.key === tab)?.label || tab;
   const createLabel = isVideoTab ? "Thêm video mới" : "Thêm dự án ảnh mới";
 
@@ -1617,11 +1841,41 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
     []
   );
 
+  // Unsaved form edits (fields, picked files, uploads of a failed save).
+  const formDirty = isFormDirty({
+    form,
+    baseline: formBaseline,
+    files: [mediaFile, previewFile, thumbnailFile, ...mediaFiles],
+    uploadedCount: uploadCacheKeys(uploadCache).length,
+  });
+  const panelDirty = formDirty || layoutDirty || saving;
+  // Read when the section becomes visible again (see the `active` effect).
+  const keepListRef = useRef(false);
+  useEffect(() => {
+    // Re-reading the list now could disturb running work or an unsaved
+    // layout arrangement: offer it in a banner instead.
+    keepListRef.current = formDirty || layoutDirty || saving || reordering || deletingId !== null;
+  }, [formDirty, layoutDirty, saving, reordering, deletingId]);
+  const onDirtyChangeRef = useRef(onDirtyChange);
+  useEffect(() => {
+    onDirtyChangeRef.current = onDirtyChange;
+  }, [onDirtyChange]);
+  useEffect(() => {
+    if (typeof onDirtyChangeRef.current === "function") onDirtyChangeRef.current(panelDirty);
+  }, [panelDirty]);
+  useEffect(
+    () => () => {
+      if (typeof onDirtyChangeRef.current === "function") onDirtyChangeRef.current(false);
+    },
+    []
+  );
+
   const resetUploadUi = () => {
     setUploadProgress(null);
     setPickErrors({});
     setCancelNotice("");
     setSavedNotice("");
+    setSaveFailedText("");
     setFileInputsKey((value) => value + 1);
   };
 
@@ -1642,25 +1896,56 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
   };
 
   const resetEditor = () => {
+    formGenRef.current += 1;
+    dismissToast(saveErrorToastRef);
     discardUploadCache();
     setEditingId(null);
-    setForm(emptyFormFor(mode));
+    const empty = emptyFormFor(mode);
+    setForm(empty);
+    setFormBaseline(empty);
     setMediaFile(null);
     setMediaFiles([]);
     setPreviewFile(null);
     setThumbnailFile(null);
-    setError("");
     resetFormHelpers();
     resetUploadUi();
   };
 
-  // Leaving the form (new / clear / edit another / switch tab) deletes files
-  // uploaded by a failed save — ask first.
-  const confirmDiscardUploads = () => {
-    if (uploadCacheKeys(uploadCacheRef.current).length === 0) return true;
+  // Leaving the form (new / clear / edit another / switch tab) loses unsaved
+  // edits and deletes files uploaded by a failed save — ask first, with ONE
+  // confirm covering both.
+  const confirmLeaveForm = () => {
+    const hasUploads = uploadCacheKeys(uploadCacheRef.current).length > 0;
+    if (!hasUploads && !formDirty) return true;
+    const question = "Bạn có thay đổi chưa lưu ở form. Bỏ các thay đổi này?";
     return window.confirm(
-      "Các file đã tải lên (chưa lưu) sẽ bị xoá. Bạn có chắc muốn tiếp tục?"
+      hasUploads ? `${question}\n\nCác file đã tải lên (chưa lưu) cũng sẽ bị xoá.` : question
     );
+  };
+
+  // Bring the editor into view and put the cursor in "Tiêu đề" (on phones
+  // the list is shown above the form). No scroll when the top of the form
+  // is already on screen (desktop, side by side).
+  const revealForm = () => {
+    const run = () => {
+      const card = formCardRef.current;
+      const top = card?.getBoundingClientRect?.().top;
+      const onScreen =
+        typeof top === "number" && top >= 0 && top < (window.innerHeight || 0) * 0.4;
+      if (card && !onScreen) {
+        card.scrollIntoView?.({
+          behavior: prefersReducedMotion() ? "auto" : "smooth",
+          block: "start",
+        });
+      }
+      // Touch screens: focusing would pop up the keyboard and the title
+      // suggestions over the form the owner only wanted to look at.
+      if (!isCoarsePointer()) {
+        document.getElementById(fieldId("project-title"))?.focus?.({ preventScroll: true });
+      }
+    };
+    if (typeof window.requestAnimationFrame === "function") window.requestAnimationFrame(run);
+    else run();
   };
 
   const SLOT_SETTERS = {
@@ -1818,11 +2103,17 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
 
   // Returns the loaded list (null on failure). itemsRef is updated right
   // away so a cleanup decided just after this await sees the fresh records.
-  const loadItems = useCallback(async (targetTab) => {
-    setLoadingItems(true);
-    setError("");
-    setErrorHint("");
-    setErrorStatus(null);
+  // `background`: re-read while a list is already shown — no "Đang tải…"
+  // placeholder, and a failure keeps the list on screen (the banner explains).
+  // Only the most recent request updates the list.
+  const loadSeqRef = useRef(0);
+  // Latest syncEditorWithList (defined below), run after every fresh list.
+  const editorSyncRef = useRef(null);
+  const loadItems = useCallback(async (targetTab, { background = false } = {}) => {
+    loadSeqRef.current += 1;
+    const seq = loadSeqRef.current;
+    const setBusyFlag = background ? setRefreshing : setLoadingItems;
+    setBusyFlag(true);
     try {
       const payload = await fetchJson(
         `/api/admin/${targetTab}`,
@@ -1830,17 +2121,26 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
         { fallbackError: "Không tải được danh sách" }
       );
       const list = Array.isArray(payload.data) ? payload.data : [];
-      itemsRef.current = list;
-      setItems(list);
+      if (loadSeqRef.current === seq) {
+        itemsRef.current = list;
+        setItems(list);
+        setError("");
+        setErrorHint("");
+        setErrorStatus(null);
+        setStaleNotice(false);
+        editorSyncRef.current?.(list);
+      }
       return list;
     } catch (loadError) {
-      setError(loadError.message);
-      setErrorHint(loadError.hint || "");
-      setErrorStatus(loadError.status ?? null);
-      setItems([]);
+      if (loadSeqRef.current === seq) {
+        setError(loadError.message);
+        setErrorHint(loadError.hint || "");
+        setErrorStatus(loadError.status ?? null);
+        if (!background) setItems([]);
+      }
       return null;
     } finally {
-      setLoadingItems(false);
+      setBusyFlag(false);
     }
   }, []);
 
@@ -1848,49 +2148,106 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
     loadItems(tab);
   }, [tab, loadItems]);
 
-  // Returns false when the admin chose to keep the unsaved uploads.
+  // Section shown again (admin tab switched back): re-read the list — a
+  // save / delete / reorder in another section may have changed it. While
+  // the form has unsaved edits or work is running, offer it instead.
+  const wasActiveRef = useRef(active);
+  useEffect(() => {
+    const wasActive = wasActiveRef.current;
+    wasActiveRef.current = active;
+    if (active !== true || wasActive !== false) return;
+    loadPublicCategories();
+    if (keepListRef.current) {
+      setStaleNotice(true);
+      return;
+    }
+    loadItems(tab, { background: true });
+  }, [active, tab, loadItems, loadPublicCategories]);
+
+  // A fresh list arrived while a record is open WITHOUT unsaved edits: show
+  // that record as now stored (another section may have changed it), so the
+  // next "Cập nhật" does not send old values back. A record that is gone
+  // closes the form. A form with unsaved edits is left alone (the stale
+  // banner covers it), and nothing happens while saving / deleting.
+  const syncEditorWithList = (list) => {
+    if (editingId === null || formDirty || saving || savingRecordRef.current) return;
+    if (deletingId !== null) return;
+    const fresh = (Array.isArray(list) ? list : []).find((it) => sameId(it?.id, editingId));
+    if (!fresh) {
+      const title = formBaseline?.title || "(Chưa có tiêu đề)";
+      resetEditor();
+      notify("info", `“${title}” không còn nữa (có thể đã bị xoá ở thẻ khác) — đã đóng form sửa.`);
+      return;
+    }
+    const opened = toForm(fresh, tab);
+    if (sameFormValues(opened, formBaseline)) return;
+    setForm(opened);
+    setFormBaseline(opened);
+  };
+  useEffect(() => {
+    editorSyncRef.current = syncEditorWithList;
+  });
+
+  // Returns false when the admin chose to keep the unsaved form.
   const startCreate = () => {
-    if (!confirmDiscardUploads()) return false;
+    if (!confirmLeaveForm()) return false;
     resetEditor();
     loadPublicCategories();
+    revealForm();
     return true;
   };
 
   const startEdit = (item) => {
-    if (!confirmDiscardUploads()) return;
+    // The record being edited, with unsaved edits: just bring the form back.
+    if (sameId(editingId, item.id) && formDirty) {
+      revealForm();
+      return;
+    }
+    if (!confirmLeaveForm()) return;
+    formGenRef.current += 1;
+    dismissToast(saveErrorToastRef);
     discardUploadCache();
     setEditingId(item.id);
-    setForm(toForm(item, tab));
+    const opened = toForm(item, tab);
+    setForm(opened);
+    setFormBaseline(opened);
     setMediaFile(null);
     setMediaFiles([]);
     setPreviewFile(null);
     setThumbnailFile(null);
-    setError("");
     resetFormHelpers();
     resetUploadUi();
     loadPublicCategories();
+    revealForm();
   };
 
   // Persist a new ordering of `items` to the server. Called by both the
   // ↑/↓ buttons and drag-and-drop. Optimistic: updates local state first,
   // then reloads on failure so the UI matches the source of truth.
+  // Set synchronously so a retry from a toast cannot overlap a running save.
+  const reorderingRef = useRef(false);
+  const persistOrderRef = useRef(null);
   const persistOrder = useCallback(
-    async (nextItems) => {
+    async (nextItems, move = null) => {
+      if (reorderingRef.current) return;
+      reorderingRef.current = true;
+      orderGenRef.current += 1;
+      const gen = orderGenRef.current;
+      dismissToast(reorderErrorToastRef);
+      const orderedIds = nextItems.map((it) => it.id);
+      const previous = itemsRef.current;
       const reordered = nextItems.map((it, i) => ({ ...it, order: i + 1 }));
+      // A list read still in flight must not overwrite the new order.
+      loadSeqRef.current += 1;
       setItems(reordered);
       setReordering(true);
-      setError("");
-      setErrorHint("");
-      setErrorStatus(null);
       try {
         const result = await fetchJson(
           `/api/admin/${tab}/reorder`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              orderedIds: reordered.map((it) => it.id),
-            }),
+            body: JSON.stringify({ orderedIds }),
           },
           { fallbackError: "Lưu thứ tự thất bại" }
         );
@@ -1898,43 +2255,96 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
         // also re-flow featured grid pins (`featuredSlot`), which the
         // optimistic update above cannot know about. Adopt the server
         // state so FeaturedLayoutPanel's preview stays in sync.
-        if (Array.isArray(result?.data)) setItems(result.data);
+        if (Array.isArray(result?.data)) {
+          itemsRef.current = result.data;
+          setItems(result.data);
+        }
+        notify("success", "Đã lưu thứ tự");
       } catch (reorderError) {
-        // Reload first (it clears the error banner), THEN show the reorder
-        // failure — otherwise the message is wiped a moment after it appears.
-        await loadItems(tab);
-        setError(reorderError.message);
-        setErrorHint(reorderError.hint || "");
-        setErrorStatus(reorderError.status ?? null);
+        // Put the list back as stored (or as it was, when even the reload
+        // fails), then report. "Thử lại" redoes the same MOVE on the list as
+        // it is when pressed — and nothing once another reorder ran.
+        const reloaded = await loadItems(tab, { background: true });
+        if (!reloaded) {
+          itemsRef.current = previous;
+          setItems(previous);
+        }
+        const retry = move
+          ? () => {
+              if (orderGenRef.current !== gen) return;
+              if (reorderBlockedRef.current) {
+                notify("info", "Tải lại danh sách trước khi sắp xếp.");
+                return;
+              }
+              const next = applyMove(itemsRef.current, move);
+              if (next) persistOrderRef.current?.(next, move);
+            }
+          : null;
+        reorderErrorToastRef.current = notify(
+          "error",
+          reorderError?.message || "Lưu thứ tự thất bại.",
+          errorToastOptions(reorderError, retry)
+        );
       } finally {
+        reorderingRef.current = false;
         setReordering(false);
       }
     },
-    [tab, loadItems]
+    [tab, loadItems, notify, dismissToast]
   );
+  useEffect(() => {
+    persistOrderRef.current = persistOrder;
+  }, [persistOrder]);
 
-  const handleMove = (item, direction) => {
-    if (listFilter || reordering || listSort !== "order") return;
-    const idx = items.findIndex((it) => Number(it.id) === Number(item.id));
-    if (idx < 0) return;
-    const target = idx + direction;
-    if (target < 0 || target >= items.length) return;
-    const next = [...items];
-    [next[idx], next[target]] = [next[target], next[idx]];
-    persistOrder(next);
+  // ↑/↓ and drag-and-drop work on the list ON SCREEN (e.g. "Video Khác"
+  // hides the featured videos): the item moves past its visible neighbour
+  // and the full order is rebuilt around it (see moveWithinVisible).
+  // The reorder API rewrites the WHOLE order from this panel's list, so a
+  // list that may be out of date (being re-read, or the "đã đổi ở tab khác"
+  // banner is up) must not be reordered: it would undo changes made elsewhere.
+  const reorderBlocked = refreshing || loadingItems || staleNotice;
+  const reorderBlockedRef = useRef(reorderBlocked);
+  useEffect(() => {
+    reorderBlockedRef.current = reorderBlocked;
+  }, [reorderBlocked]);
+  const canReorderList = !listFilter && !reordering && !reorderBlocked && listSort === "order";
+
+  // ↑/↓ buttons by `${id}:up|down`, and the one pressed with the keyboard
+  // focus on it: the buttons are disabled while the order saves (focus would
+  // fall to the page), so focus goes back to it afterwards.
+  const arrowButtonRefs = useRef(new Map());
+  const arrowFocusRef = useRef(null);
+  useEffect(() => {
+    const pending = arrowFocusRef.current;
+    if (!pending || reordering) return;
+    arrowFocusRef.current = null;
+    if (!canReorderList) return;
+    const map = arrowButtonRefs.current;
+    const same = map.get(arrowKey(pending.id, pending.direction));
+    const other = map.get(arrowKey(pending.id, -pending.direction));
+    const target = same && !same.disabled ? same : other && !other.disabled ? other : null;
+    target?.focus?.();
+  }, [reordering, canReorderList]);
+
+  const handleMove = (item, direction, event) => {
+    if (!canReorderList) return;
+    const move = visibleMoveFor(sortedFilteredItems, item.id, direction);
+    const next = applyMove(items, move);
+    if (!next) return;
+    const button = event?.currentTarget;
+    arrowFocusRef.current =
+      button && typeof document !== "undefined" && document.activeElement === button
+        ? { id: item.id, direction: Number(direction) < 0 ? -1 : 1 }
+        : null;
+    persistOrder(next, move);
   };
 
   const handleDropOnto = (targetItem) => {
-    if (listFilter || reordering || listSort !== "order") return;
-    if (dragId === null) return;
-    const fromIdx = items.findIndex((it) => Number(it.id) === Number(dragId));
-    const toIdx = items.findIndex((it) => Number(it.id) === Number(targetItem.id));
+    if (!canReorderList || dragId === null) return;
+    const move = visibleDropFor(sortedFilteredItems, dragId, targetItem.id);
+    const next = applyMove(items, move);
     setDragId(null);
-    if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
-    const next = [...items];
-    const [moved] = next.splice(fromIdx, 1);
-    next.splice(toIdx, 0, moved);
-    persistOrder(next);
+    if (next) persistOrder(next, move);
   };
 
   // Called from the in-row confirmation ("Xoá “…” (#id)? … [Huỷ] [Xoá]").
@@ -1953,11 +2363,10 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
 
   const handleDelete = async (id) => {
     if (deletingId !== null) return;
+    const deletedTitle =
+      items.find((item) => sameId(item?.id, id))?.title || "(Chưa có tiêu đề)";
     setDeletingId(id);
     setDeleteError(null);
-    setError("");
-    setErrorHint("");
-    setErrorStatus(null);
     try {
       // Bare async click handler: without try/catch an empty/non-JSON error
       // body used to reject silently — no message, list never refreshed,
@@ -1971,19 +2380,22 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
       if (Number(editingId) === Number(id)) {
         resetEditor();
       }
+      // Gone from the list right away, also when the re-read below fails.
+      loadSeqRef.current += 1;
+      itemsRef.current = itemsRef.current.filter((it) => !sameId(it?.id, id));
+      setItems((prev) => prev.filter((it) => !sameId(it?.id, id)));
+      notify("success", `Đã xoá “${deletedTitle}”`);
       // loadItems never throws (it shows its own error).
-      await loadItems(tab);
+      await loadItems(tab, { background: true });
     } catch (deleteError) {
       // The confirmation stays open so the owner can retry or cancel; the
-      // reason is shown inside it (the top banner keeps the R2 details).
+      // reason (and the R2 check link for server errors) is shown inside it.
       setDeleteError({
         id,
         message: deleteError?.message || "Xoá thất bại.",
         hint: deleteError?.hint || "",
+        status: deleteError?.status ?? null,
       });
-      setError(deleteError.message);
-      setErrorHint(deleteError.hint || "");
-      setErrorStatus(deleteError.status ?? null);
     } finally {
       setDeletingId(null);
     }
@@ -1992,6 +2404,8 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
   const handleSave = async (event) => {
     event?.preventDefault?.();
     if (saving) return;
+    dismissToast(saveErrorToastRef);
+    setSaveFailedText("");
 
     // Blocking checks first (shown next to the fields).
     const problems = {};
@@ -2001,16 +2415,17 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
     }
     setFormErrors(problems);
     if (problems.media || problems.title) {
-      const target = document.getElementById(problems.media ? "field-media" : "field-title");
+      const target = document.getElementById(
+        fieldId(problems.media ? "field-media" : "field-title")
+      );
       target?.scrollIntoView?.({ behavior: "smooth", block: "center" });
-      if (!problems.media) document.getElementById("project-title")?.focus?.({ preventScroll: true });
+      if (!problems.media) {
+        document.getElementById(fieldId("project-title"))?.focus?.({ preventScroll: true });
+      }
       return;
     }
 
     setSaving(true);
-    setError("");
-    setErrorHint("");
-    setErrorStatus(null);
     setCancelNotice("");
     setSavedNotice("");
 
@@ -2113,14 +2528,24 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
       if (leftovers.length > 0) cleanupUploadedKeys(unsavedKeys(leftovers));
 
       resetEditor();
-      if (reload) await loadItems(tab);
+      if (reload) await loadItems(tab, { background: true });
 
       if (savedItem?.id) {
         setEditingId(savedItem.id);
-        setForm(toForm(savedItem, tab));
+        const opened = toForm(savedItem, tab);
+        setForm(opened);
+        setFormBaseline(opened);
       }
       setSavedNotice(notice);
       loadPublicCategories();
+
+      const savedTitle = savedItem?.title || form.title || "(Chưa có tiêu đề)";
+      const link = publicLinkFor(savedItem, { isVideo: isVideoTab, mode });
+      notify(
+        "success",
+        isEditing ? `Đã lưu “${savedTitle}”` : `Đã thêm “${savedTitle}”`,
+        link ? { href: link.href, hrefLabel: link.toastLabel } : undefined
+      );
     };
 
     const uploadSingle = async (index, entry) => {
@@ -2250,7 +2675,10 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
         orientation: form.orientation,
         featured: form.featured,
         adminRating: Number(form.adminRating) || 0,
-        order: form.order === "" ? null : Number(form.order),
+        // An edit never sends its position: the list may have been
+        // reordered since the form was opened, and the stored record's
+        // current place must win (null → the server keeps it).
+        order: isEditing || form.order === "" ? null : Number(form.order),
       };
 
       payload = { ...basePayload };
@@ -2326,7 +2754,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
           // any cleanup can run, so the "is this key saved?" check is not
           // based on stale records — and so "Tạo mới" is not pressed again
           // to POST a duplicate that shares the same files.
-          const reloaded = await loadItems(tab);
+          const reloaded = await loadItems(tab, { background: true });
           const landed = findStoredRecord(
             reloaded,
             payload,
@@ -2351,9 +2779,17 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
               }
             : null,
         }));
-        setError(saveError?.message || "Lưu thất bại.");
-        setErrorHint(saveError?.hint || "");
-        setErrorStatus(saveError?.status ?? null);
+        // "Thử lại" re-submits this same form; it does nothing once the
+        // form was cleared or another record was opened.
+        const gen = formGenRef.current;
+        setSaveFailedText(`Chưa lưu được: ${saveError?.message || "lỗi không rõ."}`);
+        saveErrorToastRef.current = notify(
+          "error",
+          saveError?.message || "Lưu thất bại.",
+          errorToastOptions(saveError, () => {
+            if (formGenRef.current === gen) handleRetryUploads();
+          })
+        );
       }
     } finally {
       savingRecordRef.current = false;
@@ -2450,7 +2886,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
               type="button"
               disabled={saving}
               onClick={() => {
-                if (!confirmDiscardUploads()) return;
+                if (!confirmLeaveForm()) return;
                 setTab(item.key);
                 resetEditor();
                 setListFilter("");
@@ -2467,7 +2903,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
           <button
             type="button"
             disabled={saving}
-            onClick={startCreate}
+            onClick={() => startCreate()}
             className="rounded-full border border-gray-300 px-4 py-2 text-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             + Thêm mới
@@ -2484,8 +2920,8 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => loadItems(tab)}
-              disabled={loadingItems}
+              onClick={() => loadItems(tab, { background: items.length > 0 })}
+              disabled={loadingItems || refreshing}
               className="rounded-md border border-red-300 px-2.5 py-1 text-xs text-red-700 hover:bg-red-100 disabled:opacity-50"
             >
               Tải lại danh sách
@@ -2513,19 +2949,54 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
         </div>
       ) : null}
 
+      {staleNotice && !error ? (
+        <div
+          className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900"
+          role="status"
+        >
+          <p className="min-w-0 flex-1">Dữ liệu có thể đã đổi ở tab khác —</p>
+          <button
+            type="button"
+            onClick={() => {
+              if (
+                layoutDirty &&
+                !window.confirm(
+                  "Bố cục trang chủ chưa lưu có thể bị thay bằng dữ liệu mới. Vẫn tải lại?"
+                )
+              ) {
+                return;
+              }
+              setStaleNotice(false);
+              loadItems(tab, { background: true });
+            }}
+            disabled={refreshing || loadingItems}
+            className="min-h-[36px] rounded-md border border-amber-300 bg-white px-3 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+          >
+            Tải lại danh sách
+          </button>
+        </div>
+      ) : null}
+
       {/* Stay mounted while re-fetching once we have items, so an unsaved
           layout the admin is arranging survives a save/delete elsewhere on
           the page (the panel only re-syncs when the server layout changed). */}
       {showFeaturedLayoutSection && (!loadingItems || items.length > 0) ? (
         <div className="mt-8">
-          <FeaturedLayoutPanel items={items} onSaved={() => loadItems(tab)} />
+          <FeaturedLayoutPanel
+            items={items}
+            onSaved={() => loadItems(tab, { background: true })}
+            onDirtyChange={setLayoutDirty}
+          />
         </div>
       ) : null}
 
+      {/* Phones: the list comes first (it is what the owner browses); "Sửa"
+          and "+ Tạo mới" scroll down to the form. Side by side from lg. */}
       <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-2">
         <motion.div
           layout
-          className="rounded-2xl border border-gray-200 p-5"
+          ref={formCardRef}
+          className="order-2 scroll-mt-4 rounded-2xl border border-gray-200 p-5 lg:order-1"
         >
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-lg font-semibold">
@@ -2545,9 +3016,9 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
             {isEditing ? (
               <button
                 type="button"
-                onClick={startCreate}
+                onClick={() => startCreate()}
                 disabled={saving}
-                className="rounded-md border border-gray-300 px-2.5 py-1 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="min-h-[36px] rounded-md border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 + Tạo mới
               </button>
@@ -2570,7 +3041,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                 }
               >
                 {isVideoTab ? (
-                  <div id="field-media">
+                  <div id={fieldId("field-media")}>
                     <FieldLabel>{isEditing ? "Video chính" : "Video chính *"}</FieldLabel>
                     <p className="mb-2 text-xs text-gray-500">
                       File chất lượng cao (MP4). Khách bấm vào video sẽ xem file này.
@@ -2665,7 +3136,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                   </div>
                 ) : null}
 
-                <div id="field-thumbnail">
+                <div id={fieldId("field-thumbnail")}>
                   <FieldLabel>Ảnh thumbnail</FieldLabel>
                   <p className="mb-2 text-xs text-gray-500">
                     {isVideoTab
@@ -2750,13 +3221,14 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
 
               {/* (b) What the public pages show about the project. */}
               <FormSection title="Thông tin">
-                <div id="field-title">
-                  <FieldLabel htmlFor="project-title">Tiêu đề *</FieldLabel>
+                <div id={fieldId("field-title")}>
+                  <FieldLabel htmlFor={fieldId("project-title")}>Tiêu đề *</FieldLabel>
                   <AutocompleteInput
                     value={form.title}
                     onChange={handleTitleChange}
                     suggestions={suggestions.title}
-                    inputProps={{ id: "project-title", "aria-invalid": Boolean(formErrors.title) }}
+                    openOnFocus={false}
+                    inputProps={{ id: fieldId("project-title"), "aria-invalid": Boolean(formErrors.title) }}
                   />
                   {formErrors.title ? (
                     <p className="mt-1.5 text-xs text-red-600">{formErrors.title}</p>
@@ -2764,12 +3236,12 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                 </div>
 
                 <div>
-                  <FieldLabel htmlFor="project-client">Khách hàng</FieldLabel>
+                  <FieldLabel htmlFor={fieldId("project-client")}>Khách hàng</FieldLabel>
                   <AutocompleteInput
                     value={form.client}
                     onChange={(v) => setForm((prev) => ({ ...prev, client: v }))}
                     suggestions={suggestions.client}
-                    inputProps={{ id: "project-client" }}
+                    inputProps={{ id: fieldId("project-client") }}
                   />
                 </div>
 
@@ -2792,9 +3264,9 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <FieldLabel htmlFor="project-completion-date">Ngày hoàn thành</FieldLabel>
+                    <FieldLabel htmlFor={fieldId("project-completion-date")}>Ngày hoàn thành</FieldLabel>
                     <input
-                      id="project-completion-date"
+                      id={fieldId("project-completion-date")}
                       type="date"
                       value={form.completionDate || ""}
                       onChange={(event) =>
@@ -2868,9 +3340,9 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                         one, and an edit keeps the stored value). */}
                     {isVideoTab ? (
                       <div>
-                        <FieldLabel htmlFor="project-slug">Đường dẫn (slug)</FieldLabel>
+                        <FieldLabel htmlFor={fieldId("project-slug")}>Đường dẫn (slug)</FieldLabel>
                         <input
-                          id="project-slug"
+                          id={fieldId("project-slug")}
                           value={form.slug}
                           onChange={(event) => handleSlugChange(event.target.value)}
                           onBlur={() => {
@@ -2902,12 +3374,12 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                     ) : null}
 
                     <div>
-                      <FieldLabel htmlFor="project-tagline">Câu giới thiệu ngắn</FieldLabel>
+                      <FieldLabel htmlFor={fieldId("project-tagline")}>Câu giới thiệu ngắn</FieldLabel>
                       <AutocompleteInput
                         value={form.tagline}
                         onChange={(v) => setForm((prev) => ({ ...prev, tagline: v }))}
                         suggestions={suggestions.tagline}
-                        inputProps={{ id: "project-tagline" }}
+                        inputProps={{ id: fieldId("project-tagline") }}
                       />
                       <p className="mt-1 text-[11px] text-gray-500">
                         {isVideoTab
@@ -2920,7 +3392,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div>
                           <FieldLabel
-                            htmlFor="project-orientation"
+                            htmlFor={fieldId("project-orientation")}
                             badge={
                               autoFilled.orientation && form.orientation === autoFilled.orientation
                                 ? "tự điền từ video"
@@ -2930,7 +3402,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                             Hướng khung hình
                           </FieldLabel>
                           <select
-                            id="project-orientation"
+                            id={fieldId("project-orientation")}
                             value={form.orientation}
                             onChange={(event) => {
                               markTouched("orientation");
@@ -2948,7 +3420,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                         </div>
                         <div>
                           <FieldLabel
-                            htmlFor="project-duration"
+                            htmlFor={fieldId("project-duration")}
                             badge={
                               autoFilled.duration && form.duration === autoFilled.duration
                                 ? "tự điền từ video"
@@ -2958,7 +3430,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                             Thời lượng
                           </FieldLabel>
                           <input
-                            id="project-duration"
+                            id={fieldId("project-duration")}
                             value={form.duration}
                             onChange={(event) => {
                               markTouched("duration");
@@ -2975,9 +3447,9 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                     ) : null}
 
                     <div>
-                      <FieldLabel htmlFor="project-description">Mô tả ngắn</FieldLabel>
+                      <FieldLabel htmlFor={fieldId("project-description")}>Mô tả ngắn</FieldLabel>
                       <textarea
-                        id="project-description"
+                        id={fieldId("project-description")}
                         value={form.description}
                         onChange={(event) =>
                           setForm((prev) => ({ ...prev, description: event.target.value }))
@@ -2987,9 +3459,9 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                       />
                     </div>
                     <div>
-                      <FieldLabel htmlFor="project-full-description">Mô tả chi tiết</FieldLabel>
+                      <FieldLabel htmlFor={fieldId("project-full-description")}>Mô tả chi tiết</FieldLabel>
                       <textarea
-                        id="project-full-description"
+                        id={fieldId("project-full-description")}
                         value={form.fullDescription}
                         onChange={(event) =>
                           setForm((prev) => ({ ...prev, fullDescription: event.target.value }))
@@ -3034,13 +3506,21 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
               />
             ) : null}
 
-            <div className="sticky bottom-0 -mx-5 -mb-5 flex flex-wrap items-center gap-2 border-t border-gray-200 bg-white/95 px-5 py-3 backdrop-blur">
+            <div
+              ref={saveBarRef}
+              className="sticky bottom-0 -mx-5 -mb-5 flex flex-wrap items-center gap-2 border-t border-gray-200 bg-white/95 px-5 py-3 backdrop-blur"
+            >
               {saving && uploadProgress ? (
                 <UploadProgressSummary progress={uploadProgress} onCancel={handleCancelUpload} />
               ) : null}
               {cancelNotice && !saving ? (
                 <p className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700">
                   {cancelNotice}
+                </p>
+              ) : null}
+              {saveFailedText && !saving ? (
+                <p className="w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  {saveFailedText}
                 </p>
               ) : null}
               {savedNotice && !saving ? (
@@ -3062,7 +3542,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
               <button
                 type="button"
                 onClick={() => {
-                  if (confirmDiscardUploads()) resetEditor();
+                  if (confirmLeaveForm()) resetEditor();
                 }}
                 disabled={saving}
                 className="rounded-lg border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
@@ -3079,7 +3559,10 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
           </form>
         </motion.div>
 
-        <motion.div layout className="rounded-2xl border border-gray-200 p-5">
+        <motion.div
+          layout
+          className="order-1 rounded-2xl border border-gray-200 p-5 lg:order-2"
+        >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold">{listTitle}</h2>
@@ -3088,7 +3571,9 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                   ? `${sortedFilteredItems.length} / ${modeFilteredItems.length}`
                   : `Tổng: ${modeFilteredItems.length}`}
                 {reordering ? (
-                  <span className="ml-2 text-amber-700">· đang lưu thứ tự...</span>
+                  <span className="ml-2 text-amber-700">· đang lưu thứ tự…</span>
+                ) : refreshing ? (
+                  <span className="ml-2 text-gray-500">· đang tải lại…</span>
                 ) : null}
               </p>
             </div>
@@ -3120,13 +3605,8 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                 <button
                   type="button"
                   disabled={saving}
-                  onClick={() => {
-                    if (!startCreate()) return;
-                    if (typeof window !== "undefined") {
-                      window.scrollTo({ top: 0, behavior: "smooth" });
-                    }
-                  }}
-                  className="rounded-lg bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => startCreate()}
+                  className="min-h-[36px] rounded-lg bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   + Tạo mới
                 </button>
@@ -3136,7 +3616,9 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
 
           <p className="mt-2 text-xs text-gray-500">
             {listFilter || listSort !== "order"
-              ? "Để bật kéo-thả / ↑↓ đổi thứ tự, chọn 'Thứ tự thủ công' và xoá bộ lọc."
+              ? "Để bật kéo-thả / ↑↓ đổi thứ tự, chọn “Thứ tự thủ công” và xoá ô tìm kiếm."
+              : staleNotice
+              ? "Tải lại danh sách (nút ở trên) trước khi đổi thứ tự."
               : "Kéo-thả thẻ hoặc dùng ↑/↓ để đổi thứ tự hiển thị trên trang công khai."}
           </p>
 
@@ -3146,22 +3628,41 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
             <p className="mt-4 text-sm text-gray-600">Chưa có mục nào.</p>
           ) : sortedFilteredItems.length === 0 ? (
             <p className="mt-4 text-sm text-gray-500">
-              Không có mục nào khớp với &quot;{listFilter}&quot;.
+              {listFilter.trim()
+                ? `Không có mục nào khớp với “${listFilter.trim()}”.`
+                : mode === "showreel-featured"
+                ? "Chưa có video nổi bật nào. Bấm “+ Tạo mới” để thêm, hoặc tích ô Nổi bật cho một video ở thẻ Thư viện video."
+                : mode === "other-videos"
+                ? "Chưa có video nào trong thư viện (ngoài các video nổi bật)."
+                : "Chưa có mục nào."}
             </p>
           ) : (
             <motion.div layout className="mt-4 space-y-3">
               <AnimatePresence initial={false}>
-                {sortedFilteredItems.map((item) => {
+                {sortedFilteredItems.map((item, shownIndex) => {
                   const confirming = Number(confirmDeleteId) === Number(item.id);
                   const deleting = Number(deletingId) === Number(item.id);
                   const rowLocked = saving || deletingId !== null;
                   const isCurrent = Number(editingId) === Number(item.id);
                   const cats = Array.isArray(item.categories) ? item.categories : [];
-                  const sortIdx = items.findIndex(
-                    (it) => Number(it.id) === Number(item.id)
-                  );
-                  const canReorder =
-                    !listFilter && !reordering && listSort === "order";
+                  // Place in the manual order on screen, e.g. "Vị trí 3/12";
+                  // only shown while the list IS the manual order (no other
+                  // sort, no search), where it matches what ↑/↓ change.
+                  const showPosition = listSort === "order" && !listFilter;
+                  const canReorder = canReorderList;
+                  // ↑ / ↓ move past the neighbour ON SCREEN.
+                  const isFirstShown = shownIndex === 0;
+                  const isLastShown = shownIndex === sortedFilteredItems.length - 1;
+                  const reorderOffHint = listFilter
+                    ? "Xoá ô tìm kiếm để sắp xếp"
+                    : listSort !== "order"
+                    ? "Chọn “Thứ tự thủ công” để sắp xếp"
+                    : staleNotice
+                    ? "Tải lại danh sách trước khi sắp xếp"
+                    : refreshing || loadingItems
+                    ? "Đang tải lại danh sách…"
+                    : "";
+                  const publicLink = publicLinkFor(item, { isVideo: isVideoTab, mode });
                   const isDragging = dragId !== null && Number(dragId) === Number(item.id);
                   return (
                     <motion.div
@@ -3203,32 +3704,30 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                         <div className="flex shrink-0 flex-col items-center justify-center gap-1">
                           <button
                             type="button"
-                            onClick={() => handleMove(item, -1)}
-                            disabled={!canReorder || sortIdx <= 0}
-                            title={
-                              listFilter
-                                ? "Xoá bộ lọc để sắp xếp"
-                                : "Lên trên"
-                            }
-                            className="rounded border border-gray-300 px-1.5 py-0.5 text-xs text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-30"
+                            ref={(node) => {
+                              const key = arrowKey(item.id, -1);
+                              if (node) arrowButtonRefs.current.set(key, node);
+                              else arrowButtonRefs.current.delete(key);
+                            }}
+                            onClick={(event) => handleMove(item, -1, event)}
+                            disabled={!canReorder || isFirstShown}
+                            title={reorderOffHint || "Lên trên"}
+                            className="flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-30"
                             aria-label="Lên trên"
                           >
                             ↑
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleMove(item, 1)}
-                            disabled={
-                              !canReorder ||
-                              sortIdx === -1 ||
-                              sortIdx >= items.length - 1
-                            }
-                            title={
-                              listFilter
-                                ? "Xoá bộ lọc để sắp xếp"
-                                : "Xuống dưới"
-                            }
-                            className="rounded border border-gray-300 px-1.5 py-0.5 text-xs text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-30"
+                            ref={(node) => {
+                              const key = arrowKey(item.id, 1);
+                              if (node) arrowButtonRefs.current.set(key, node);
+                              else arrowButtonRefs.current.delete(key);
+                            }}
+                            onClick={(event) => handleMove(item, 1, event)}
+                            disabled={!canReorder || isLastShown}
+                            title={reorderOffHint || "Xuống dưới"}
+                            className="flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-30"
                             aria-label="Xuống dưới"
                           >
                             ↓
@@ -3253,9 +3752,14 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                                   </span>
                                 ) : null}
                                 <StarRatingDisplay value={item.adminRating} />
-                                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-700">
-                                  Vị trí {item.order ?? "-"}
-                                </span>
+                                {showPosition ? (
+                                  <span
+                                    className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-700"
+                                    title={`Thứ tự hiển thị: thứ ${shownIndex + 1} trong ${sortedFilteredItems.length} mục của danh sách này`}
+                                  >
+                                    Vị trí {shownIndex + 1}/{sortedFilteredItems.length}
+                                  </span>
+                                ) : null}
                                 {cats.slice(0, 3).map((cat) => (
                                   <span
                                     key={cat}
@@ -3271,12 +3775,24 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                                 ) : null}
                               </div>
                             </div>
-                            <div className="flex shrink-0 gap-2">
+                            <div className="flex shrink-0 flex-wrap gap-2">
+                              {publicLink ? (
+                                <a
+                                  href={publicLink.href}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  draggable={false}
+                                  title={publicLink.title}
+                                  className="inline-flex min-h-[36px] items-center rounded-md border border-gray-300 px-3 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                                >
+                                  Xem ↗
+                                </a>
+                              ) : null}
                               <button
                                 type="button"
                                 disabled={rowLocked}
                                 onClick={() => startEdit(item)}
-                                className="rounded-md border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                className="min-h-[36px] rounded-md border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                               >
                                 Sửa
                               </button>
@@ -3289,7 +3805,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                                 }}
                                 disabled={rowLocked || confirming}
                                 onClick={() => openDeleteConfirm(item.id)}
-                                className="rounded-md border border-red-300 px-3 py-1 text-xs text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                className="min-h-[36px] rounded-md border border-red-300 px-3 py-1 text-xs text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
                               >
                                 Xoá
                               </button>
@@ -3302,7 +3818,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                           className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800"
                           role="alertdialog"
                           aria-label="Xác nhận xoá"
-                          aria-describedby={`delete-confirm-text-${item.id}`}
+                          aria-describedby={fieldId(`delete-confirm-text-${item.id}`)}
                           onKeyDown={(event) => {
                             if (event.key !== "Escape" || deleting) return;
                             event.preventDefault();
@@ -3310,7 +3826,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                             closeDeleteConfirm(item.id);
                           }}
                         >
-                          <p id={`delete-confirm-text-${item.id}`} className="break-words">
+                          <p id={fieldId(`delete-confirm-text-${item.id}`)} className="break-words">
                             Xoá “{item.title || "(Chưa có tiêu đề)"}” (#{item.id})? Video/ảnh của mục
                             này trên R2 cũng sẽ bị xoá.
                           </p>
@@ -3325,6 +3841,24 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                               {deleteError.hint ? (
                                 <p className="mt-0.5 break-words text-red-800">{deleteError.hint}</p>
                               ) : null}
+                              {deleteError.status === 401 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => window.location.reload()}
+                                  className="mt-1 text-red-700 underline hover:text-red-900"
+                                >
+                                  Tải lại trang để đăng nhập
+                                </button>
+                              ) : deleteError.status === null || deleteError.status >= 500 ? (
+                                <a
+                                  href="/api/admin/health"
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="mt-1 inline-block text-red-700 underline hover:text-red-900"
+                                >
+                                  Kiểm tra kết nối R2 ↗
+                                </a>
+                              ) : null}
                             </div>
                           ) : null}
                           <div className="mt-2 flex flex-wrap gap-2">
@@ -3333,7 +3867,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                               ref={confirmCancelRef}
                               disabled={deleting}
                               onClick={() => closeDeleteConfirm(item.id)}
-                              className="rounded-md border border-gray-300 bg-white px-3 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              className="min-h-[36px] rounded-md border border-gray-300 bg-white px-3 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               Huỷ
                             </button>
@@ -3341,7 +3875,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                               type="button"
                               disabled={deletingId !== null || saving}
                               onClick={() => handleDelete(item.id)}
-                              className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                              className="min-h-[36px] rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                               {deleting ? "Đang xoá…" : "Xoá"}
                             </button>

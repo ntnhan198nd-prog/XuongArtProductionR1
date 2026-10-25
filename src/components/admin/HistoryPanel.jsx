@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, describeHttpError, fetchJson, readJsonSafe } from "@/lib/apiClient";
+import { useToast } from "@/components/admin/ToastProvider";
 import {
   HISTORY_KEEP_DAYS,
   HISTORY_KEEP_RECENT,
@@ -67,6 +68,13 @@ function SummaryLine({ summary }) {
   return <p className="break-words text-sm text-gray-700">{parts.join(" · ")}</p>;
 }
 
+// “A”, “B” và “C” — admin tab names for the restore warning.
+function joinTabNames(labels) {
+  const quoted = labels.map((label) => `“${label}”`);
+  if (quoted.length <= 1) return quoted.join("");
+  return `${quoted.slice(0, -1).join(", ")} và ${quoted[quoted.length - 1]}`;
+}
+
 function ErrorBox({ message, hint, children }) {
   return (
     <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -77,12 +85,16 @@ function ErrorBox({ message, hint, children }) {
   );
 }
 
+// pendingTabLabels (optional): names of the other admin tabs with uploads
+// or unsaved changes, so the restore warning can say where that work is.
 export default function HistoryPanel({
   active = true,
   contentDirty = false,
   otherWorkPending = false,
+  pendingTabLabels = [],
   onRestored,
 }) {
+  const toast = useToast();
   const [entries, setEntries] = useState([]);
   const [current, setCurrent] = useState(null);
   const [currentError, setCurrentError] = useState(null);
@@ -99,7 +111,7 @@ export default function HistoryPanel({
   const [now, setNow] = useState(() => Date.now());
   // Restore saved but the reload was cancelled (another tab's leave prompt).
   const [reloadStalled, setReloadStalled] = useState(false);
-  // key → { loading, error, hint } for "Tải về (.json)".
+  // key → { loading } for "Tải về (.json)" (errors are shown as a toast).
   const [downloads, setDownloads] = useState({});
   // Corrupt store with no history: explicit "start over empty" flow.
   const [startEmptyConfirm, setStartEmptyConfirm] = useState(false);
@@ -111,6 +123,8 @@ export default function HistoryPanel({
   const detailRequestRef = useRef({});
   const timersRef = useRef([]);
   const cancelButtonRef = useRef(null);
+  // The download error toast's "Thử lại" runs the current downloadSnapshot.
+  const downloadLatestRef = useRef(null);
 
   const busy = Boolean(restoringKey || restoredKey || startEmptyBusy || startEmptyDone);
 
@@ -262,7 +276,7 @@ export default function HistoryPanel({
       } catch (networkError) {
         throw new ApiError(
           `${fallbackError}: không kết nối được tới server (${
-            networkError?.message || "network error"
+            networkError?.message || "lỗi mạng"
           }).`,
           { status: 0 }
         );
@@ -288,12 +302,17 @@ export default function HistoryPanel({
       later(() => URL.revokeObjectURL(href), 60 * 1000);
       setDownloads((prev) => ({ ...prev, [entry.key]: { loading: false } }));
     } catch (error) {
-      setDownloads((prev) => ({
-        ...prev,
-        [entry.key]: { loading: false, error: error.message, hint: error.hint || "" },
-      }));
+      setDownloads((prev) => ({ ...prev, [entry.key]: { loading: false } }));
+      toast.error(error.message || fallbackError, {
+        hint: error.hint || "",
+        actionLabel: "Thử lại",
+        onAction: () => downloadLatestRef.current?.(entry),
+      });
     }
   };
+  useEffect(() => {
+    downloadLatestRef.current = downloadSnapshot;
+  });
 
   const handleStartEmpty = async () => {
     if (busy) return;
@@ -307,10 +326,12 @@ export default function HistoryPanel({
       );
       setStartEmptyDone(true);
       setStartEmptyBusy(false);
+      toast.success("Đã bắt đầu lại với nội dung trống — đang tải lại trang…");
       later(reloadPage, RELOAD_DELAY_MS);
     } catch (error) {
       setStartEmptyBusy(false);
       setStartEmptyError({ message: error.message, hint: error.hint || "" });
+      toast.error(error.message, { hint: error.hint || "" });
     }
   };
 
@@ -331,10 +352,14 @@ export default function HistoryPanel({
       setRestoredKey(entry.key);
       setRestoringKey(null);
       setConfirmKey(null);
+      toast.success("Đã khôi phục xong — đang tải lại trang…");
       later(reloadPage, RELOAD_DELAY_MS);
     } catch (error) {
       setRestoringKey(null);
+      // Kept inline too: the confirm box stays open, so the owner can retry
+      // right there.
       setRestoreError({ key: entry.key, message: error.message, hint: error.hint || "" });
+      toast.error(error.message, { hint: error.hint || "" });
     }
   };
 
@@ -371,16 +396,6 @@ export default function HistoryPanel({
         </button>
       </div>
 
-      {restoredKey || startEmptyDone ? (
-        <div
-          role="status"
-          className="rounded-lg border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-800"
-        >
-          {startEmptyDone ? "Đã bắt đầu lại với nội dung trống." : "Đã khôi phục xong."} Đang tải
-          lại trang...
-        </div>
-      ) : null}
-
       {reloadStalled ? (
         <div
           role="status"
@@ -388,8 +403,8 @@ export default function HistoryPanel({
         >
           <p>
             Đã lưu xong, nhưng trang chưa tải lại. Bấm <strong>Tải lại trang</strong> (hoặc F5)
-            để xem nội dung mới. Các tab khác đang hiện nội dung cũ — đừng lưu ở đó trước khi
-            tải lại.
+            để xem nội dung mới. Các thẻ khác trong trang quản trị (và tab trình duyệt khác
+            đang mở trang này) đang hiện nội dung cũ — đừng lưu ở đó trước khi tải lại.
           </p>
           <button
             type="button"
@@ -568,13 +583,6 @@ export default function HistoryPanel({
                   </div>
                 </div>
 
-                {download?.error ? (
-                  <div className="mt-2 text-xs text-red-700">
-                    <p className="break-words">{download.error}</p>
-                    {download.hint ? <p className="mt-1 text-red-800">💡 {download.hint}</p> : null}
-                  </div>
-                ) : null}
-
                 {detail?.open ? (
                   <div className="mt-3 rounded-lg bg-gray-50 px-3 py-2.5">
                     {detail.loading ? (
@@ -627,18 +635,21 @@ export default function HistoryPanel({
                     </p>
                     {contentDirty ? (
                       <p className="mt-1.5 font-medium">
-                        Bạn đang có thay đổi chưa lưu ở tab Nội dung trang — các thay đổi
+                        Bạn đang có thay đổi chưa lưu ở thẻ “Nội dung trang” — các thay đổi
                         đó sẽ bị mất.
                       </p>
                     ) : null}
                     {otherWorkPending ? (
                       <p className="mt-1.5 font-medium">
-                        Đang có video/ảnh tải lên hoặc thay đổi chưa lưu ở tab khác — sẽ bị
-                        huỷ khi trang tải lại.
+                        {pendingTabLabels.length > 0
+                          ? `Đang có video/ảnh tải lên hoặc thay đổi chưa lưu ở thẻ ${joinTabNames(
+                              pendingTabLabels
+                            )} — sẽ bị huỷ khi trang tải lại.`
+                          : "Đang có video/ảnh tải lên hoặc thay đổi chưa lưu ở thẻ khác — sẽ bị huỷ khi trang tải lại."}
                       </p>
                     ) : (
                       <p className="mt-1.5 text-xs">
-                        Nếu đang tải video/ảnh lên ở tab khác, hãy đợi xong rồi mới khôi phục.
+                        Nếu đang tải video/ảnh lên ở cửa sổ khác, hãy đợi xong rồi mới khôi phục.
                       </p>
                     )}
                     {detail?.loading ? (

@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchJson } from "@/lib/apiClient";
+import { useToast } from "@/components/admin/ToastProvider";
 import {
   FEATURED_SLOTS_PER_SLIDE,
   FEATURED_SLOT_KEYS,
@@ -59,7 +60,23 @@ const sameLayout = (a, b) => {
   return ta.length === tb.length && ta.every((value, index) => value === tb[index]);
 };
 
-export default function FeaturedLayoutPanel({ items, onSaved }) {
+// `onSaved()` runs after a successful save (the parent re-reads the list).
+// `onDirtyChange(dirty)` (optional) reports while the arrangement on screen
+// differs from the saved one (false again on unmount).
+export default function FeaturedLayoutPanel({ items, onSaved, onDirtyChange }) {
+  const toast = useToast();
+  const toastRef = useRef(toast);
+  useEffect(() => {
+    toastRef.current = toast;
+  }, [toast]);
+  const notify = (kind, message, opts) => {
+    const api = toastRef.current;
+    return api && typeof api[kind] === "function" ? api[kind](message, opts) : null;
+  };
+  // Last "Lưu bố cục thất bại" toast: closed when the next save starts so it
+  // never sits next to a later "Đã lưu bố cục trang chủ".
+  const errorToastIdRef = useRef(null);
+
   const featuredItems = useMemo(
     () => (items || []).filter((item) => item?.featured),
     [items]
@@ -88,10 +105,14 @@ export default function FeaturedLayoutPanel({ items, onSaved }) {
   // drag is flaky): click a card to pick it up, click any cell to place it.
   const [selectedIdx, setSelectedIdx] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
   // Mirror of draggingIdx that drop handlers can trust even when the
   // browser hands us an empty dataTransfer (Safari does, intermittently).
   const draggingRef = useRef(null);
+  // The arrangement just saved, used as the "saved" baseline until the
+  // parent's re-read brings a different server layout. Without it a failed
+  // re-read (loadItems keeps the old list) would leave the saved layout
+  // looking unsaved.
+  const [savedSlots, setSavedSlots] = useState(null);
 
   // Re-sync from the server layout only when it actually changed. The
   // parent re-fetches `items` after every save / reorder elsewhere on the
@@ -103,11 +124,27 @@ export default function FeaturedLayoutPanel({ items, onSaved }) {
     baseRef.current = initialSlots;
     if (!baseChanged) return;
     setSlots(initialSlots);
+    setSavedSlots(null);
     setSelectedIdx(null);
   }, [initialSlots]);
 
+  const baselineSlots = savedSlots || initialSlots;
   const slides = useMemo(() => chunkFeaturedSlots(slots), [slots]);
-  const dirty = useMemo(() => !sameLayout(slots, initialSlots), [slots, initialSlots]);
+  const dirty = useMemo(() => !sameLayout(slots, baselineSlots), [slots, baselineSlots]);
+
+  const onDirtyChangeRef = useRef(onDirtyChange);
+  useEffect(() => {
+    onDirtyChangeRef.current = onDirtyChange;
+  }, [onDirtyChange]);
+  useEffect(() => {
+    if (typeof onDirtyChangeRef.current === "function") onDirtyChangeRef.current(dirty);
+  }, [dirty]);
+  useEffect(
+    () => () => {
+      if (typeof onDirtyChangeRef.current === "function") onDirtyChangeRef.current(false);
+    },
+    []
+  );
 
   // Swap the contents of two cells. Either side may be empty, which is
   // how a card moves into a free cell (or out of the way of another).
@@ -177,13 +214,17 @@ export default function FeaturedLayoutPanel({ items, onSaved }) {
   };
 
   const handleReset = () => {
-    setSlots(initialSlots);
+    setSlots(baselineSlots);
     setSelectedIdx(null);
   };
 
   const handleSave = async () => {
+    if (saving || !dirty) return;
+    if (errorToastIdRef.current !== null) {
+      toastRef.current?.dismiss?.(errorToastIdRef.current);
+      errorToastIdRef.current = null;
+    }
     setSaving(true);
-    setError("");
     try {
       const slotEntries = [];
       trimFeaturedSlots(slots).forEach((id, slot) => {
@@ -199,21 +240,46 @@ export default function FeaturedLayoutPanel({ items, onSaved }) {
             slots: slotEntries,
           }),
         },
-        { fallbackError: "Lưu thất bại" }
+        { fallbackError: "Lưu bố cục thất bại" }
       );
-      onSaved?.();
+      setSavedSlots(withSpareSlide(slots));
+      notify("success", "Đã lưu bố cục trang chủ", {
+        href: "/",
+        hrefLabel: "Xem trang chủ ↗",
+      });
+      // Stay in "Đang lưu…" until the parent has re-read the list, so the
+      // "chưa lưu" note does not flash before the saved layout comes back.
+      await Promise.resolve(onSaved?.()).catch(() => {});
     } catch (saveError) {
-      setError(saveError.message);
+      // The arrangement stays on screen, so "Thử lại" saves it again.
+      const status = saveError?.status ?? null;
+      errorToastIdRef.current = notify("error", saveError?.message || "Lưu bố cục thất bại.", {
+        hint: saveError?.hint || "",
+        ...(status === 401
+          ? {
+              actionLabel: "Tải lại trang để đăng nhập",
+              onAction: () => window.location.reload(),
+            }
+          : { actionLabel: "Thử lại", onAction: () => saveRef.current?.() }),
+      });
     } finally {
       setSaving(false);
     }
   };
+  // Latest handleSave for the toast's "Thử lại" (the slots it saves are
+  // whatever is on screen when it is pressed).
+  const saveRef = useRef(null);
+  useEffect(() => {
+    saveRef.current = handleSave;
+  });
 
   if (featuredItems.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-gray-300 p-5 text-sm text-gray-500">
-        Chưa có dự án nào được đánh dấu <strong>featured</strong>. Mở một dự án ở dưới
-        và bật cờ <em>featured</em> để hiển thị trên grid trang chủ.
+        Chưa có video nào được bật <strong>Nổi bật</strong>. Bấm <em>+ Tạo mới</em> ở
+        danh sách bên dưới để thêm video nổi bật, hoặc mở thẻ <strong>Thư viện video</strong>,
+        bấm <em>Sửa</em> một video và tích ô <em>Nổi bật</em> — video sẽ hiện trong lưới
+        video ở trang chủ.
       </div>
     );
   }
@@ -227,17 +293,18 @@ export default function FeaturedLayoutPanel({ items, onSaved }) {
           <h2 className="text-lg font-semibold">Bố cục Dự án nổi bật trang chủ</h2>
           <p className="mt-1 text-xs text-gray-600">
             Kéo thẻ thả vào ô bất kỳ — kể cả ô trống — để đổi vị trí; hoặc bấm chọn thẻ rồi
-            bấm ô đích. Mỗi slide 6 ô — ô <strong>a, c</strong> là dọc (portrait), ô{" "}
-            <strong>b, d, e, f</strong> là ngang (landscape); slide toàn video vuông dùng lưới
-            3×2. Slide không có thẻ nào sẽ tự bị bỏ. Bấm <em>Lưu bố cục</em> để áp dụng.
+            bấm ô đích. Lưới trang chủ chạy qua từng trang, mỗi trang 6 ô — ô{" "}
+            <strong>a, c</strong> là khung dọc, ô <strong>b, d, e, f</strong> là khung ngang;
+            trang chỉ có video vuông dùng lưới 3×2. Trang không có thẻ nào sẽ tự bị bỏ. Bấm{" "}
+            <em>Lưu bố cục</em> để áp dụng.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={handleReset}
             disabled={!dirty || saving}
-            className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-[36px] rounded-lg border border-gray-300 px-3 py-1.5 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Hoàn tác
           </button>
@@ -245,17 +312,25 @@ export default function FeaturedLayoutPanel({ items, onSaved }) {
             type="button"
             onClick={handleSave}
             disabled={!dirty || saving}
-            className="rounded-lg bg-black px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-[36px] rounded-lg bg-black px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {saving ? "Đang lưu..." : "Lưu bố cục"}
+            {saving ? "Đang lưu…" : "Lưu bố cục"}
           </button>
+          <a
+            href="/"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex min-h-[36px] items-center rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+          >
+            Xem trang chủ ↗
+          </a>
         </div>
       </div>
 
-      {error ? (
-        <div className="mt-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {error}
-        </div>
+      {dirty && !saving ? (
+        <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Bố cục đã đổi nhưng chưa lưu — bấm <em>Lưu bố cục</em> để trang chủ hiện như trên.
+        </p>
       ) : null}
 
       <div className="mt-5 space-y-6">
@@ -275,11 +350,11 @@ export default function FeaturedLayoutPanel({ items, onSaved }) {
             <div key={slideIndex}>
               <div className="mb-2 flex items-center gap-2">
                 <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">
-                  Slide {slideIndex + 1}
+                  Trang {slideIndex + 1}
                 </span>
                 {isSpareSlide ? (
                   <span className="text-[11px] normal-case tracking-normal text-gray-400">
-                    (trống — thả thẻ vào đây để thêm slide mới)
+                    (trống — thả thẻ vào đây để thêm trang mới)
                   </span>
                 ) : isSquareSlide ? (
                   <span className="text-[11px] normal-case tracking-normal text-gray-400">
@@ -371,12 +446,12 @@ export default function FeaturedLayoutPanel({ items, onSaved }) {
                             />
                           ) : (
                             <div className="flex h-full items-center justify-center bg-neutral-800 text-xs text-neutral-300">
-                              (chưa có media)
+                              (chưa có video)
                             </div>
                           )}
                           <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent p-2">
                             <div className="truncate text-xs font-semibold">
-                              #{item.id} {item.title || "(No title)"}
+                              #{item.id} {item.title || "(Chưa có tiêu đề)"}
                             </div>
                             {item.client ? (
                               <div className="truncate text-[10px] text-neutral-300">
@@ -385,8 +460,11 @@ export default function FeaturedLayoutPanel({ items, onSaved }) {
                             ) : null}
                           </div>
                           {shapeMismatch ? (
-                            <div className="pointer-events-none absolute right-2 top-2 z-10 rounded bg-yellow-500/90 px-1.5 py-0.5 text-[10px] font-medium text-black">
-                              shape lệch
+                            <div
+                              className="pointer-events-none absolute right-2 top-2 z-10 rounded bg-yellow-500/90 px-1.5 py-0.5 text-[10px] font-medium text-black"
+                              title="Hướng khung của video khác với ô này — video sẽ bị cắt bớt"
+                            >
+                              lệch khung
                             </div>
                           ) : null}
                           {isSelected ? (

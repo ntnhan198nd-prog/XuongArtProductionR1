@@ -20,6 +20,34 @@ import { useState, useEffect, useRef } from "react";
 const isVideosActive = (pathname) =>
   pathname === "/videos" || pathname.startsWith("/videos/");
 
+// The admin (/admin, and the legacy /admin-content redirect) is a work
+// screen, not part of the public site: no header, menu or fixed footer.
+// A query string or hash is ignored if one ever reaches here.
+export const isAdminPath = (pathname) =>
+  typeof pathname === "string" && /^\/admin(-content)?(\/|$)/.test(pathname.split(/[?#]/)[0]);
+
+// Plain white full-height page for the admin. The <html> background is dark
+// for the public site; while the admin is mounted it is switched to white
+// so overscroll / rubber-banding never shows a black band, and restored on
+// the way out.
+const AdminLayout = ({ children }) => {
+  useEffect(() => {
+    const root = document.documentElement;
+    const previous = root.style.backgroundColor;
+    root.style.backgroundColor = "#fff";
+    return () => {
+      root.style.backgroundColor = previous;
+    };
+  }, []);
+  // reducedMotion="user": admin animations (layout shifts, toasts…) follow
+  // the OS "reduce motion" setting, like the public layout's MotionConfig.
+  return (
+    <MotionConfig reducedMotion="user">
+      <div className="flex min-h-full w-full flex-auto flex-col bg-white text-black">{children}</div>
+    </MotionConfig>
+  );
+};
+
 const Header = ({ invert = false, mobileMenuOpen, setMobileMenuOpen }) => {
   const pathname = usePathname() || "";
   const activeVideo = isVideosActive(pathname);
@@ -394,7 +422,15 @@ const RootLayout = ({
   // footer takes over showing the contact details there.
   whoWeAreHasContact = true,
 }) => {
-  const pathName = usePathname();
+  const rawPathName = usePathname();
+  // Admin routes own their whole page (and the single <main>); everything
+  // below is the public layout, unchanged.
+  if (isAdminPath(rawPathName)) {
+    return <AdminLayout>{children}</AdminLayout>;
+  }
+  // usePathname() can be null before the router is ready: fall back to the
+  // normal public layout rather than crashing on .startsWith.
+  const pathName = rawPathName || "";
   const isHome = pathName === "/";
   // Routes that show the minimal footer (logo + copyright only). Gallery
   // routes end with the masonry/grid as the visual closer; /contact already
@@ -415,7 +451,7 @@ const RootLayout = ({
   const showContactInFooter = isHome || (pathName === "/whoweare" && !whoWeAreHasContact);
   return (
     <RootLayoutInner
-      key={pathName}
+      key={rawPathName}
       isHome={isHome}
       minimalFooter={minimalFooter}
       footerContent={footerContent}

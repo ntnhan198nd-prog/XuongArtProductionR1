@@ -11,6 +11,7 @@ import {
   validateUploadFile,
 } from "@/lib/uploadClient";
 import { fetchJson } from "@/lib/apiClient";
+import { useToast } from "@/components/admin/ToastProvider";
 
 // Above this size the upload can take many minutes on a typical connection.
 const LARGE_VIDEO_BYTES = 500 * 1024 * 1024;
@@ -41,14 +42,55 @@ function showreelWarnings({ size, duration, width, height } = {}) {
   return warnings;
 }
 
+// Toast for a failed upload / delete: hint + "Thử lại" (an expired login
+// offers a page reload instead).
+function errorToastOptions(err, retry) {
+  if (err?.status === 401) {
+    return {
+      hint: err?.hint || "",
+      actionLabel: "Tải lại trang để đăng nhập",
+      onAction: () => window.location.reload(),
+    };
+  }
+  return { hint: err?.hint || "", actionLabel: "Thử lại", onAction: retry };
+}
+
 // `onBusyChange(busy)` (optional) reports while an upload is running.
 export default function ShowreelPanel({ onBusyChange } = {}) {
+  const toast = useToast();
+  const toastRef = useRef(toast);
+  useEffect(() => {
+    toastRef.current = toast;
+  }, [toast]);
+  const notify = (kind, message, opts) => {
+    const api = toastRef.current;
+    return api && typeof api[kind] === "function" ? api[kind](message, opts) : null;
+  };
+  // The last error toast (it stays until closed) and a counter bumped by every
+  // upload / delete: a "Thử lại" from an older failure must not act on a newer
+  // showreel, so starting anything new closes that toast and voids its retry.
+  const errorToastIdRef = useRef(null);
+  const opGenRef = useRef(0);
+  const beginOperation = () => {
+    if (errorToastIdRef.current !== null) {
+      toastRef.current?.dismiss?.(errorToastIdRef.current);
+      errorToastIdRef.current = null;
+    }
+    opGenRef.current += 1;
+    return opGenRef.current;
+  };
+  const notifyError = (message, opts) => {
+    errorToastIdRef.current = notify("error", message, opts) ?? null;
+  };
+
   const [showreel, setShowreel] = useState(null);
   const [loading, setLoading] = useState(true);
   // True when the initial GET failed: we then don't know whether a showreel
   // exists, so the "Chưa có showreel" empty state must not be shown.
   const [loadFailed, setLoadFailed] = useState(false);
   const [uploading, setUploading] = useState(false);
+  // DELETE in flight: picking a new video / pressing Xoá again waits for it.
+  const [deleting, setDeleting] = useState(false);
   // Live upload state: { name, size, pct, loaded, total, etaSec, retry } | null.
   const [progress, setProgress] = useState(null);
   // "uploading" (Huỷ allowed) → "saving" (record write, cannot be cancelled).
@@ -64,6 +106,9 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
   // Bumped on every pick / unmount so a slow metadata read of an older pick
   // cannot start an upload.
   const pickTokenRef = useRef(0);
+  // Set synchronously: a "Thử lại" pressed in a toast must not start a
+  // second upload / delete while one is running.
+  const workingRef = useRef(false);
 
   // Leaving the admin tab mid-upload: stop the transfer (nothing was stored).
   useEffect(() => {
@@ -79,8 +124,8 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
     onBusyChangeRef.current = onBusyChange;
   }, [onBusyChange]);
   useEffect(() => {
-    if (typeof onBusyChangeRef.current === "function") onBusyChangeRef.current(uploading);
-  }, [uploading]);
+    if (typeof onBusyChangeRef.current === "function") onBusyChangeRef.current(uploading || deleting);
+  }, [uploading, deleting]);
 
   // Closing the browser tab would kill the upload — ask first.
   useEffect(() => {
@@ -179,6 +224,15 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
   };
 
   const startUpload = async (file) => {
+    if (!file) return;
+    if (workingRef.current) {
+      // Should not happen (the picker is disabled meanwhile) — never drop a
+      // picked file silently though.
+      setNotice("Đang xử lý showreel — chọn lại video sau khi xong.");
+      return;
+    }
+    workingRef.current = true;
+    const gen = beginOperation();
     const controller = new AbortController();
     abortRef.current = controller;
     setUploading(true);
@@ -223,14 +277,22 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
       }
       setShowreel(payload?.data || null);
       setLoadFailed(false);
+      notify("success", "Đã thay showreel", { href: "/", hrefLabel: "Xem trang chủ ↗" });
     } catch (err) {
       if (err?.code === "aborted") {
         setNotice("Đã huỷ tải lên showreel. Video cũ vẫn được giữ nguyên.");
       } else {
-        setError(err?.message || "Tải showreel thất bại.");
-        setErrorHint(err?.hint || "");
+        // The picked file is still in memory: "Thử lại" uploads it again —
+        // unless something newer was uploaded / deleted since.
+        notifyError(
+          err?.message || "Tải showreel thất bại.",
+          errorToastOptions(err, () => {
+            if (opGenRef.current === gen) startUploadRef.current?.(file);
+          })
+        );
       }
     } finally {
+      workingRef.current = false;
       abortRef.current = null;
       setUploading(false);
       setPhase("");
@@ -238,12 +300,23 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
     }
   };
 
+  // Latest startUpload / handleClear for the toasts' "Thử lại".
+  const startUploadRef = useRef(null);
+  const clearRef = useRef(null);
+  useEffect(() => {
+    startUploadRef.current = startUpload;
+    clearRef.current = handleClear;
+  });
+
   const handleCancel = () => {
     abortRef.current?.abort();
   };
 
-  const handleClear = async () => {
-    if (!window.confirm("Xoá showreel hiện tại? Trang chủ sẽ rơi về video mặc định.")) return;
+  const removeShowreel = async () => {
+    if (workingRef.current) return;
+    workingRef.current = true;
+    const gen = beginOperation();
+    setDeleting(true);
     setError("");
     setErrorHint("");
     setNotice("");
@@ -251,13 +324,32 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
       await fetchJson(
         "/api/admin/showreel",
         { method: "DELETE" },
-        { fallbackError: "Xoá thất bại" }
+        { fallbackError: "Xoá showreel thất bại" }
       );
       setShowreel(null);
+      notify("success", "Đã xoá showreel — trang chủ dùng lại video mặc định", {
+        href: "/",
+        hrefLabel: "Xem trang chủ ↗",
+      });
     } catch (err) {
-      setError(err.message);
-      setErrorHint(err.hint || "");
+      // "Thử lại" asks again (same confirm as the Xoá button) and is void
+      // once another upload / delete has run.
+      notifyError(
+        err?.message || "Xoá showreel thất bại.",
+        errorToastOptions(err, () => {
+          if (opGenRef.current === gen) clearRef.current?.();
+        })
+      );
+    } finally {
+      workingRef.current = false;
+      setDeleting(false);
     }
+  };
+
+  const handleClear = async () => {
+    if (workingRef.current) return;
+    if (!window.confirm("Xoá showreel hiện tại? Trang chủ sẽ rơi về video mặc định.")) return;
+    await removeShowreel();
   };
 
   return (
@@ -270,12 +362,12 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
             WebM, dài khoảng 30 giây, tối đa 1080p.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* The input stays focusable (sr-only, not display:none) so the
               picker can be opened with the keyboard. */}
           <label
-            className={`relative cursor-pointer rounded-lg bg-black px-3 py-1.5 text-xs font-medium text-white focus-within:ring-2 focus-within:ring-black/40 focus-within:ring-offset-2 hover:bg-gray-800 ${
-              uploading || checking ? "pointer-events-none opacity-60" : ""
+            className={`relative inline-flex min-h-[36px] cursor-pointer items-center rounded-lg bg-black px-3 py-1.5 text-xs font-medium text-white focus-within:ring-2 focus-within:ring-black/40 focus-within:ring-offset-2 hover:bg-gray-800 ${
+              uploading || checking || deleting ? "pointer-events-none opacity-60" : ""
             }`}
           >
             {uploading
@@ -292,16 +384,25 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
               accept={ACCEPT.video}
               className="sr-only"
               onChange={handleChoose}
-              disabled={uploading || checking}
+              disabled={uploading || checking || deleting}
             />
           </label>
+          <a
+            href="/"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex min-h-[36px] items-center rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+          >
+            Xem trang chủ ↗
+          </a>
           {showreel && !uploading ? (
             <button
               type="button"
               onClick={handleClear}
-              className="rounded-lg border border-red-300 px-3 py-1.5 text-xs text-red-700 hover:bg-red-50"
+              disabled={deleting || checking}
+              className="min-h-[36px] rounded-lg border border-red-300 px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Xoá
+              {deleting ? "Đang xoá..." : "Xoá"}
             </button>
           ) : null}
         </div>
@@ -328,7 +429,8 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
             <button
               type="button"
               onClick={handleUploadAnyway}
-              className="rounded-md bg-black px-2.5 py-1 text-xs font-medium text-white hover:bg-gray-800"
+              disabled={deleting}
+              className="rounded-md bg-black disabled:opacity-60 px-2.5 py-1 text-xs font-medium text-white hover:bg-gray-800"
             >
               Vẫn tải lên
             </button>
@@ -339,6 +441,7 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
                 accept={ACCEPT.video}
                 className="sr-only"
                 onChange={handleChoose}
+                disabled={deleting}
               />
             </label>
             <button
@@ -388,7 +491,7 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
           ) : null}
           {progress.size > LARGE_VIDEO_BYTES ? (
             <p className="mt-1.5 text-amber-800">
-              File lớn, upload có thể mất nhiều phút — giữ tab này mở.
+              File lớn, tải lên có thể mất nhiều phút — giữ tab này mở.
             </p>
           ) : (
             <p className="mt-1.5 text-gray-500">Giữ tab này mở cho đến khi tải xong.</p>
@@ -424,7 +527,9 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
           />
           <div className="mt-2 break-all text-xs text-gray-600">
             {showreel.name ? <span className="font-medium">{showreel.name}</span> : null}
-            {showreel.duration ? <span> · {showreel.duration}s</span> : null}
+            {showreel.duration ? (
+              <span> · {formatDuration(showreel.duration) || `${showreel.duration} giây`}</span>
+            ) : null}
             {showreel.width && showreel.height ? (
               <span>
                 {" "}
@@ -435,8 +540,8 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
         </div>
       ) : loadFailed ? (
         <div className="mt-4 rounded-lg border border-dashed border-red-200 p-6 text-center text-sm text-gray-500">
-          Không kiểm tra được showreel hiện tại (xem lỗi ở trên). Upload vẫn
-          có thể thử lại sau khi sửa kết nối R2.
+          Không kiểm tra được showreel hiện tại (xem lỗi ở trên). Vẫn có thể thử
+          tải video lên lại sau khi sửa kết nối R2.
         </div>
       ) : (
         <div className="mt-4 rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500">
