@@ -59,9 +59,10 @@ export async function PUT(request, { params }) {
 
       oldKeys = collectAssetKeysFromImageProject(store.imageProjects[index]);
 
+      // Unique slug among the OTHER image projects; returned in the response.
       updated = {
         id,
-        ...normalizeImageProjectPayload(body, store, store.imageProjects[index]),
+        ...normalizeImageProjectPayload(body, store, store.imageProjects[index], { id }),
       };
       store.imageProjects = replaceAtOrder(store.imageProjects, updated, updated.order);
       updated = store.imageProjects.find((item) => Number(item.id) === id) || updated;

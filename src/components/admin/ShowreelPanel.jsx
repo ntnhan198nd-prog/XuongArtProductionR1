@@ -3,7 +3,10 @@ import { useEffect, useRef, useState } from "react";
 import {
   ACCEPT,
   cleanupUploadedKeys,
+  formatBytes,
+  formatDuration,
   formatUploadProgress,
+  getFileMetadata,
   uploadFile,
   validateUploadFile,
 } from "@/lib/uploadClient";
@@ -11,6 +14,32 @@ import { fetchJson } from "@/lib/apiClient";
 
 // Above this size the upload can take many minutes on a typical connection.
 const LARGE_VIDEO_BYTES = 500 * 1024 * 1024;
+
+// Above these the homepage banner video gets slow to start (it loads before
+// anything else on the page). Advice only — the upload is still allowed.
+const BANNER_MAX_SECONDS = 45;
+const BANNER_MAX_HEIGHT = 1080;
+const BANNER_MAX_BYTES = 150 * 1024 * 1024;
+
+// Plain-Vietnamese warnings for a picked showreel ([] when it looks fine).
+function showreelWarnings({ size, duration, width, height } = {}) {
+  const warnings = [];
+  const seconds = Number(duration);
+  if (duration !== null && duration !== undefined && Number.isFinite(seconds) && seconds > BANNER_MAX_SECONDS) {
+    warnings.push(`Video dài ${formatDuration(seconds)} — nên dưới ${BANNER_MAX_SECONDS} giây.`);
+  }
+  const h = Number(height);
+  if (Number.isFinite(h) && h > BANNER_MAX_HEIGHT) {
+    const w = Number(width);
+    const dims = Number.isFinite(w) && w > 0 ? `${w}×${h}` : `cao ${h} px`;
+    warnings.push(`Độ phân giải ${dims} — nên tối đa 1080p (cao 1080 px).`);
+  }
+  const bytes = Number(size);
+  if (Number.isFinite(bytes) && bytes > BANNER_MAX_BYTES) {
+    warnings.push(`File nặng ${formatBytes(bytes)} — nên dưới 150 MB.`);
+  }
+  return warnings;
+}
 
 // `onBusyChange(busy)` (optional) reports while an upload is running.
 export default function ShowreelPanel({ onBusyChange } = {}) {
@@ -27,10 +56,23 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
   const [error, setError] = useState("");
   const [errorHint, setErrorHint] = useState("");
   const [notice, setNotice] = useState("");
+  // Reading the picked file's size / duration before uploading.
+  const [checking, setChecking] = useState(false);
+  // Picked file with warnings, waiting for "Vẫn tải lên": { file, warnings }.
+  const [pending, setPending] = useState(null);
   const abortRef = useRef(null);
+  // Bumped on every pick / unmount so a slow metadata read of an older pick
+  // cannot start an upload.
+  const pickTokenRef = useRef(0);
 
   // Leaving the admin tab mid-upload: stop the transfer (nothing was stored).
-  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => {
+    const tokenHolder = pickTokenRef;
+    return () => {
+      tokenHolder.current += 1;
+      abortRef.current?.abort();
+    };
+  }, []);
 
   const onBusyChangeRef = useRef(onBusyChange);
   useEffect(() => {
@@ -81,19 +123,62 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
     };
   }, []);
 
+  // Pick → check length / resolution / size → upload straight away when it
+  // looks fine, otherwise show the warnings and wait for "Vẫn tải lên".
   const handleChoose = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
 
     setNotice("");
+    setPending(null);
     const problem = validateUploadFile(file, { kind: "video" });
     if (problem) {
       setError(problem);
       setErrorHint("");
       return;
     }
+    setError("");
+    setErrorHint("");
 
+    const token = pickTokenRef.current + 1;
+    pickTokenRef.current = token;
+    setChecking(true);
+    let meta = null;
+    try {
+      meta = await getFileMetadata(file);
+    } catch {
+      meta = null;
+    }
+    if (pickTokenRef.current !== token) return;
+    setChecking(false);
+
+    const warnings = showreelWarnings({
+      size: file.size,
+      duration: meta?.duration,
+      width: meta?.width,
+      height: meta?.height,
+    });
+    if (warnings.length > 0) {
+      setPending({ file, warnings });
+      return;
+    }
+    await startUpload(file);
+  };
+
+  const handleUploadAnyway = async () => {
+    const file = pending?.file;
+    setPending(null);
+    if (file) await startUpload(file);
+  };
+
+  const handleDismissPending = () => {
+    pickTokenRef.current += 1;
+    setPending(null);
+    setNotice("Chưa tải video mới — showreel cũ vẫn giữ nguyên.");
+  };
+
+  const startUpload = async (file) => {
     const controller = new AbortController();
     abortRef.current = controller;
     setUploading(true);
@@ -181,29 +266,33 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
         <div>
           <h2 className="text-lg font-semibold">Showreel trang chủ</h2>
           <p className="mt-1 text-xs text-gray-600">
-            Video phát loop ở hero banner trang chủ. Nên dùng mp4/webm, dài
-            tối đa ~30s, độ phân giải 1080p.
+            Video chạy lặp lại ở khung lớn đầu trang chủ. Nên dùng MP4 hoặc
+            WebM, dài khoảng 30 giây, tối đa 1080p.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {/* The input stays focusable (sr-only, not display:none) so the
+              picker can be opened with the keyboard. */}
           <label
-            className={`cursor-pointer rounded-lg bg-black px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 ${
-              uploading ? "pointer-events-none opacity-60" : ""
+            className={`relative cursor-pointer rounded-lg bg-black px-3 py-1.5 text-xs font-medium text-white focus-within:ring-2 focus-within:ring-black/40 focus-within:ring-offset-2 hover:bg-gray-800 ${
+              uploading || checking ? "pointer-events-none opacity-60" : ""
             }`}
           >
             {uploading
               ? phase === "saving"
                 ? "Đang lưu..."
                 : `Đang tải... ${Math.round(progress?.pct || 0)}%`
+              : checking
+              ? "Đang kiểm tra video..."
               : showreel
               ? "Thay video"
-              : "Upload showreel"}
+              : "Tải video lên"}
             <input
               type="file"
               accept={ACCEPT.video}
-              className="hidden"
+              className="sr-only"
               onChange={handleChoose}
-              disabled={uploading}
+              disabled={uploading || checking}
             />
           </label>
           {showreel && !uploading ? (
@@ -217,6 +306,51 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
           ) : null}
         </div>
       </div>
+
+      {pending && !uploading ? (
+        <div
+          className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"
+          aria-live="polite"
+        >
+          <p className="break-words font-medium">
+            “{pending.file.name}” có thể làm khung video đầu trang chủ tải chậm hơn:
+          </p>
+          <ul className="mt-1.5 list-disc space-y-0.5 pl-4">
+            {pending.warnings.map((text) => (
+              <li key={text}>{text}</li>
+            ))}
+          </ul>
+          <p className="mt-1.5 text-amber-800">
+            Video càng dài và nặng thì khách càng phải chờ lâu, nhất là trên điện
+            thoại. Bạn vẫn có thể tải lên, hoặc chọn bản nhẹ hơn.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleUploadAnyway}
+              className="rounded-md bg-black px-2.5 py-1 text-xs font-medium text-white hover:bg-gray-800"
+            >
+              Vẫn tải lên
+            </button>
+            <label className="relative cursor-pointer rounded-md border border-amber-300 bg-white px-2.5 py-1 text-xs text-amber-900 focus-within:ring-2 focus-within:ring-amber-500 hover:bg-amber-100">
+              Chọn video khác
+              <input
+                type="file"
+                accept={ACCEPT.video}
+                className="sr-only"
+                onChange={handleChoose}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={handleDismissPending}
+              className="rounded-md px-2.5 py-1 text-xs text-amber-900 underline hover:text-amber-700"
+            >
+              Huỷ, không tải lên
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {uploading && progress ? (
         <div
@@ -306,7 +440,7 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
         </div>
       ) : (
         <div className="mt-4 rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500">
-          Chưa có showreel — trang chủ đang dùng <code>/showreel.mp4</code> mặc định trong codebase.
+          Chưa có showreel — trang chủ đang dùng video mặc định có sẵn của trang web.
         </div>
       )}
     </div>

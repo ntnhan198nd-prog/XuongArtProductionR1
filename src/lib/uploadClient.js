@@ -421,6 +421,226 @@ export async function getFileMetadata(file) {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-fill helpers for the project form (orientation, duration, thumbnail)
+// ---------------------------------------------------------------------------
+
+// "landscape" | "portrait" | "square" from a pixel size, null when unknown.
+// Sides within 2% of each other count as square (exports are often cropped
+// by a few pixels).
+export function orientationFromSize(width, height) {
+  const w = Number(width);
+  const h = Number(height);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
+  if (Math.abs(w - h) < 0.02 * Math.max(w, h)) return "square";
+  return h > w ? "portrait" : "landscape";
+}
+
+// Clock-style duration for the public "Thời lượng" field:
+// 83 → "1:23", 3725 → "1:02:05". "" when unknown.
+export function formatClockDuration(sec) {
+  const value = Number(sec);
+  if (sec === null || sec === undefined || sec === "" || !Number.isFinite(value) || value <= 0) {
+    return "";
+  }
+  const total = Math.max(1, Math.round(value));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (hours > 0) return `${hours}:${pad2(minutes)}:${pad2(seconds)}`;
+  return `${minutes}:${pad2(seconds)}`;
+}
+
+// Seek positions tried by captureVideoFrame: `time` seconds in (never past
+// the middle of a short clip), then 25% / 50% of the clip in case the first
+// frame is black (fade-in from black is common at the start of a video).
+export function captureTimes(duration, time = 1) {
+  const wanted = Number(time);
+  const first = Number.isFinite(wanted) && wanted >= 0 ? wanted : 1;
+  const d = Number(duration);
+  if (!Number.isFinite(d) || d <= 0) return [first];
+  const times = [Math.min(first, d / 2)];
+  [d * 0.25, d * 0.5].forEach((t) => {
+    if (t > times[times.length - 1] + 0.05) times.push(t);
+  });
+  return times;
+}
+
+// Output size of a captured frame: same aspect ratio, never upscaled, at
+// most `maxWidth` wide. null when the video size is unknown.
+export function captureSize(videoWidth, videoHeight, maxWidth = 1280) {
+  const w = Number(videoWidth);
+  const h = Number(videoHeight);
+  if (!(w > 0) || !(h > 0)) return null;
+  const limit = Number(maxWidth) > 0 ? Number(maxWidth) : w;
+  const scale = Math.min(1, limit / w);
+  return {
+    width: Math.max(1, Math.round(w * scale)),
+    height: Math.max(1, Math.round(h * scale)),
+  };
+}
+
+// True when an RGBA pixel buffer is (almost) entirely black or transparent:
+// a fade-in frame, or a video track the browser could not decode (the
+// canvas then stays empty).
+export function isBlankFrame(data, threshold = 16) {
+  if (!data || !data.length) return true;
+  for (let i = 0; i + 3 < data.length; i += 4) {
+    if (data[i + 3] === 0) continue;
+    if (data[i] >= threshold || data[i + 1] >= threshold || data[i + 2] >= threshold) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// "clip.final.mp4" → "clip.final-thumbnail.jpg".
+export function thumbnailNameFor(file) {
+  const name = String(file?.name || "").trim();
+  const dot = name.lastIndexOf(".");
+  const stem = (dot > 0 ? name.slice(0, dot) : name) || "video";
+  return `${stem}-thumbnail.jpg`;
+}
+
+const CAPTURE_TIMEOUT_MS = 15000;
+const CAPTURE_PROBE_SIZE = 16;
+
+// Grab one frame of a picked video as a JPEG File (for an automatic
+// thumbnail). Resolves null — never throws — when the browser cannot decode
+// the video (e.g. HEVC / MKV on some browsers), every tried frame is black,
+// or nothing happens within the watchdog timeout.
+export function captureVideoFrame(
+  file,
+  { time = 1, maxWidth = 1280, timeoutMs = CAPTURE_TIMEOUT_MS } = {}
+) {
+  return new Promise((resolve) => {
+    if (typeof document === "undefined" || typeof URL === "undefined" || !file) {
+      resolve(null);
+      return;
+    }
+    if (!baseType(resolveContentType(file, "")).startsWith("video/")) {
+      resolve(null);
+      return;
+    }
+
+    let objectUrl = "";
+    let video = null;
+    let timer = null;
+    let settled = false;
+    let times = [];
+    let attempt = 0;
+
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (video) {
+        video.onloadedmetadata = null;
+        video.onseeked = null;
+        video.onerror = null;
+        try {
+          video.removeAttribute("src");
+          video.load();
+        } catch {}
+      }
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      resolve(result || null);
+    };
+
+    const seekNext = () => {
+      if (attempt >= times.length) {
+        finish(null);
+        return;
+      }
+      const target = times[attempt];
+      attempt += 1;
+      try {
+        video.currentTime = target;
+      } catch {
+        finish(null);
+      }
+    };
+
+    const frameIsBlank = () => {
+      const probe = document.createElement("canvas");
+      probe.width = CAPTURE_PROBE_SIZE;
+      probe.height = CAPTURE_PROBE_SIZE;
+      const ctx = probe.getContext("2d");
+      if (!ctx) return false;
+      ctx.drawImage(video, 0, 0, CAPTURE_PROBE_SIZE, CAPTURE_PROBE_SIZE);
+      return isBlankFrame(ctx.getImageData(0, 0, CAPTURE_PROBE_SIZE, CAPTURE_PROBE_SIZE).data);
+    };
+
+    const draw = () => {
+      if (settled) return;
+      try {
+        const size = captureSize(video.videoWidth, video.videoHeight, maxWidth);
+        if (!size) {
+          finish(null);
+          return;
+        }
+        if (frameIsBlank()) {
+          seekNext();
+          return;
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = size.width;
+        canvas.height = size.height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx || typeof canvas.toBlob !== "function") {
+          finish(null);
+          return;
+        }
+        ctx.drawImage(video, 0, 0, size.width, size.height);
+        canvas.toBlob(
+          (blob) => {
+            if (!blob || !blob.size) {
+              finish(null);
+              return;
+            }
+            const name = thumbnailNameFor(file);
+            const lastModified = Date.now();
+            try {
+              finish(new File([blob], name, { type: "image/jpeg", lastModified }));
+            } catch {
+              // Very old browsers without the File constructor.
+              finish(Object.assign(blob, { name, lastModified }));
+            }
+          },
+          "image/jpeg",
+          0.85
+        );
+      } catch {
+        finish(null);
+      }
+    };
+
+    try {
+      objectUrl = URL.createObjectURL(file);
+      video = document.createElement("video");
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = "auto";
+      timer = setTimeout(() => finish(null), timeoutMs);
+      video.onerror = () => finish(null);
+      video.onloadedmetadata = () => {
+        // No picture size = no decodable video track (audio-only, or a codec
+        // this browser cannot show).
+        if (!video.videoWidth || !video.videoHeight) {
+          finish(null);
+          return;
+        }
+        times = captureTimes(video.duration, time);
+        seekNext();
+      };
+      video.onseeked = draw;
+      video.src = objectUrl;
+    } catch {
+      finish(null);
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Upload
 // ---------------------------------------------------------------------------
 

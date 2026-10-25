@@ -125,59 +125,61 @@ export function AboutFounder({ content, headingTag = "h2" }) {
   if (!content.name && story.length === 0 && !content.quote) return null;
   const Heading = headingTag;
   return (
-    <Container className={SECTION_GAP}>
-      {content.eyebrow ? (
-        <FadeIn>
-          <span className="block font-display text-base font-semibold text-neutral-950">
-            {content.eyebrow}
-          </span>
-        </FadeIn>
-      ) : null}
-      <div
-        className={clsx(
-          "grid grid-cols-1 gap-10",
-          content.eyebrow && "mt-8",
-          hasPhoto && "lg:grid-cols-[22rem_minmax(0,1fr)] lg:gap-16"
-        )}
-      >
-        {hasPhoto ? (
+    <div id="founder" className="scroll-mt-20">
+      <Container className={SECTION_GAP}>
+        {content.eyebrow ? (
           <FadeIn>
-            <div
-              className="w-full max-w-[22rem] overflow-hidden rounded-3xl bg-neutral-100"
-              style={{ aspectRatio: "4 / 5" }}
-            >
-              {/* Remote R2 asset — plain <img> like the rest of the admin-driven media. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={content.photo.url}
-                alt={content.photo.alt || content.name || ""}
-                className="h-full w-full object-cover"
-              />
-            </div>
+            <span className="block font-display text-base font-semibold text-neutral-950">
+              {content.eyebrow}
+            </span>
           </FadeIn>
         ) : null}
-        <FadeIn className="min-w-0">
-          {content.name ? (
-            <Heading className="font-display text-3xl font-medium tracking-tight text-neutral-950 [text-wrap:balance] sm:text-4xl">
-              {content.name}
-            </Heading>
+        <div
+          className={clsx(
+            "grid grid-cols-1 gap-10",
+            content.eyebrow && "mt-8",
+            hasPhoto && "lg:grid-cols-[22rem_minmax(0,1fr)] lg:gap-16"
+          )}
+        >
+          {hasPhoto ? (
+            <FadeIn>
+              <div
+                className="w-full max-w-[22rem] overflow-hidden rounded-3xl bg-neutral-100"
+                style={{ aspectRatio: "4 / 5" }}
+              >
+                {/* Remote R2 asset — plain <img> like the rest of the admin-driven media. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={content.photo.url}
+                  alt={content.photo.alt || content.name || ""}
+                  className="h-full w-full object-cover"
+                />
+              </div>
+            </FadeIn>
           ) : null}
-          {content.role ? <p className="mt-1 text-neutral-600">{content.role}</p> : null}
-          {story.length > 0 ? (
-            <div className="mt-6 max-w-2xl space-y-4 text-base text-neutral-600 sm:text-lg">
-              {story.map((paragraph, idx) => (
-                <p key={idx}>{paragraph}</p>
-              ))}
-            </div>
-          ) : null}
-          {content.quote ? (
-            <blockquote className="mt-8 max-w-xl border-l-[3px] border-accent-400 pl-6 font-display text-xl font-medium leading-snug tracking-tight text-neutral-950 sm:text-2xl">
-              “{content.quote}”
-            </blockquote>
-          ) : null}
-        </FadeIn>
-      </div>
-    </Container>
+          <FadeIn className="min-w-0">
+            {content.name ? (
+              <Heading className="font-display text-3xl font-medium tracking-tight text-neutral-950 [text-wrap:balance] sm:text-4xl">
+                {content.name}
+              </Heading>
+            ) : null}
+            {content.role ? <p className="mt-1 text-neutral-600">{content.role}</p> : null}
+            {story.length > 0 ? (
+              <div className="mt-6 max-w-2xl space-y-4 text-base text-neutral-600 sm:text-lg">
+                {story.map((paragraph, idx) => (
+                  <p key={idx}>{paragraph}</p>
+                ))}
+              </div>
+            ) : null}
+            {content.quote ? (
+              <blockquote className="mt-8 max-w-xl border-l-[3px] border-accent-400 pl-6 font-display text-xl font-medium leading-snug tracking-tight text-neutral-950 sm:text-2xl">
+                “{content.quote}”
+              </blockquote>
+            ) : null}
+          </FadeIn>
+        </div>
+      </Container>
+    </div>
   );
 }
 
@@ -188,8 +190,9 @@ export function AboutValues({ content, headingTag = "h2" }) {
   const hasIntro = Boolean(content.eyebrow || content.title || content.description);
   return (
     <div
+      id="values"
       className={clsx(
-        "mt-24 rounded-4xl py-24 sm:mt-32 lg:mt-40 lg:py-32",
+        "mt-24 scroll-mt-20 rounded-4xl py-24 sm:mt-32 lg:mt-40 lg:py-32",
         invert ? "bg-neutral-950" : "bg-neutral-50"
       )}
     >
@@ -241,7 +244,7 @@ export function AboutProcess({ content, headingTag = "h2" }) {
       ? "sm:grid-cols-3"
       : "sm:grid-cols-2";
   return (
-    <section className={SECTION_GAP}>
+    <section id="process" className={clsx(SECTION_GAP, "scroll-mt-20")}>
       <Intro
         eyebrow={content.eyebrow}
         title={content.title}
@@ -285,7 +288,7 @@ export function AboutTestimonials({ content, headingTag = "h2" }) {
   if (items.length === 0) return null;
   const hasIntro = Boolean(content.eyebrow || content.title || content.description);
   return (
-    <section className={SECTION_GAP}>
+    <section id="testimonials" className={clsx(SECTION_GAP, "scroll-mt-20")}>
       <Intro
         eyebrow={content.eyebrow}
         title={content.title}
@@ -345,7 +348,7 @@ export function AboutCta({ content, shared, social, headingTag = "h2" }) {
   }
 
   return (
-    <div id="contact">
+    <div id="contact" className="scroll-mt-20">
       <Container className={SECTION_GAP}>
         <FadeIn
           className={clsx(
@@ -453,7 +456,12 @@ export function WhoWeAreSections({ site }) {
           <AboutTestimonials key={key} content={about.testimonials} headingTag={headingTag} />
         );
       case "services":
-        return <Services key={key} content={site.services} />;
+        // Bare wrapper = anchor only; margins collapse through it.
+        return (
+          <div key={key} id="services" className="scroll-mt-20">
+            <Services content={site.services} />
+          </div>
+        );
       case "cta":
         return (
           <AboutCta

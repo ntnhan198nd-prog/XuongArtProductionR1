@@ -55,8 +55,9 @@ export async function POST(request) {
     let created = null;
 
     await updateStore((store) => {
-      const payload = normalizeImageProjectPayload(body, store);
       const id = store.nextImageProjectId;
+      // See POST /api/admin/projects: unique slug, "anh-<id>" when empty.
+      const payload = normalizeImageProjectPayload(body, store, null, { id });
       store.nextImageProjectId += 1;
       created = { id, ...payload };
       store.imageProjects = insertAtOrder(store.imageProjects, created, payload.order);

@@ -54,8 +54,11 @@ export async function POST(request) {
     let created = null;
 
     await updateStore((store) => {
-      const payload = normalizeProjectPayload(body, store);
       const id = store.nextProjectId;
+      // The id is passed so an empty slug falls back to "video-<id>"; the
+      // slug is made unique among the other videos ("-2", "-3", …). The
+      // response returns the final slug for the form to show.
+      const payload = normalizeProjectPayload(body, store, null, { id });
       store.nextProjectId += 1;
       created = { id, ...payload };
       store.projects = insertAtOrder(store.projects, created, payload.order);

@@ -69,20 +69,29 @@ export default async function Home() {
         <ProjectsGallery />
       </div>
 
-      <Stats content={site.stats} />
-      <Clients content={site.clients} />
+      {/* Bare wrappers only carry the anchors the admin "Mở trang ↗" links
+          jump to; no box styles, so the children's margins collapse
+          through and the layout is unchanged. */}
+      <div id="stats" className="scroll-mt-20">
+        <Stats content={site.stats} />
+      </div>
+      <div id="clients" className="scroll-mt-20">
+        <Clients content={site.clients} />
+      </div>
 
-      <Container className="mt-20 pb-24 sm:mt-28 sm:pb-32 md:pb-40">
-        <FadeIn className="mx-auto max-w-3xl text-center">
-          <h2 className="font-display text-4xl font-medium tracking-tight text-neutral-950 [text-wrap:balance] sm:text-5xl md:text-6xl">
-            {site.intro.headingMain}{" "}
-            <span className="text-accent-400">{site.intro.headingAccent}</span>
-          </h2>
-          <p className="mx-auto mt-6 max-w-2xl text-base text-neutral-600 sm:text-lg">
-            {site.intro.description}
-          </p>
-        </FadeIn>
-      </Container>
+      <div id="intro" className="scroll-mt-20">
+        <Container className="mt-20 pb-24 sm:mt-28 sm:pb-32 md:pb-40">
+          <FadeIn className="mx-auto max-w-3xl text-center">
+            <h2 className="font-display text-4xl font-medium tracking-tight text-neutral-950 [text-wrap:balance] sm:text-5xl md:text-6xl">
+              {site.intro.headingMain}{" "}
+              <span className="text-accent-400">{site.intro.headingAccent}</span>
+            </h2>
+            <p className="mx-auto mt-6 max-w-2xl text-base text-neutral-600 sm:text-lg">
+              {site.intro.description}
+            </p>
+          </FadeIn>
+        </Container>
+      </div>
     </main>
   );
 }

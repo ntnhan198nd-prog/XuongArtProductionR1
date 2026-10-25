@@ -62,11 +62,89 @@ function normalizeAssetList(input, store, now) {
     .filter(Boolean);
 }
 
-export function normalizeProjectPayload(payload, store, currentItem = null) {
+// ---------------------------------------------------------------------------
+// Slugs
+// ---------------------------------------------------------------------------
+
+// slugify() strips accents through NFD, but "đ"/"Đ" do not decompose, so
+// "Đà Lạt" used to become "a-lat". Map them to "d" first.
+export function toSlug(value = "") {
+  return slugify(String(value ?? "").replace(/đ/g, "d").replace(/Đ/g, "D"));
+}
+
+// Slug a stored record is reachable under (the public serializers fall back
+// to the title when the stored slug is empty).
+function effectiveSlug(item) {
+  return String(item?.slug || "") || slugify(item?.title || "");
+}
+
+// `baseSlug` if no OTHER record of the collection uses it, else the first
+// free "<baseSlug>-2", "<baseSlug>-3", … `excludeId` is the record being
+// edited (its own slug never counts as taken).
+export function makeUniqueSlug(baseSlug, items = [], { excludeId = null } = {}) {
+  const base = String(baseSlug || "").trim();
+  if (!base) return "";
+  const excluded =
+    excludeId === null || excludeId === undefined || excludeId === ""
+      ? null
+      : Number(excludeId);
+  const taken = new Set();
+  for (const item of Array.isArray(items) ? items : []) {
+    if (!item) continue;
+    if (excluded !== null && Number(item.id) === excluded) continue;
+    const slug = effectiveSlug(item);
+    if (slug) taken.add(slug);
+  }
+  if (!taken.has(base)) return base;
+  let suffix = 2;
+  while (taken.has(`${base}-${suffix}`)) suffix += 1;
+  return `${base}-${suffix}`;
+}
+
+// Final slug for a create / update:
+//   requested slug → else the title → else the record's current slug →
+//   else "<fallbackPrefix>-<id>", then made unique within `items`.
+// A record that keeps its current slug unchanged is left alone even when a
+// legacy duplicate exists elsewhere: renaming it on an unrelated edit would
+// silently move a live public URL. "Current" is the slug the public site
+// uses today: for a legacy record with an empty stored slug that is
+// slugify(title) (no "đ" mapping), so an untouched edit keeps that URL.
+export function resolveRecordSlug({
+  requested,
+  title,
+  currentItem = null,
+  id = null,
+  items = [],
+  fallbackPrefix = "video",
+} = {}) {
+  const recordId = id ?? currentItem?.id ?? null;
+  const candidate =
+    toSlug(normalizeText(requested)) ||
+    toSlug(normalizeText(title)) ||
+    toSlug(normalizeText(currentItem?.slug)) ||
+    (recordId !== null && recordId !== undefined && recordId !== ""
+      ? `${fallbackPrefix}-${recordId}`
+      : fallbackPrefix);
+  if (currentItem && candidate === effectiveSlug(currentItem)) return candidate;
+  return makeUniqueSlug(candidate, items, { excludeId: recordId });
+}
+
+// `options.id` = id the record is (or will be) saved under; the create
+// routes pass the id they are about to assign so an empty slug can fall
+// back to "video-<id>".
+export function normalizeProjectPayload(payload, store, currentItem = null, options = {}) {
   const now = new Date().toISOString();
 
   const title = normalizeText(payload.title, currentItem?.title || "");
-  const slug = slugify(normalizeText(payload.slug) || title || currentItem?.slug || "");
+  // Unique within store.projects (another video's slug gets "-2", "-3", …).
+  const slug = resolveRecordSlug({
+    requested: payload.slug,
+    title,
+    currentItem,
+    id: options?.id ?? currentItem?.id ?? null,
+    items: store?.projects,
+    fallbackPrefix: "video",
+  });
   const featured = normalizeBoolean(payload.featured ?? currentItem?.featured);
 
   return {
@@ -107,11 +185,20 @@ export function normalizeProjectPayload(payload, store, currentItem = null) {
   };
 }
 
-export function normalizeImageProjectPayload(payload, store, currentItem = null) {
+// `options.id`: see normalizeProjectPayload.
+export function normalizeImageProjectPayload(payload, store, currentItem = null, options = {}) {
   const now = new Date().toISOString();
 
   const title = normalizeText(payload.title, currentItem?.title || "");
-  const slug = slugify(normalizeText(payload.slug) || title || currentItem?.slug || "");
+  // Unique within store.imageProjects; empty → "anh-<id>".
+  const slug = resolveRecordSlug({
+    requested: payload.slug,
+    title,
+    currentItem,
+    id: options?.id ?? currentItem?.id ?? null,
+    items: store?.imageProjects,
+    fallbackPrefix: "anh",
+  });
 
   return {
     title,

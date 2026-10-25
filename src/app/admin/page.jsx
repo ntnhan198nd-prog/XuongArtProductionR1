@@ -8,12 +8,12 @@ import ProjectsAdminPanel from "@/components/admin/ProjectsAdminPanel";
 import SiteContentAdminPanel from "@/components/admin/SiteContentAdminPanel";
 import { fetchJson, readJsonSafe } from "@/lib/apiClient";
 
-// Tab order is fixed by the user's spec: Site Content first, then video
+// Tab order is fixed by the user's spec: "Nội dung trang" first, then video
 // admin sections grouped by purpose. The "projects" key from the previous
 // 2-tab layout is kept as a soft alias so old bookmarks (?tab=projects)
 // land on the showreel+featured tab instead of 404-ing.
 const MAIN_TABS = [
-  { key: "content", label: "Site Content" },
+  { key: "content", label: "Nội dung trang" },
   { key: "showreel-featured", label: "Video Showreel + Nổi Bật" },
   { key: "other-videos", label: "Video Khác" },
   { key: "images", label: "Dự Án Ảnh" },
@@ -45,6 +45,28 @@ function resolveTabKey(rawKey) {
   return isValidTab(aliased) ? aliased : null;
 }
 
+// Show/hide password toggle icon (inline so the login screen needs no icon
+// package). `crossed` = password currently visible → offer "hide".
+function EyeIcon({ crossed = false }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+      <circle cx="12" cy="12" r="3" />
+      {crossed ? <path d="M4 4l16 16" /> : null}
+    </svg>
+  );
+}
+
 export default function AdminPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -53,9 +75,15 @@ export default function AdminPage() {
   const [authenticated, setAuthenticated] = useState(false);
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [loggingIn, setLoggingIn] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  // Bumped after a failed login; the effect below selects the password so
+  // the owner can retype it straight away (runs after the input re-enables).
+  const [selectPasswordToken, setSelectPasswordToken] = useState(0);
+  const passwordInputRef = useRef(null);
 
   // Sync the active tab with the ?tab= query param so direct links and
-  // back/forward navigation both work. Default to Site Content on mount.
+  // back/forward navigation both work. Default to "Nội dung trang" on mount.
   const tabFromUrl = searchParams?.get("tab");
   const initialTab = resolveTabKey(tabFromUrl) || DEFAULT_TAB;
   const [tab, setTab] = useState(initialTab);
@@ -98,7 +126,7 @@ export default function AdminPage() {
     (nextTab) => {
       if (nextTab === tab) return;
       // No confirm needed when switching tabs — both panels stay mounted, so
-      // unsaved edits in Site Content are preserved when you come back.
+      // unsaved edits in "Nội dung trang" are preserved when you come back.
       setTab(nextTab);
       const params = new URLSearchParams(searchParams?.toString() || "");
       if (nextTab === DEFAULT_TAB) params.delete("tab");
@@ -151,9 +179,20 @@ export default function AdminPage() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [contentDirty]);
 
+  useEffect(() => {
+    if (!selectPasswordToken) return;
+    const input = passwordInputRef.current;
+    if (input && !input.disabled) {
+      input.focus();
+      input.select();
+    }
+  }, [selectPasswordToken]);
+
   const handleLogin = async (event) => {
     event.preventDefault();
+    if (loggingIn) return;
     setLoginError("");
+    setLoggingIn(true);
     try {
       await fetchJson(
         "/api/admin/login",
@@ -166,10 +205,15 @@ export default function AdminPage() {
       );
       setAuthenticated(true);
       setLoginPassword("");
+      setShowPassword(false);
     } catch (loginErr) {
-      // A wrong password answers 401 {error:"Invalid credentials."} — that
-      // server message wins over the generic "session expired" status hint.
+      // A wrong password answers 401 {error:"Sai mật khẩu."} and a lockout
+      // 429 {error:"Bạn nhập sai quá nhiều lần…"} — those server messages
+      // win over the generic status hints.
       setLoginError(loginErr.message);
+      setSelectPasswordToken((n) => n + 1);
+    } finally {
+      setLoggingIn(false);
     }
   };
 
@@ -198,7 +242,7 @@ export default function AdminPage() {
     return (
       <main className="bg-white text-black">
         <Container className="py-20">
-          <p className="text-sm text-gray-600">Checking admin session...</p>
+          <p className="text-sm text-gray-600">Đang kiểm tra phiên đăng nhập…</p>
         </Container>
       </main>
     );
@@ -209,31 +253,62 @@ export default function AdminPage() {
       <main className="bg-white text-black">
         <Container className="py-20">
           <div className="mx-auto max-w-md rounded-2xl border border-gray-200 p-6">
-            <h1 className="text-2xl font-semibold">Admin Login</h1>
+            <h1 className="text-2xl font-semibold">Đăng nhập quản trị</h1>
             <p className="mt-2 text-sm text-gray-600">
-              Đăng nhập để quản lý dự án, showreel và nội dung tĩnh trên website.
+              Đăng nhập để sửa video, hình ảnh và nội dung trên website.
             </p>
 
             <form onSubmit={handleLogin} className="mt-6 space-y-4">
               <div>
-                <label className="mb-2 block text-sm font-medium">Password</label>
-                <input
-                  type="password"
-                  value={loginPassword}
-                  onChange={(event) => setLoginPassword(event.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-black focus:border-black focus:outline-none"
-                  placeholder="Nhập ADMIN_PASSWORD"
-                  required
-                />
+                <label htmlFor="admin-password" className="mb-2 block text-sm font-medium">
+                  Mật khẩu
+                </label>
+                <div className="relative">
+                  <input
+                    id="admin-password"
+                    ref={passwordInputRef}
+                    type={showPassword ? "text" : "password"}
+                    name="password"
+                    autoComplete="current-password"
+                    autoFocus
+                    value={loginPassword}
+                    onChange={(event) => {
+                      setLoginPassword(event.target.value);
+                      if (loginError) setLoginError("");
+                    }}
+                    disabled={loggingIn}
+                    aria-invalid={loginError ? true : undefined}
+                    aria-describedby={loginError ? "admin-login-error" : undefined}
+                    className="w-full rounded-lg border border-gray-300 py-2 pl-3 pr-11 text-sm text-black focus:border-black focus:outline-none disabled:bg-gray-50 disabled:text-gray-500"
+                    placeholder="Nhập mật khẩu quản trị"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((shown) => !shown)}
+                    disabled={loggingIn}
+                    aria-label={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+                    aria-pressed={showPassword}
+                    title={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+                    className="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-lg text-gray-500 hover:text-black disabled:opacity-40"
+                  >
+                    <EyeIcon crossed={showPassword} />
+                  </button>
+                </div>
               </div>
 
-              {loginError ? <p className="text-sm text-red-600">{loginError}</p> : null}
+              {loginError ? (
+                <p id="admin-login-error" role="alert" className="text-sm text-red-600">
+                  {loginError}
+                </p>
+              ) : null}
 
               <button
                 type="submit"
-                className="rounded-lg bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+                disabled={loggingIn}
+                className="rounded-lg bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Login
+                {loggingIn ? "Đang đăng nhập…" : "Đăng nhập"}
               </button>
             </form>
           </div>
@@ -247,9 +322,9 @@ export default function AdminPage() {
       <Container className="py-12">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-3xl font-semibold">Admin</h1>
+            <h1 className="text-3xl font-semibold">Quản trị website</h1>
             <p className="mt-1 text-sm text-gray-600">
-              Quản lý dự án, showreel và nội dung tĩnh trên website.
+              Sửa video, hình ảnh và nội dung trên website.
             </p>
           </div>
           <div className="flex gap-2">
@@ -258,7 +333,7 @@ export default function AdminPage() {
               onClick={handleLogout}
               className="rounded-lg border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50"
             >
-              Logout
+              Đăng xuất
             </button>
           </div>
         </div>
@@ -268,7 +343,7 @@ export default function AdminPage() {
         <div className="mt-6 overflow-x-auto">
         <div
           role="tablist"
-          aria-label="Admin sections"
+          aria-label="Các mục quản trị"
           className="flex w-fit min-w-full gap-1 border-b border-gray-200 sm:gap-2"
         >
           {MAIN_TABS.map((item) => {
@@ -303,7 +378,10 @@ export default function AdminPage() {
         <div className="mt-2">
           {visitedTabs.has("content") ? (
             <div hidden={tab !== "content"}>
-              <SiteContentAdminPanel onDirtyChange={setContentDirty} />
+              <SiteContentAdminPanel
+                active={tab === "content"}
+                onDirtyChange={setContentDirty}
+              />
             </div>
           ) : null}
           {visitedTabs.has("showreel-featured") ? (

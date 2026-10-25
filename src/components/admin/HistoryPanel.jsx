@@ -627,7 +627,7 @@ export default function HistoryPanel({
                     </p>
                     {contentDirty ? (
                       <p className="mt-1.5 font-medium">
-                        Bạn đang có thay đổi chưa lưu ở tab Site Content — các thay đổi
+                        Bạn đang có thay đổi chưa lưu ở tab Nội dung trang — các thay đổi
                         đó sẽ bị mất.
                       </p>
                     ) : null}

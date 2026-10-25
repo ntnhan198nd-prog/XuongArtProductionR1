@@ -9,6 +9,10 @@ import "server-only";
 const WINDOW_MS = 5 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
 
+// Fallback Retry-After (seconds) when a lock has no remaining time on record:
+// a lockout lasts one full window.
+export const LOCKOUT_SECONDS = Math.ceil(WINDOW_MS / 1000);
+
 // ip → { count: number, firstAt: number, lockedUntil: number | null }
 const attempts = new Map();
 
@@ -49,6 +53,14 @@ export function recordFailedLogin(ip) {
 
 export function resetLoginAttempts(ip) {
   attempts.delete(ip);
+}
+
+// Whole minutes to show in the "try again in N minutes" message, rounded
+// up and never below 1 (a 20-second wait still reads "1 phút").
+export function retryAfterMinutes(retryAfterSeconds) {
+  const seconds = Number(retryAfterSeconds);
+  if (!Number.isFinite(seconds) || seconds <= 0) return 1;
+  return Math.max(1, Math.ceil(seconds / 60));
 }
 
 // Best-effort client IP extraction for rate-limit keying.

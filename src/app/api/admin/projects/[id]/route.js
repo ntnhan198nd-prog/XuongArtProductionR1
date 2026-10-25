@@ -54,9 +54,11 @@ export async function PUT(request, { params }) {
 
       oldKeys = collectAssetKeysFromProject(store.projects[index]);
 
+      // The slug is made unique among the OTHER videos (this one excluded);
+      // the response carries the final slug.
       updated = {
         id,
-        ...normalizeProjectPayload(body, store, store.projects[index]),
+        ...normalizeProjectPayload(body, store, store.projects[index], { id }),
       };
       store.projects = replaceAtOrder(store.projects, updated, updated.order);
       updated = store.projects.find((item) => Number(item.id) === id) || updated;

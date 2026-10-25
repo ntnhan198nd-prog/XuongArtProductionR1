@@ -8,12 +8,15 @@ import AutocompleteInput from "@/components/admin/AutocompleteInput";
 import {
   ACCEPT,
   UploadError,
+  captureVideoFrame,
   cleanupUploadedKeys,
   cleanupUploadedKeysOnUnload,
   formatBytes,
+  formatClockDuration,
   formatDuration,
   formatUploadProgress,
   getFileMetadata,
+  orientationFromSize,
   resolveContentType,
   runUploadQueue,
   uploadFile,
@@ -22,8 +25,8 @@ import {
 import { fetchJson } from "@/lib/apiClient";
 
 const TABS = [
-  { key: "projects", label: "Video Projects" },
-  { key: "image-projects", label: "Image Projects" },
+  { key: "projects", label: "Dự án video" },
+  { key: "image-projects", label: "Dự án ảnh" },
 ];
 
 const EMPTY_FORM = {
@@ -31,8 +34,12 @@ const EMPTY_FORM = {
   slug: "",
   client: "",
   tagline: "",
+  // Chips picked in "Thể loại". The legacy single `category` field is not
+  // edited directly: the stored value is kept while it is still among the
+  // chips, else categories[0] is saved (see mainCategoryFor; the
+  // /videos/<slug> page shows it above the title; both galleries filter on it).
+  categories: [],
   category: "",
-  categoriesText: "",
   description: "",
   fullDescription: "",
   duration: "",
@@ -309,8 +316,12 @@ function StarRatingDisplay({ value = 0 }) {
   );
 }
 
+// Same rules as the server (lib/contentAdmin toSlug): "đ"/"Đ" do not
+// decompose under NFD, so they are mapped to "d" first.
 function slugify(value = "") {
   return String(value)
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
@@ -321,15 +332,360 @@ function slugify(value = "") {
     .replace(/^-|-$/g, "");
 }
 
-function normalizeCategories(value = "") {
-  return value
+// Slug the public site falls back to for a record with an empty stored slug
+// (lib/contentStore slugify: no "đ" mapping, so "Đà Lạt" → "a-lat"). Used to
+// show / keep the live URL of such legacy records.
+function publicSlugify(value = "") {
+  return String(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+// Create-form defaults for the admin section: a video added from the
+// "Video Showreel + Nổi Bật" section starts as featured.
+function emptyFormFor(mode) {
+  return { ...EMPTY_FORM, featured: mode === "showreel-featured" };
+}
+
+// Note added to the "saved" message when the saved video belongs to the
+// other video section (so it is not in the list on screen).
+function savedSectionNote(mode, savedItem) {
+  if (!savedItem) return "";
+  if (mode === "showreel-featured" && !savedItem.featured) {
+    return "Video này chưa bật “Nổi bật” nên nằm ở mục Video Khác.";
+  }
+  if (mode === "other-videos" && savedItem.featured) {
+    return "Video này đã bật “Nổi bật” nên nằm ở mục Video Showreel + Nổi Bật.";
+  }
+  return "";
+}
+
+// --- Auto-fill from the picked video ----------------------------------------
+
+// Patch putting back what orientation / duration held before a pick filled
+// them: only for fields the owner did not touch and that still hold the
+// auto-filled value. `base` = values before the first auto-fill (null when
+// nothing was auto-filled yet).
+function revertAutoFilledFields(form, autoFilled, base, touched) {
+  const patch = {};
+  if (!base) return patch;
+  ["orientation", "duration"].forEach((field) => {
+    if (touched?.[field]) return;
+    const auto = autoFilled?.[field];
+    if (!auto || form?.[field] !== auto) return;
+    if (base[field] !== undefined && base[field] !== auto) patch[field] = base[field];
+  });
+  return patch;
+}
+
+// --- Categories ("Thể loại" chips) ------------------------------------------
+
+// Trimmed, de-duplicated list (first spelling wins).
+function cleanCategoryList(list) {
+  const out = [];
+  (Array.isArray(list) ? list : []).forEach((item) => {
+    const text = String(item ?? "").replace(/\s+/g, " ").trim();
+    if (text && !out.includes(text)) out.push(text);
+  });
+  return out;
+}
+
+// Selected chips for a stored record. A legacy single `category` that is not
+// in `categories` is put FIRST so it is not silently dropped; the order of a
+// list that already holds it is kept (the public cards show the chips in
+// order) and mainCategoryFor keeps it as the saved main category.
+function categoriesFromItem(item) {
+  const list = cleanCategoryList(item?.categories);
+  const legacy = String(item?.category ?? "").trim();
+  if (legacy && !list.includes(legacy)) return [legacy, ...list];
+  return list;
+}
+
+// Legacy single `category` to save: the stored one while it is still picked
+// (an untouched edit then never changes what /videos/<slug> shows), else the
+// first chip.
+function mainCategoryFor(categories, storedCategory) {
+  const list = cleanCategoryList(categories);
+  const stored = String(storedCategory ?? "").trim();
+  if (stored && list.includes(stored)) return stored;
+  return list[0] || "";
+}
+
+function toggleCategory(selected, category) {
+  const list = cleanCategoryList(selected);
+  return list.includes(category)
+    ? list.filter((item) => item !== category)
+    : [...list, category];
+}
+
+// Add free text ("TVC, MV" adds both). A name matching a known category
+// apart from upper/lower case reuses the known spelling: the public filter
+// compares names exactly. Returns the same array when nothing was added.
+function addCategories(selected, raw, known = []) {
+  const list = cleanCategoryList(selected);
+  let changed = false;
+  String(raw ?? "")
     .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
+    .map((part) => part.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .forEach((text) => {
+      const lower = text.toLowerCase();
+      const name = (known || []).find((k) => String(k).toLowerCase() === lower) || text;
+      if (list.some((item) => item.toLowerCase() === String(name).toLowerCase())) return;
+      list.push(String(name));
+      changed = true;
+    });
+  return changed ? list : selected;
+}
+
+// Chips to render: the base list, then selected names that are not in it.
+function mergeChipList(base, selected) {
+  return cleanCategoryList([...(base || []), ...(selected || [])]);
+}
+
+// Selected names the public filter cannot find. An empty / unknown public
+// list means the gallery collects every category by itself → nothing missing.
+function categoriesMissingFromFilter(selected, publicList) {
+  if (!Array.isArray(publicList) || publicList.length === 0) return [];
+  return cleanCategoryList(selected).filter((item) => !publicList.includes(item));
+}
+
+// Note shown after a save when the server had to change the slug.
+function slugChangeNote(sentSlug, savedSlug, isVideo) {
+  const sent = slugify(sentSlug);
+  const saved = String(savedSlug || "");
+  if (!sent || !saved || sent === saved) return "";
+  return isVideo
+    ? `Đường dẫn “${sent}” đã có video khác dùng nên được đổi thành xuongart.com/videos/${saved}.`
+    : `Đường dẫn “${sent}” đã có mục khác dùng nên được đổi thành “${saved}”.`;
+}
+
+const ORIENTATION_LABELS = {
+  landscape: "khung ngang",
+  portrait: "khung dọc",
+  square: "khung vuông",
+};
+
+function isVideoAsset(asset) {
+  if (!asset) return false;
+  if (String(asset.mime || "").startsWith("video/")) return true;
+  return /\.(mp4|m4v|webm|mov|mkv)(\?|#|$)/i.test(String(asset.url || ""));
 }
 
 function baseInputClassName() {
   return "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-black focus:border-black focus:outline-none";
+}
+
+function FieldLabel({ htmlFor, children, badge }) {
+  return (
+    <label htmlFor={htmlFor} className="mb-1.5 flex flex-wrap items-center gap-2 text-sm font-medium">
+      <span>{children}</span>
+      {badge ? (
+        <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-normal text-emerald-700">
+          {badge}
+        </span>
+      ) : null}
+    </label>
+  );
+}
+
+function FormSection({ title, hint, children }) {
+  return (
+    <section className="space-y-4 rounded-xl border border-gray-200 p-4">
+      <div>
+        <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
+        {hint ? <p className="mt-0.5 text-xs text-gray-500">{hint}</p> : null}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+// File picker styled as a button. The real input stays focusable (sr-only)
+// so keyboard users can still open it.
+function FileButton({ children, accept, onChange, disabled = false, inputKey }) {
+  return (
+    <label
+      className={`inline-flex cursor-pointer items-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-800 focus-within:ring-2 focus-within:ring-black/30 hover:bg-gray-50 ${
+        disabled ? "pointer-events-none opacity-50" : ""
+      }`}
+    >
+      {children}
+      <input
+        key={inputKey}
+        type="file"
+        accept={accept}
+        disabled={disabled}
+        onChange={onChange}
+        className="sr-only"
+      />
+    </label>
+  );
+}
+
+// "Đang dùng: clip.mp4 · 120 MB · 1 phút 05 giây" for a saved asset.
+function StoredAssetLine({ asset, label = "Đang dùng" }) {
+  if (!asset?.url) return null;
+  const extra = [formatBytes(asset.size), formatDuration(asset.duration)].filter(Boolean);
+  return (
+    <p className="mt-2 break-all text-xs text-gray-600">
+      {label}:{" "}
+      <a
+        href={asset.url}
+        target="_blank"
+        rel="noreferrer"
+        className="font-medium text-gray-900 underline hover:text-black"
+      >
+        {asset.name || "file đã lưu"}
+      </a>
+      {extra.length > 0 ? ` · ${extra.join(" · ")}` : ""}
+    </p>
+  );
+}
+
+const CHIP_BASE = "rounded-full border px-2.5 py-1 text-xs transition-colors";
+
+// "Thể loại": the public filter list as toggle chips + free text.
+//   publicList: site.portfolio.searchCategories / imageSearchCategories
+//     (null while loading / when it could not be read).
+//   fallback: categories already used by the items (chips when there is no
+//     public list; also the autocomplete suggestions).
+//   main: the chip saved as the main (legacy single) category.
+function CategoryPicker({ value, onChange, publicList, fallback = [], mainHint = "", main = "" }) {
+  const [draft, setDraft] = useState("");
+  const selected = cleanCategoryList(value);
+  const base = Array.isArray(publicList) && publicList.length > 0 ? publicList : fallback;
+  const chips = mergeChipList(base, selected);
+  const missing = categoriesMissingFromFilter(selected, publicList);
+  const known = cleanCategoryList([...(publicList || []), ...fallback]);
+
+  const addDraft = () => {
+    const next = addCategories(selected, draft, known);
+    if (next !== selected) onChange(next);
+    setDraft("");
+  };
+
+  return (
+    <div>
+      {chips.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {chips.map((category) => {
+            const on = selected.includes(category);
+            const notInFilter = missing.includes(category);
+            return (
+              <button
+                key={category}
+                type="button"
+                aria-pressed={on}
+                onClick={() => onChange(toggleCategory(selected, category))}
+                className={`${CHIP_BASE} ${
+                  on
+                    ? notInFilter
+                      ? "border-amber-400 bg-amber-100 text-amber-900"
+                      : "border-black bg-black text-white"
+                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                }`}
+              >
+                {on ? "✓ " : ""}
+                {category}
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="text-xs text-gray-500">Chưa có thể loại nào — gõ ở ô dưới để thêm.</p>
+      )}
+
+      {/* Enter adds the typed name (and must not submit the form). When the
+          autocomplete picked a suggestion with Enter it already called
+          preventDefault, so that Enter only fills the box. */}
+      <div
+        className="mt-2 flex gap-2"
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" || event.defaultPrevented) return;
+          event.preventDefault();
+          addDraft();
+        }}
+      >
+        <div className="min-w-0 flex-1">
+          <AutocompleteInput
+            value={draft}
+            onChange={setDraft}
+            suggestions={known}
+            placeholder="Thêm thể loại khác"
+            emptyHint="Chưa có thể loại nào được dùng trước đó."
+          />
+        </div>
+        <button
+          type="button"
+          onClick={addDraft}
+          disabled={!draft.trim()}
+          className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Thêm
+        </button>
+      </div>
+
+      {missing.length > 0 ? (
+        <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
+          “{missing.join("”, “")}”: Chưa có trong bộ lọc của trang công khai — thêm ở tab Nội dung
+          trang › Bộ lọc thể loại.
+        </p>
+      ) : null}
+      {mainHint && selected.length > 1 && (main || selected[0]) ? (
+        <p className="mt-1.5 text-[11px] text-gray-500">
+          “{main || selected[0]}” {mainHint}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+// Small preview in the list: thumbnail, else a frame of the video, else the
+// first photo.
+function RowThumb({ item }) {
+  const box = "relative h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-gray-100";
+  const thumbUrl = item?.thumbnail?.url || "";
+  const first = Array.isArray(item?.media) ? item.media[0] : item?.media;
+  const mediaUrl = first?.url || "";
+  if (thumbUrl || (mediaUrl && !isVideoAsset(first))) {
+    return (
+      <div className={box}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={thumbUrl || mediaUrl}
+          alt={item?.title || "ảnh thumbnail"}
+          className="h-full w-full object-cover"
+          loading="lazy"
+        />
+      </div>
+    );
+  }
+  if (mediaUrl) {
+    return (
+      <div className={box}>
+        <video
+          src={`${mediaUrl}#t=0.5`}
+          muted
+          playsInline
+          preload="metadata"
+          aria-hidden="true"
+          className="pointer-events-none h-full w-full object-cover"
+        />
+      </div>
+    );
+  }
+  return (
+    <div className={`${box} flex items-center justify-center text-center text-[10px] text-gray-400`}>
+      Chưa có ảnh
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -341,6 +697,22 @@ const LARGE_VIDEO_BYTES = 500 * 1024 * 1024;
 const PHOTO_CONCURRENCY = 3;
 // Max re-render rate of the progress card while bytes are flowing.
 const PROGRESS_THROTTLE_MS = 250;
+// Re-read the public category filters at most this often.
+const PUBLIC_CATEGORIES_MIN_INTERVAL_MS = 5000;
+// A save started while the thumbnail frame is still being captured waits
+// this long for it (the capture itself gives up later on its own).
+const CAPTURE_WAIT_MS = 8000;
+
+// Resolves with `promise`'s value, or `fallback` after `ms`.
+function withTimeLimit(promise, ms, fallback = null) {
+  let timer = null;
+  return Promise.race([
+    Promise.resolve(promise).catch(() => fallback),
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve(fallback), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 // Assets already PUT to R2 by an earlier save attempt that then failed, kept
 // so pressing save again only uploads what is still missing.
@@ -836,11 +1208,12 @@ function UploadProgressSummary({ progress, onCancel }) {
 function toForm(item, tab) {
   return {
     title: item?.title || "",
-    slug: item?.slug || "",
+    // Empty stored slug: show the URL the public site uses today.
+    slug: item?.slug || publicSlugify(item?.title || ""),
     client: item?.client || "",
     tagline: item?.tagline || "",
-    category: item?.category || "",
-    categoriesText: Array.isArray(item?.categories) ? item.categories.join(", ") : "",
+    categories: categoriesFromItem(item),
+    category: String(item?.category ?? "").trim(),
     description: item?.description || "",
     fullDescription: item?.fullDescription || "",
     duration: item?.duration || "",
@@ -889,11 +1262,57 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
   const [errorStatus, setErrorStatus] = useState(null);
 
   const [editingId, setEditingId] = useState(null);
-  const [form, setForm] = useState(EMPTY_FORM);
+  const [form, setForm] = useState(() => emptyFormFor(mode));
   const [mediaFile, setMediaFile] = useState(null);
   const [mediaFiles, setMediaFiles] = useState([]);
   const [previewFile, setPreviewFile] = useState(null);
   const [thumbnailFile, setThumbnailFile] = useState(null);
+
+  // --- Form helpers: auto-fill, slug, categories, validation --------------
+  // Slug follows the title on create until the owner edits the slug box.
+  const [slugTouched, setSlugTouched] = useState(false);
+  // Values the last picked video filled in ({ orientation, duration }); the
+  // "tự điền từ video" badges are shown while the field still holds them.
+  const [autoFilled, setAutoFilled] = useState({ orientation: null, duration: null });
+  const autoFilledRef = useRef({ orientation: null, duration: null });
+  // What orientation / duration held before the first auto-fill of this
+  // form (null = nothing auto-filled yet): restored when the picked video
+  // is removed or replaced by one that gives no value.
+  const autoFillBaseRef = useRef(null);
+  // Fields the owner typed in: auto-fill never overwrites them.
+  const touchedRef = useRef({ orientation: false, duration: false });
+  // JPEG frame captured from the picked video (null when none / failed).
+  const [autoThumbFile, setAutoThumbFile] = useState(null);
+  const [capturingThumb, setCapturingThumb] = useState(false);
+  // Running frame capture (resolves to the frame it set as thumbnail, or
+  // null); a save started meanwhile waits for it briefly.
+  const capturePromiseRef = useRef(null);
+  const [waitingThumb, setWaitingThumb] = useState(false);
+  // Bumped on every main-file pick / form reset: a metadata read or frame
+  // capture that finishes later for an older pick is ignored.
+  const mediaPickTokenRef = useRef(0);
+  // Mirrors read by those async callbacks.
+  const thumbnailFileRef = useRef(null);
+  const autoThumbRef = useRef(null);
+  const storedThumbRef = useRef(null);
+  const thumbnailInputRef = useRef(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  // Blocking problems found when pressing save: { title, media }.
+  const [formErrors, setFormErrors] = useState({});
+  // Public filter lists from site content (read once, never written here).
+  // null = still loading or could not be read.
+  const [publicCategories, setPublicCategories] = useState(null);
+  // In-row delete confirmation.
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
+  // Failed delete, shown inside that row's confirmation: { id, message, hint }.
+  const [deleteError, setDeleteError] = useState(null);
+  // Row "Xoá" buttons (focus goes back there when the confirmation closes)
+  // and the open confirmation's "Huỷ" button (focused when it opens).
+  const deleteButtonRefs = useRef(new Map());
+  const confirmCancelRef = useRef(null);
+  // Root element: used to notice when the (kept-mounted) panel is shown again.
+  const rootRef = useRef(null);
 
   // --- Upload state (see UploadProgressCard / EMPTY_UPLOAD_CACHE) ---------
   const [uploadProgress, setUploadProgress] = useState(null);
@@ -930,7 +1349,14 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
     mode === "other-videos" ? "rating-desc" : "order"
   );
 
-  const tabLabel = useMemo(() => TABS.find((item) => item.key === tab)?.label || tab, [tab]);
+  const isVideoTab = tab === "projects";
+  const listTitle =
+    mode === "showreel-featured"
+      ? "Video nổi bật"
+      : mode === "other-videos"
+      ? "Video khác"
+      : TABS.find((item) => item.key === tab)?.label || tab;
+  const createLabel = isVideoTab ? "Thêm video mới" : "Thêm dự án ảnh mới";
 
   const suggestions = useMemo(() => {
     const buckets = {
@@ -1014,6 +1440,96 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
+
+  useEffect(() => {
+    thumbnailFileRef.current = thumbnailFile;
+  }, [thumbnailFile]);
+  useEffect(() => {
+    autoThumbRef.current = autoThumbFile;
+  }, [autoThumbFile]);
+  useEffect(() => {
+    storedThumbRef.current = form.thumbnail;
+  }, [form.thumbnail]);
+
+  // Public category filters (Nội dung trang › Bộ lọc). Read on mount and
+  // again whenever the form is (re)started or the panel is shown again
+  // (the admin shell keeps visited sections mounted, just hidden), so a
+  // filter added in "Nội dung trang" is picked up. Never written here. A
+  // failure is silent: the chips then fall back to categories in use.
+  const aliveRef = useRef(true);
+  const categoriesLoadRef = useRef({ at: 0, seq: 0 });
+  const loadPublicCategories = useCallback(({ force = false } = {}) => {
+    const state = categoriesLoadRef.current;
+    const now = Date.now();
+    if (!force && now - state.at < PUBLIC_CATEGORIES_MIN_INTERVAL_MS) return;
+    state.at = now;
+    state.seq += 1;
+    const seq = state.seq;
+    const clean = (list) =>
+      Array.isArray(list) ? cleanCategoryList(list.filter((item) => typeof item === "string")) : [];
+    fetchJson(
+      "/api/admin/site-content",
+      { cache: "no-store" },
+      { fallbackError: "Không đọc được bộ lọc thể loại" }
+    )
+      .then((payload) => {
+        if (!aliveRef.current || categoriesLoadRef.current.seq !== seq) return;
+        const portfolio = payload?.data?.portfolio || {};
+        setPublicCategories({
+          videos: clean(portfolio.searchCategories),
+          images: clean(portfolio.imageSearchCategories),
+        });
+      })
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    aliveRef.current = true;
+    loadPublicCategories({ force: true });
+    return () => {
+      aliveRef.current = false;
+    };
+  }, [loadPublicCategories]);
+  // Shown again after being hidden (other admin section, other browser tab).
+  useEffect(() => {
+    const node = rootRef.current;
+    let wasVisible = true;
+    let observer = null;
+    if (node && typeof IntersectionObserver === "function") {
+      observer = new IntersectionObserver((entries) => {
+        const visible = entries.some((entry) => entry.isIntersecting);
+        if (visible && !wasVisible) loadPublicCategories();
+        wasVisible = visible;
+      });
+      observer.observe(node);
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") loadPublicCategories();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      observer?.disconnect();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [loadPublicCategories]);
+
+  // Delete confirmation opened, or a delete failed: put the keyboard focus
+  // on its "Huỷ" button.
+  useEffect(() => {
+    if (confirmDeleteId === null) return;
+    confirmCancelRef.current?.focus?.();
+  }, [confirmDeleteId, deleteError]);
+
+  // Preview of the picked thumbnail (object URL revoked when it changes).
+  const thumbnailPreviewUrl = useMemo(
+    () => (thumbnailFile ? URL.createObjectURL(thumbnailFile) : ""),
+    [thumbnailFile]
+  );
+  useEffect(
+    () => () => {
+      if (thumbnailPreviewUrl) URL.revokeObjectURL(thumbnailPreviewUrl);
+    },
+    [thumbnailPreviewUrl]
+  );
 
   const writeUploadCache = useCallback((updater) => {
     const next = typeof updater === "function" ? updater(uploadCacheRef.current) : updater;
@@ -1109,15 +1625,32 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
     setFileInputsKey((value) => value + 1);
   };
 
+  // Forget auto-fill / slug / validation state of the previous form.
+  const resetFormHelpers = () => {
+    mediaPickTokenRef.current += 1;
+    touchedRef.current = { orientation: false, duration: false };
+    thumbnailFileRef.current = null;
+    autoThumbRef.current = null;
+    autoFillBaseRef.current = null;
+    autoFilledRef.current = { orientation: null, duration: null };
+    capturePromiseRef.current = null;
+    setAutoFilled({ orientation: null, duration: null });
+    setAutoThumbFile(null);
+    setCapturingThumb(false);
+    setSlugTouched(false);
+    setFormErrors({});
+  };
+
   const resetEditor = () => {
     discardUploadCache();
     setEditingId(null);
-    setForm(EMPTY_FORM);
+    setForm(emptyFormFor(mode));
     setMediaFile(null);
     setMediaFiles([]);
     setPreviewFile(null);
     setThumbnailFile(null);
     setError("");
+    resetFormHelpers();
     resetUploadUi();
   };
 
@@ -1136,23 +1669,141 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
     thumbnail: setThumbnailFile,
   };
 
-  // Single-file inputs: validate the type, and if the slot's file changes,
-  // delete the copy an earlier failed save already uploaded for it.
-  const pickFile = (slot, kind, event) => {
-    const picked = event.target.files?.[0] || null;
-    let next = picked;
-    let problem = "";
-    if (picked) {
-      problem = validateUploadFile(picked, { kind }) || "";
-      if (problem) {
-        next = null;
-        event.target.value = "";
-      }
-    }
-    setPickErrors((prev) => ({ ...prev, [slot]: problem }));
+  // Put a file in a single-file slot. If the slot's file changes, delete the
+  // copy an earlier failed save already uploaded for it.
+  const setSlotFile = (slot, next) => {
+    if (slot === "thumbnail") thumbnailFileRef.current = next;
     const cached = uploadCacheRef.current[slot];
     if (cached && !isSameFile(cached.file, next)) forgetCachedKeys([cached.asset.key]);
     SLOT_SETTERS[slot](next);
+  };
+
+  const setAutoFilledState = (next) => {
+    autoFilledRef.current = next;
+    setAutoFilled(next);
+  };
+
+  const setAutoThumb = (file) => {
+    autoThumbRef.current = file;
+    setAutoThumbFile(file);
+  };
+
+  // Main file picked (or cleared): read its size / duration right away and
+  // fill orientation + duration unless the owner typed them; for a video
+  // with no thumbnail yet, capture a frame as the thumbnail.
+  const applyMediaAutoFill = (file) => {
+    const token = mediaPickTokenRef.current + 1;
+    mediaPickTokenRef.current = token;
+    // A frame captured from the previous video no longer fits.
+    const previousAuto = autoThumbRef.current;
+    if (previousAuto) {
+      if (thumbnailFileRef.current === previousAuto) setSlotFile("thumbnail", null);
+      setAutoThumb(null);
+    }
+    setCapturingThumb(false);
+    capturePromiseRef.current = null;
+    // Values the previous pick filled in no longer apply: put back what the
+    // untouched fields held before, and drop the "tự điền" notes.
+    const previousFilled = autoFilledRef.current;
+    const base = autoFillBaseRef.current;
+    setForm((prev) => {
+      const patch = revertAutoFilledFields(prev, previousFilled, base, touchedRef.current);
+      return Object.keys(patch).length > 0 ? { ...prev, ...patch } : prev;
+    });
+    setAutoFilledState({ orientation: null, duration: null });
+    if (!file) return;
+
+    getFileMetadata(file)
+      .then((meta) => {
+        if (mediaPickTokenRef.current !== token) return;
+        const applied = {};
+        const orientation = orientationFromSize(meta?.width, meta?.height);
+        if (orientation && !touchedRef.current.orientation) applied.orientation = orientation;
+        const duration = isVideoFile(file) ? formatClockDuration(meta?.duration) : "";
+        if (duration && !touchedRef.current.duration) applied.duration = duration;
+        if (Object.keys(applied).length === 0) return;
+        setForm((prev) => {
+          // Remember the values from before the first auto-fill (idempotent,
+          // so a double-invoked updater is harmless).
+          if (!autoFillBaseRef.current) {
+            autoFillBaseRef.current = { orientation: prev.orientation, duration: prev.duration };
+          }
+          return { ...prev, ...applied };
+        });
+        setAutoFilledState({
+          orientation: applied.orientation || null,
+          duration: applied.duration || null,
+        });
+      })
+      .catch(() => {});
+
+    if (!isVideoFile(file) || thumbnailFileRef.current || storedThumbRef.current?.url) return;
+    setCapturingThumb(true);
+    const capture = captureVideoFrame(file)
+      .then((frame) => {
+        if (mediaPickTokenRef.current !== token) return null;
+        setCapturingThumb(false);
+        if (capturePromiseRef.current === capture) capturePromiseRef.current = null;
+        // Nothing to say when the browser could not read a frame. The owner
+        // may also have picked a thumbnail while the frame was captured.
+        if (!frame || thumbnailFileRef.current || storedThumbRef.current?.url) return null;
+        setAutoThumb(frame);
+        setSlotFile("thumbnail", frame);
+        return frame;
+      })
+      .catch(() => {
+        if (mediaPickTokenRef.current === token) {
+          setCapturingThumb(false);
+          if (capturePromiseRef.current === capture) capturePromiseRef.current = null;
+        }
+        return null;
+      });
+    capturePromiseRef.current = capture;
+  };
+
+  // Single-file inputs: validate the type, then fill the slot. The input is
+  // emptied right away so picking the same file again still fires. A wrong
+  // type keeps the previous choice and shows why next to the button.
+  const pickFile = (slot, kind, event) => {
+    const picked = event.target.files?.[0] || null;
+    event.target.value = "";
+    if (!picked) return;
+    const problem = validateUploadFile(picked, { kind }) || "";
+    setPickErrors((prev) => ({ ...prev, [slot]: problem }));
+    if (problem) return;
+    setSlotFile(slot, picked);
+    if (slot === "media") {
+      setFormErrors((prev) => (prev.media ? { ...prev, media: "" } : prev));
+      applyMediaAutoFill(picked);
+    }
+  };
+
+  const clearSlot = (slot) => {
+    setPickErrors((prev) => ({ ...prev, [slot]: "" }));
+    setSlotFile(slot, null);
+    if (slot === "media") applyMediaAutoFill(null);
+  };
+
+  const markTouched = (field) => {
+    touchedRef.current = { ...touchedRef.current, [field]: true };
+  };
+
+  // Create: the slug follows the title until the owner edits the slug box.
+  const slugFollowsTitle = !isEditing && !slugTouched;
+  const handleTitleChange = (value) => {
+    setForm((prev) => ({
+      ...prev,
+      title: value,
+      slug: slugFollowsTitle ? slugify(value) : prev.slug,
+    }));
+    if (formErrors.title && String(value).trim()) {
+      setFormErrors((prev) => ({ ...prev, title: "" }));
+    }
+  };
+  const handleSlugChange = (value) => {
+    setForm((prev) => ({ ...prev, slug: value }));
+    // Emptying the box hands the slug back to the title.
+    setSlugTouched(String(value).trim() !== "");
   };
 
   // Photo list changed: delete uploaded copies of photos that were removed.
@@ -1201,6 +1852,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
   const startCreate = () => {
     if (!confirmDiscardUploads()) return false;
     resetEditor();
+    loadPublicCategories();
     return true;
   };
 
@@ -1214,7 +1866,9 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
     setPreviewFile(null);
     setThumbnailFile(null);
     setError("");
+    resetFormHelpers();
     resetUploadUi();
+    loadPublicCategories();
   };
 
   // Persist a new ordering of `items` to the server. Called by both the
@@ -1283,10 +1937,24 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
     persistOrder(next);
   };
 
-  const handleDelete = async (id) => {
-    const shouldDelete = window.confirm("Xoa muc nay?");
-    if (!shouldDelete) return;
+  // Called from the in-row confirmation ("Xoá “…” (#id)? … [Huỷ] [Xoá]").
+  const openDeleteConfirm = (id) => {
+    setDeleteError(null);
+    setConfirmDeleteId(id);
+  };
 
+  // Close the confirmation and give focus back to the row's "Xoá" button.
+  const closeDeleteConfirm = (id) => {
+    setConfirmDeleteId(null);
+    setDeleteError(null);
+    const button = deleteButtonRefs.current.get(Number(id));
+    if (button) setTimeout(() => button.focus?.(), 0);
+  };
+
+  const handleDelete = async (id) => {
+    if (deletingId !== null) return;
+    setDeletingId(id);
+    setDeleteError(null);
     setError("");
     setErrorHint("");
     setErrorStatus(null);
@@ -1299,23 +1967,46 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
         { method: "DELETE" },
         { fallbackError: "Xoá thất bại" }
       );
+      setConfirmDeleteId(null);
+      if (Number(editingId) === Number(id)) {
+        resetEditor();
+      }
+      // loadItems never throws (it shows its own error).
+      await loadItems(tab);
     } catch (deleteError) {
+      // The confirmation stays open so the owner can retry or cancel; the
+      // reason is shown inside it (the top banner keeps the R2 details).
+      setDeleteError({
+        id,
+        message: deleteError?.message || "Xoá thất bại.",
+        hint: deleteError?.hint || "",
+      });
       setError(deleteError.message);
       setErrorHint(deleteError.hint || "");
       setErrorStatus(deleteError.status ?? null);
-      return;
+    } finally {
+      setDeletingId(null);
     }
-
-    if (Number(editingId) === Number(id)) {
-      resetEditor();
-    }
-
-    await loadItems(tab);
   };
 
   const handleSave = async (event) => {
     event?.preventDefault?.();
     if (saving) return;
+
+    // Blocking checks first (shown next to the fields).
+    const problems = {};
+    if (!String(form.title || "").trim()) problems.title = "Cần nhập tiêu đề.";
+    if (isVideoTab && !isEditing && !mediaFile) {
+      problems.media = "Cần chọn file video chính trước khi lưu.";
+    }
+    setFormErrors(problems);
+    if (problems.media || problems.title) {
+      const target = document.getElementById(problems.media ? "field-media" : "field-title");
+      target?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+      if (!problems.media) document.getElementById("project-title")?.focus?.({ preventScroll: true });
+      return;
+    }
+
     setSaving(true);
     setError("");
     setErrorHint("");
@@ -1323,13 +2014,23 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
     setCancelNotice("");
     setSavedNotice("");
 
+    // The frame for the automatic thumbnail is still being captured: wait
+    // for it briefly so the video is not saved without one.
+    let thumbnailForSave = thumbnailFile;
+    const pendingCapture = capturePromiseRef.current;
+    if (isVideoTab && !thumbnailForSave && !form.thumbnail?.url && pendingCapture) {
+      setWaitingThumb(true);
+      const frame = await withTimeLimit(pendingCapture, CAPTURE_WAIT_MS, null);
+      setWaitingThumb(false);
+      thumbnailForSave = thumbnailFileRef.current || frame || null;
+    }
+
     const controller = new AbortController();
     abortRef.current = controller;
     const { signal } = controller;
     // Keys PUT to R2 during THIS attempt. On Huỷ they are deleted again; on
     // any other failure they stay cached so the next save skips them.
     const attemptKeys = [];
-    const isVideoTab = tab === "projects";
 
     // What has to be uploaded, in order. Image projects: photos, thumbnail.
     const plan = [];
@@ -1343,13 +2044,18 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
         });
       }
       if (previewFile) {
-        plan.push({ slot: "preview", label: "Preview WebM", file: previewFile, folder: "projects" });
+        plan.push({ slot: "preview", label: "Bản WebM", file: previewFile, folder: "projects" });
       }
     } else if (mediaFiles.length > 0) {
       plan.push({ slot: "images", label: "Ảnh dự án", files: [...mediaFiles], folder: "image-projects" });
     }
-    if (thumbnailFile) {
-      plan.push({ slot: "thumbnail", label: "Ảnh thumbnail", file: thumbnailFile, folder: "thumbnails" });
+    if (thumbnailForSave) {
+      plan.push({
+        slot: "thumbnail",
+        label: "Ảnh thumbnail",
+        file: thumbnailForSave,
+        folder: "thumbnails",
+      });
     }
 
     const cacheAtStart = uploadCacheRef.current;
@@ -1414,6 +2120,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
         setForm(toForm(savedItem, tab));
       }
       setSavedNotice(notice);
+      loadPublicCategories();
     };
 
     const uploadSingle = async (index, entry) => {
@@ -1526,13 +2233,17 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
       }
       if (signal.aborted) throw new UploadError("aborted");
 
+      const categories = cleanCategoryList(form.categories);
       const basePayload = {
         title: form.title,
+        // The server makes it unique ("-2", "-3", …) and returns the final one.
         slug: form.slug || slugify(form.title),
         client: form.client,
         tagline: form.tagline,
-        category: form.category,
-        categories: normalizeCategories(form.categoriesText),
+        // Legacy single category kept in step with the chips (the stored
+        // one is kept while it is still picked).
+        category: mainCategoryFor(categories, form.category),
+        categories,
         description: form.description,
         fullDescription: form.fullDescription,
         completionDate: form.completionDate || null,
@@ -1579,9 +2290,17 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
         { fallbackError: "Lưu thất bại" }
       );
 
+      // Image projects have no public page per item: no slug note.
+      const slugNote = isVideoTab
+        ? slugChangeNote(basePayload.slug, responsePayload?.data?.slug, isVideoTab)
+        : "";
+      const savedText = showCard
+        ? "Đã lưu xong ✓ — file đã được tải lên và lưu."
+        : "Đã lưu xong ✓";
+      const sectionNote = isVideoTab ? savedSectionNote(mode, responsePayload?.data) : "";
       await finishSaved(
         responsePayload?.data,
-        showCard ? "Đã lưu xong ✓ — file đã được tải lên và lưu." : "Đã lưu xong ✓"
+        [savedText, slugNote, sectionNote].filter(Boolean).join(" ")
       );
     } catch (saveError) {
       // A pending throttled tick must not resurrect the card after this.
@@ -1668,8 +2387,51 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
     (!mode && tab === "projects") || mode === "showreel-featured";
   const showSubTabs = !mode;
 
+  // --- Values derived for the form ----------------------------------------
+  const publicList = publicCategories
+    ? isVideoTab
+      ? publicCategories.videos
+      : publicCategories.images
+    : null;
+  const effectiveSlug = slugify(form.slug) || slugify(form.title);
+  const ownRecord = isEditing
+    ? items.find((item) => Number(item?.id) === Number(editingId))
+    : null;
+  // Slug the record is reachable under today (empty stored slug → title).
+  const ownStoredSlug = ownRecord
+    ? String(ownRecord.slug || "") || publicSlugify(ownRecord.title || "")
+    : "";
+  // Same rule as the server (lib/contentAdmin resolveRecordSlug).
+  const slugTaken =
+    Boolean(effectiveSlug) &&
+    effectiveSlug !== ownStoredSlug &&
+    items.some(
+      (item) =>
+        item &&
+        Number(item.id) !== Number(editingId) &&
+        (String(item.slug || "") || publicSlugify(item.title || "")) === effectiveSlug
+    );
+  const usingAutoThumb = Boolean(autoThumbFile) && thumbnailFile === autoThumbFile;
+  const thumbnailShownUrl = thumbnailPreviewUrl || form.thumbnail?.url || "";
+  const autoFillParts = [];
+  if (autoFilled.orientation && form.orientation === autoFilled.orientation) {
+    autoFillParts.push(ORIENTATION_LABELS[autoFilled.orientation] || autoFilled.orientation);
+  }
+  if (autoFilled.duration && form.duration === autoFilled.duration) {
+    autoFillParts.push(`thời lượng ${autoFilled.duration}`);
+  }
+  const saveWarnings = [];
+  if (isVideoTab && (isEditing || mediaFile)) {
+    if (!thumbnailFile && !form.thumbnail?.url && !capturingThumb) {
+      saveWarnings.push("Chưa có thumbnail — nên chọn một ảnh đại diện cho video.");
+    }
+    if (form.featured && !previewFile && !form.preview?.url) {
+      saveWarnings.push("Chưa có bản WebM — lưới trang chủ sẽ dùng video gốc (nặng hơn).");
+    }
+  }
+
   return (
-    <div>
+    <div ref={rootRef}>
       {showShowreelSection ? (
         <div className="mt-6">
           <ShowreelPanel onBusyChange={setShowreelBusy} />
@@ -1708,7 +2470,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
             onClick={startCreate}
             className="rounded-full border border-gray-300 px-4 py-2 text-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            + New {tabLabel}
+            + Thêm mới
           </button>
         </div>
       ) : null}
@@ -1776,7 +2538,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                   transition={{ duration: 0.18 }}
                   className="inline-block"
                 >
-                  {isEditing ? `Edit #${editingId}` : `Create ${tabLabel}`}
+                  {isEditing ? `Đang sửa #${editingId}` : createLabel}
                 </motion.span>
               </AnimatePresence>
             </h2>
@@ -1797,293 +2559,468 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                 the save started, and a successful save reloads the record —
                 edits typed during a long upload would be silently lost. */}
             <fieldset disabled={saving} className="m-0 min-w-0 space-y-4 border-0 p-0">
-            <div>
-              <label className="mb-2 block text-sm font-medium">Title *</label>
-              <AutocompleteInput
-                value={form.title}
-                onChange={(v) => setForm((prev) => ({ ...prev, title: v }))}
-                suggestions={suggestions.title}
-                required
-              />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-medium">Slug</label>
-              <input
-                value={form.slug}
-                onChange={(event) => setForm((prev) => ({ ...prev, slug: event.target.value }))}
-                className={baseInputClassName()}
-                placeholder="auto-generated if empty"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label className="mb-2 block text-sm font-medium">Client</label>
-                <AutocompleteInput
-                  value={form.client}
-                  onChange={(v) => setForm((prev) => ({ ...prev, client: v }))}
-                  suggestions={suggestions.client}
-                />
-              </div>
-              <div>
-                <label className="mb-2 block text-sm font-medium">Category</label>
-                <AutocompleteInput
-                  value={form.category}
-                  onChange={(v) => setForm((prev) => ({ ...prev, category: v }))}
-                  suggestions={suggestions.category}
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-medium">Categories (comma-separated)</label>
-              <AutocompleteInput
-                value={form.categoriesText}
-                onChange={(v) => setForm((prev) => ({ ...prev, categoriesText: v }))}
-                suggestions={suggestions.categories}
-                splitDelimiter=","
-                placeholder="vd: Commercial, TVC"
-              />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-medium">Tagline</label>
-              <AutocompleteInput
-                value={form.tagline}
-                onChange={(v) => setForm((prev) => ({ ...prev, tagline: v }))}
-                suggestions={suggestions.tagline}
-              />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-medium">Description</label>
-              <textarea
-                value={form.description}
-                onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
-                className={baseInputClassName()}
-                rows={3}
-              />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-medium">Full Description</label>
-              <textarea
-                value={form.fullDescription}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, fullDescription: event.target.value }))
+              {/* (a) Files first: picking the video fills orientation,
+                  duration and (when missing) the thumbnail. */}
+              <FormSection
+                title="File"
+                hint={
+                  isVideoTab
+                    ? "Chọn video trước — máy sẽ tự điền hướng khung hình, thời lượng và tạo ảnh thumbnail."
+                    : "Ảnh của dự án và ảnh đại diện."
                 }
-                className={baseInputClassName()}
-                rows={5}
-              />
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label className="mb-2 block text-sm font-medium">Order</label>
-                <input
-                  type="number"
-                  value={form.order}
-                  onChange={(event) => setForm((prev) => ({ ...prev, order: event.target.value }))}
-                  className={baseInputClassName()}
-                />
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-medium">Completion Date</label>
-                <input
-                  type="date"
-                  value={form.completionDate || ""}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, completionDate: event.target.value }))
-                  }
-                  className={baseInputClassName()}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label className="mb-2 block text-sm font-medium">Orientation</label>
-                <select
-                  value={form.orientation}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, orientation: event.target.value }))
-                  }
-                  className={baseInputClassName()}
-                >
-                  <option value="landscape">landscape (16:9)</option>
-                  <option value="portrait">portrait (9:16)</option>
-                  <option value="square">square (1:1)</option>
-                </select>
-              </div>
-
-              <div className="flex items-end">
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={form.featured}
-                    onChange={(event) =>
-                      setForm((prev) => ({ ...prev, featured: event.target.checked }))
-                    }
-                  />
-                  Featured
-                </label>
-              </div>
-            </div>
-
-            {/* Admin-only favourite rating, only exposed in the
-                "Video Khác" tab where the spec calls for it. The value
-                is still persisted on every project though, so flipping
-                a video into Featured doesn't lose its rating. */}
-            {mode === "other-videos" ? (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
-                <label className="mb-2 block text-sm font-medium">
-                  Đánh giá yêu thích (chỉ hiện trong admin)
-                </label>
-                <StarRatingInput
-                  value={form.adminRating}
-                  onChange={(next) =>
-                    setForm((prev) => ({ ...prev, adminRating: next }))
-                  }
-                />
-                <p className="mt-2 text-[11px] text-gray-600">
-                  Dùng để sort danh sách Video Khác. Không hiển thị trên
-                  trang công khai.
-                </p>
-              </div>
-            ) : null}
-
-            {tab === "projects" ? (
-              <div>
-                <label className="mb-2 block text-sm font-medium">Duration</label>
-                <AutocompleteInput
-                  value={form.duration}
-                  onChange={(v) => setForm((prev) => ({ ...prev, duration: v }))}
-                  suggestions={suggestions.duration}
-                  placeholder="Ex: 01:30"
-                />
-              </div>
-            ) : null}
-
-            {tab === "projects" ? (
-              <>
-                <div className="space-y-3 rounded-xl border border-gray-200 p-4">
-                  <div>
-                    <label className="mb-2 block text-sm font-medium">
-                      Media file (video/image)
-                    </label>
+              >
+                {isVideoTab ? (
+                  <div id="field-media">
+                    <FieldLabel>{isEditing ? "Video chính" : "Video chính *"}</FieldLabel>
                     <p className="mb-2 text-xs text-gray-500">
-                      File chính (MP4 chất lượng cao). Người xem click xem trong modal sẽ phát file này.
+                      File chất lượng cao (MP4). Khách bấm vào video sẽ xem file này.
                     </p>
-                    <input
-                      key={`media-${fileInputsKey}`}
-                      type="file"
-                      accept={ACCEPT.media}
-                      disabled={saving}
-                      onChange={(event) => pickFile("media", "media", event)}
-                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <FileButton
+                        inputKey={`media-${fileInputsKey}`}
+                        accept={ACCEPT.media}
+                        disabled={saving}
+                        onChange={(event) => pickFile("media", "media", event)}
+                      >
+                        {mediaFile || form.media?.url ? "Chọn video khác…" : "Chọn video…"}
+                      </FileButton>
+                      {mediaFile ? (
+                        <button
+                          type="button"
+                          onClick={() => clearSlot("media")}
+                          className="text-xs text-gray-600 underline hover:text-gray-900"
+                        >
+                          Bỏ chọn
+                        </button>
+                      ) : null}
+                    </div>
                     {pickErrors.media ? (
                       <p className="mt-1.5 text-xs text-red-600">{pickErrors.media}</p>
+                    ) : null}
+                    {formErrors.media ? (
+                      <p className="mt-1.5 text-xs text-red-600">{formErrors.media}</p>
                     ) : null}
                     <PickedFileInfo
                       file={mediaFile}
                       uploaded={Boolean(cachedSingle(uploadCache, "media", mediaFile))}
                     />
-                  </div>
-                  {form.media?.url ? (
-                    <p className="text-xs text-gray-600">Current media: {form.media.url}</p>
-                  ) : (
-                    <p className="text-xs text-gray-500">No media selected yet.</p>
-                  )}
-                </div>
-                {/* Preview WebM is featured-only — the homepage gallery
-                    plays this small VP9 file instead of the full MP4 to
-                    free decoder bandwidth across 12 looping cards. */}
-                {form.featured ? (
-                  <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
-                    <div>
-                      <label className="mb-2 block text-sm font-medium">
-                        Preview WebM (gallery loop)
-                      </label>
-                      <p className="mb-2 text-xs text-gray-600">
-                        File <span className="font-semibold">.webm</span> nén nhỏ (VP9 + Opus, không tiếng).
-                        Trang chủ sẽ phát file này trong gallery 12 video.
-                        Khuyến nghị: ≤ 3 MB, &lt; 12 s, 720p. Nếu để trống,
-                        gallery fallback về file MP4 chính.
+                    {!mediaFile ? <StoredAssetLine asset={form.media} /> : null}
+                    {mediaFile && autoFillParts.length > 0 ? (
+                      <p className="mt-1.5 text-[11px] text-emerald-700">
+                        ✓ Tự điền từ video: {autoFillParts.join(" · ")} — sửa được trong mục
+                        “Nâng cao”.
                       </p>
-                      <input
-                        key={`preview-${fileInputsKey}`}
-                        type="file"
+                    ) : null}
+                  </div>
+                ) : (
+                  <div>
+                    <FieldLabel>Ảnh của dự án</FieldLabel>
+                    <ImageDropzone
+                      files={mediaFiles}
+                      onChange={changeMediaFiles}
+                      existingCount={Array.isArray(form.mediaList) ? form.mediaList.length : 0}
+                      uploadedFiles={uploadCache.images.map((entry) => entry.file)}
+                      disabled={saving}
+                    />
+                  </div>
+                )}
+
+                {/* Featured videos only: the homepage grid plays this small
+                    WebM instead of the full video (12 cards loop at once). */}
+                {isVideoTab && form.featured ? (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                    <FieldLabel>Bản xem trước WebM cho lưới trang chủ</FieldLabel>
+                    <p className="mb-2 text-xs text-gray-600">
+                      File <span className="font-semibold">.webm</span> nhẹ, không tiếng (nên dưới
+                      3 MB, dưới 12 giây, 720p). Lưới video ở trang chủ phát file này thay cho
+                      video gốc để trang tải nhanh hơn.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <FileButton
+                        inputKey={`preview-${fileInputsKey}`}
                         accept={ACCEPT.preview}
                         disabled={saving}
                         onChange={(event) => pickFile("preview", "preview", event)}
-                      />
-                      {pickErrors.preview ? (
-                        <p className="mt-1.5 text-xs text-red-600">{pickErrors.preview}</p>
+                      >
+                        {previewFile || form.preview?.url ? "Chọn file khác…" : "Chọn file WebM…"}
+                      </FileButton>
+                      {previewFile ? (
+                        <button
+                          type="button"
+                          onClick={() => clearSlot("preview")}
+                          className="text-xs text-gray-600 underline hover:text-gray-900"
+                        >
+                          Bỏ chọn
+                        </button>
                       ) : null}
                     </div>
-                    {previewFile ? (
-                      <PickedFileInfo
-                        file={previewFile}
-                        uploaded={Boolean(cachedSingle(uploadCache, "preview", previewFile))}
-                      />
-                    ) : form.preview?.url ? (
-                      <p className="text-xs text-gray-700">
-                        Current preview: {form.preview.url}
-                      </p>
-                    ) : (
-                      <p className="text-xs text-gray-500">
-                        Chưa có preview WebM — gallery sẽ phát file MP4 chính.
-                      </p>
-                    )}
+                    {pickErrors.preview ? (
+                      <p className="mt-1.5 text-xs text-red-600">{pickErrors.preview}</p>
+                    ) : null}
+                    <PickedFileInfo
+                      file={previewFile}
+                      uploaded={Boolean(cachedSingle(uploadCache, "preview", previewFile))}
+                    />
+                    {!previewFile ? <StoredAssetLine asset={form.preview} /> : null}
                   </div>
                 ) : null}
-              </>
-            ) : (
-              <div className="space-y-3 rounded-xl border border-gray-200 p-4">
+
+                <div id="field-thumbnail">
+                  <FieldLabel>Ảnh thumbnail</FieldLabel>
+                  <p className="mb-2 text-xs text-gray-500">
+                    {isVideoTab
+                      ? "Ảnh hiện trên thẻ video ở trang Video (xuongart.com/videos) và trong danh sách quản trị. Lưới video ở trang chủ phát video, không dùng ảnh này."
+                      : "Ảnh đại diện của dự án. Để trống thì trang công khai dùng ảnh đầu tiên."}
+                  </p>
+                  <div className="flex flex-wrap items-start gap-3">
+                    <div className="flex h-24 w-40 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-100 px-2 text-center text-[11px] text-gray-400">
+                      {thumbnailShownUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={thumbnailShownUrl}
+                          alt="Ảnh thumbnail"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : capturingThumb ? (
+                        "Đang tạo ảnh từ video…"
+                      ) : (
+                        "Chưa có ảnh"
+                      )}
+                    </div>
+                    <div className="min-w-[11rem] flex-1 space-y-2">
+                      {usingAutoThumb ? (
+                        <p className="text-xs text-gray-600">Ảnh tự tạo từ một khung hình của video.</p>
+                      ) : !thumbnailFile && form.thumbnail?.url ? (
+                        <p className="text-xs text-gray-600">Đang dùng ảnh đã lưu.</p>
+                      ) : null}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {autoThumbFile ? (
+                          <button
+                            type="button"
+                            aria-pressed={usingAutoThumb}
+                            onClick={() => setSlotFile("thumbnail", autoThumbFile)}
+                            className={`rounded-lg border px-3 py-1.5 text-sm ${
+                              usingAutoThumb
+                                ? "border-black bg-black text-white"
+                                : "border-gray-300 bg-white text-gray-800 hover:bg-gray-50"
+                            }`}
+                          >
+                            Dùng ảnh tự tạo
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => thumbnailInputRef.current?.click()}
+                          className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-800 hover:bg-gray-50"
+                        >
+                          {autoThumbFile || thumbnailFile || form.thumbnail?.url
+                            ? "Chọn ảnh khác"
+                            : "Chọn ảnh…"}
+                        </button>
+                        {thumbnailFile ? (
+                          <button
+                            type="button"
+                            onClick={() => clearSlot("thumbnail")}
+                            className="text-xs text-gray-600 underline hover:text-gray-900"
+                          >
+                            Bỏ chọn
+                          </button>
+                        ) : null}
+                      </div>
+                      <input
+                        key={`thumbnail-${fileInputsKey}`}
+                        ref={thumbnailInputRef}
+                        type="file"
+                        accept={ACCEPT.image}
+                        disabled={saving}
+                        className="hidden"
+                        onChange={(event) => pickFile("thumbnail", "image", event)}
+                      />
+                      {pickErrors.thumbnail ? (
+                        <p className="text-xs text-red-600">{pickErrors.thumbnail}</p>
+                      ) : null}
+                      <PickedFileInfo
+                        file={thumbnailFile}
+                        uploaded={Boolean(cachedSingle(uploadCache, "thumbnail", thumbnailFile))}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </FormSection>
+
+              {/* (b) What the public pages show about the project. */}
+              <FormSection title="Thông tin">
+                <div id="field-title">
+                  <FieldLabel htmlFor="project-title">Tiêu đề *</FieldLabel>
+                  <AutocompleteInput
+                    value={form.title}
+                    onChange={handleTitleChange}
+                    suggestions={suggestions.title}
+                    inputProps={{ id: "project-title", "aria-invalid": Boolean(formErrors.title) }}
+                  />
+                  {formErrors.title ? (
+                    <p className="mt-1.5 text-xs text-red-600">{formErrors.title}</p>
+                  ) : null}
+                </div>
+
                 <div>
-                  <label className="mb-2 block text-sm font-medium">
-                    Media images (multiple)
-                  </label>
-                  <ImageDropzone
-                    files={mediaFiles}
-                    onChange={changeMediaFiles}
-                    existingCount={
-                      Array.isArray(form.mediaList) ? form.mediaList.length : 0
-                    }
-                    uploadedFiles={uploadCache.images.map((entry) => entry.file)}
-                    disabled={saving}
+                  <FieldLabel htmlFor="project-client">Khách hàng</FieldLabel>
+                  <AutocompleteInput
+                    value={form.client}
+                    onChange={(v) => setForm((prev) => ({ ...prev, client: v }))}
+                    suggestions={suggestions.client}
+                    inputProps={{ id: "project-client" }}
                   />
                 </div>
-              </div>
-            )}
 
-            <div className="space-y-3 rounded-xl border border-gray-200 p-4">
-              <div>
-                <label className="mb-2 block text-sm font-medium">Thumbnail image</label>
-                <input
-                  key={`thumbnail-${fileInputsKey}`}
-                  type="file"
-                  accept={ACCEPT.image}
-                  disabled={saving}
-                  onChange={(event) => pickFile("thumbnail", "image", event)}
-                />
-                {pickErrors.thumbnail ? (
-                  <p className="mt-1.5 text-xs text-red-600">{pickErrors.thumbnail}</p>
+                <div>
+                  <FieldLabel>Thể loại</FieldLabel>
+                  <CategoryPicker
+                    key={`categories-${fileInputsKey}`}
+                    value={form.categories}
+                    onChange={(next) => setForm((prev) => ({ ...prev, categories: next }))}
+                    publicList={publicList}
+                    fallback={suggestions.category}
+                    main={mainCategoryFor(form.categories, form.category)}
+                    mainHint={
+                      isVideoTab
+                        ? "là thể loại chính — hiện phía trên tiêu đề ở trang chi tiết video."
+                        : ""
+                    }
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <FieldLabel htmlFor="project-completion-date">Ngày hoàn thành</FieldLabel>
+                    <input
+                      id="project-completion-date"
+                      type="date"
+                      value={form.completionDate || ""}
+                      onChange={(event) =>
+                        setForm((prev) => ({ ...prev, completionDate: event.target.value }))
+                      }
+                      className={baseInputClassName()}
+                    />
+                  </div>
+                  {isVideoTab ? (
+                    <div className="flex items-end">
+                      <label className="inline-flex items-start gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          className="mt-1"
+                          checked={form.featured}
+                          onChange={(event) =>
+                            setForm((prev) => ({ ...prev, featured: event.target.checked }))
+                          }
+                        />
+                        <span>
+                          Nổi bật
+                          <span className="block text-xs text-gray-500">
+                            Hiện trong lưới video ở trang chủ.
+                          </span>
+                        </span>
+                      </label>
+                    </div>
+                  ) : null}
+                </div>
+
+                {/* Admin-only favourite rating (never sent to the public
+                    site); sorts the lists. Kept on every video, featured or
+                    not, so flipping "Nổi bật" doesn't lose it. */}
+                {isVideoTab ? (
+                  <div>
+                    <FieldLabel>Đánh giá</FieldLabel>
+                    <StarRatingInput
+                      value={form.adminRating}
+                      onChange={(next) => setForm((prev) => ({ ...prev, adminRating: next }))}
+                    />
+                    <p className="mt-1 text-[11px] text-gray-500">
+                      Chỉ hiện trong trang quản trị — dùng để sắp xếp danh sách.
+                    </p>
+                  </div>
                 ) : null}
-                <PickedFileInfo
-                  file={thumbnailFile}
-                  uploaded={Boolean(cachedSingle(uploadCache, "thumbnail", thumbnailFile))}
-                />
+              </FormSection>
+
+              {/* (c) Rarely changed fields, collapsed by default. */}
+              <div className="rounded-xl border border-gray-200">
+                <button
+                  type="button"
+                  onClick={() => setAdvancedOpen((open) => !open)}
+                  aria-expanded={advancedOpen}
+                  className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm"
+                >
+                  <span>
+                    <span className="font-semibold text-gray-900">Nâng cao</span>
+                    <span className="text-xs text-gray-500">
+                      {" "}
+                      — {isVideoTab ? "đường dẫn, câu giới thiệu, hướng khung hình, thời lượng" : "câu giới thiệu"}, mô tả
+                    </span>
+                  </span>
+                  <span aria-hidden="true" className="text-gray-500">
+                    {advancedOpen ? "▴" : "▾"}
+                  </span>
+                </button>
+                {advancedOpen ? (
+                  <div className="space-y-4 border-t border-gray-200 p-4">
+                    {/* Image projects have no page of their own, so their
+                        slug is not shown (the server still keeps a unique
+                        one, and an edit keeps the stored value). */}
+                    {isVideoTab ? (
+                      <div>
+                        <FieldLabel htmlFor="project-slug">Đường dẫn (slug)</FieldLabel>
+                        <input
+                          id="project-slug"
+                          value={form.slug}
+                          onChange={(event) => handleSlugChange(event.target.value)}
+                          onBlur={() => {
+                            // Show the slug as it will be saved.
+                            const cleaned = slugify(form.slug);
+                            if (cleaned !== form.slug) handleSlugChange(cleaned);
+                          }}
+                          className={baseInputClassName()}
+                          placeholder="tự tạo từ tiêu đề"
+                        />
+                        <p className="mt-1 break-all text-xs text-gray-600">
+                          xuongart.com/videos/
+                          <span className="font-medium text-gray-900">{effectiveSlug || "…"}</span>
+                        </p>
+                        <p className="mt-1 text-[11px] text-gray-500">
+                          {slugFollowsTitle
+                            ? "Tự đổi theo tiêu đề cho đến khi bạn sửa ô này. Chỉ gồm chữ thường không dấu, số và dấu “-”."
+                            : isEditing
+                            ? "Đổi đường dẫn thì link cũ của video này sẽ không mở được nữa."
+                            : "Chỉ gồm chữ thường không dấu, số và dấu “-”."}
+                        </p>
+                        {slugTaken ? (
+                          <p className="mt-1 text-[11px] text-amber-700">
+                            Đã có mục khác dùng đường dẫn này — khi lưu sẽ tự thêm số phía sau (vd:
+                            “{effectiveSlug}-2”).
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    <div>
+                      <FieldLabel htmlFor="project-tagline">Câu giới thiệu ngắn</FieldLabel>
+                      <AutocompleteInput
+                        value={form.tagline}
+                        onChange={(v) => setForm((prev) => ({ ...prev, tagline: v }))}
+                        suggestions={suggestions.tagline}
+                        inputProps={{ id: "project-tagline" }}
+                      />
+                      <p className="mt-1 text-[11px] text-gray-500">
+                        {isVideoTab
+                          ? "Hiện dưới tên khách hàng ở trang chi tiết video; cũng dùng khi khách tìm kiếm."
+                          : "Dùng khi khách tìm kiếm trên trang Ảnh."}
+                      </p>
+                    </div>
+
+                    {isVideoTab ? (
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div>
+                          <FieldLabel
+                            htmlFor="project-orientation"
+                            badge={
+                              autoFilled.orientation && form.orientation === autoFilled.orientation
+                                ? "tự điền từ video"
+                                : ""
+                            }
+                          >
+                            Hướng khung hình
+                          </FieldLabel>
+                          <select
+                            id="project-orientation"
+                            value={form.orientation}
+                            onChange={(event) => {
+                              markTouched("orientation");
+                              setForm((prev) => ({ ...prev, orientation: event.target.value }));
+                            }}
+                            className={baseInputClassName()}
+                          >
+                            <option value="landscape">Ngang (16:9)</option>
+                            <option value="portrait">Dọc (9:16)</option>
+                            <option value="square">Vuông (1:1)</option>
+                          </select>
+                          <p className="mt-1 text-[11px] text-gray-500">
+                            Quyết định ô hiển thị video trong lưới.
+                          </p>
+                        </div>
+                        <div>
+                          <FieldLabel
+                            htmlFor="project-duration"
+                            badge={
+                              autoFilled.duration && form.duration === autoFilled.duration
+                                ? "tự điền từ video"
+                                : ""
+                            }
+                          >
+                            Thời lượng
+                          </FieldLabel>
+                          <input
+                            id="project-duration"
+                            value={form.duration}
+                            onChange={(event) => {
+                              markTouched("duration");
+                              setForm((prev) => ({ ...prev, duration: event.target.value }));
+                            }}
+                            className={baseInputClassName()}
+                            placeholder="vd: 1:30"
+                          />
+                          <p className="mt-1 text-[11px] text-gray-500">
+                            Hiện ở trang chi tiết video.
+                          </p>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div>
+                      <FieldLabel htmlFor="project-description">Mô tả ngắn</FieldLabel>
+                      <textarea
+                        id="project-description"
+                        value={form.description}
+                        onChange={(event) =>
+                          setForm((prev) => ({ ...prev, description: event.target.value }))
+                        }
+                        className={baseInputClassName()}
+                        rows={3}
+                      />
+                    </div>
+                    <div>
+                      <FieldLabel htmlFor="project-full-description">Mô tả chi tiết</FieldLabel>
+                      <textarea
+                        id="project-full-description"
+                        value={form.fullDescription}
+                        onChange={(event) =>
+                          setForm((prev) => ({ ...prev, fullDescription: event.target.value }))
+                        }
+                        className={baseInputClassName()}
+                        rows={5}
+                      />
+                      <p className="mt-1 text-[11px] text-gray-500">
+                        {isVideoTab
+                          ? "Hiện trong khung xem video. Nếu có cả hai, trang chủ chỉ hiện mô tả chi tiết."
+                          : "Cả hai mô tả hiện trong khung xem dự án ở trang Ảnh."}
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
               </div>
-              {form.thumbnail?.url ? (
-                <p className="text-xs text-gray-600">Current thumbnail: {form.thumbnail.url}</p>
-              ) : (
-                <p className="text-xs text-gray-500">No thumbnail selected yet.</p>
-              )}
-            </div>
             </fieldset>
+
+            {/* Non-blocking reminders before saving. */}
+            {saveWarnings.length > 0 && !saving ? (
+              <ul className="space-y-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {saveWarnings.map((text) => (
+                  <li key={text}>⚠ {text}</li>
+                ))}
+              </ul>
+            ) : null}
+            {formErrors.title || formErrors.media ? (
+              <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                Chưa lưu được: {[formErrors.title, formErrors.media].filter(Boolean).join(" ")}
+              </p>
+            ) : null}
 
             {/* Full progress card in normal flow (it can be tall for a photo
                 batch); the sticky bar below only carries a one-line summary
@@ -2135,7 +3072,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
 
               {saving && !uploadProgress ? (
                 <span className="text-xs text-gray-500" aria-live="polite">
-                  Đang lưu thông tin…
+                  {waitingThumb ? "Đang tạo ảnh thumbnail từ video…" : "Đang lưu thông tin…"}
                 </span>
               ) : null}
             </div>
@@ -2145,11 +3082,11 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
         <motion.div layout className="rounded-2xl border border-gray-200 p-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h2 className="text-lg font-semibold">{tabLabel}</h2>
+              <h2 className="text-lg font-semibold">{listTitle}</h2>
               <p className="mt-1 text-xs text-gray-600">
                 {listFilter
-                  ? `${sortedFilteredItems.length} / ${items.length}`
-                  : `Total: ${items.length}`}
+                  ? `${sortedFilteredItems.length} / ${modeFilteredItems.length}`
+                  : `Tổng: ${modeFilteredItems.length}`}
                 {reordering ? (
                   <span className="ml-2 text-amber-700">· đang lưu thứ tự...</span>
                 ) : null}
@@ -2160,7 +3097,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                 type="search"
                 value={listFilter}
                 onChange={(event) => setListFilter(event.target.value)}
-                placeholder="Tìm theo title, client, slug, category..."
+                placeholder="Tìm theo tên, khách hàng, thể loại…"
                 className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-black focus:outline-none sm:w-64"
               />
               <select
@@ -2204,9 +3141,9 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
           </p>
 
           {loadingItems ? (
-            <p className="mt-4 text-sm text-gray-600">Loading...</p>
+            <p className="mt-4 text-sm text-gray-600">Đang tải…</p>
           ) : items.length === 0 ? (
-            <p className="mt-4 text-sm text-gray-600">No items yet.</p>
+            <p className="mt-4 text-sm text-gray-600">Chưa có mục nào.</p>
           ) : sortedFilteredItems.length === 0 ? (
             <p className="mt-4 text-sm text-gray-500">
               Không có mục nào khớp với &quot;{listFilter}&quot;.
@@ -2215,7 +3152,9 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
             <motion.div layout className="mt-4 space-y-3">
               <AnimatePresence initial={false}>
                 {sortedFilteredItems.map((item) => {
-                  const thumbUrl = item.thumbnail?.url || item.media?.url;
+                  const confirming = Number(confirmDeleteId) === Number(item.id);
+                  const deleting = Number(deletingId) === Number(item.id);
+                  const rowLocked = saving || deletingId !== null;
                   const isCurrent = Number(editingId) === Number(item.id);
                   const cats = Array.isArray(item.categories) ? item.categories : [];
                   const sortIdx = items.findIndex(
@@ -2232,9 +3171,9 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -8 }}
                       transition={{ duration: 0.18 }}
-                      draggable={canReorder}
+                      draggable={canReorder && !confirming}
                       onDragStart={(event) => {
-                        if (!canReorder) return;
+                        if (!canReorder || confirming) return;
                         setDragId(item.id);
                         event.dataTransfer.effectAllowed = "move";
                         try {
@@ -2272,7 +3211,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                                 : "Lên trên"
                             }
                             className="rounded border border-gray-300 px-1.5 py-0.5 text-xs text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-30"
-                            aria-label="Move up"
+                            aria-label="Lên trên"
                           >
                             ↑
                           </button>
@@ -2290,44 +3229,32 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                                 : "Xuống dưới"
                             }
                             className="rounded border border-gray-300 px-1.5 py-0.5 text-xs text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-30"
-                            aria-label="Move down"
+                            aria-label="Xuống dưới"
                           >
                             ↓
                           </button>
                         </div>
-                        {thumbUrl ? (
-                          <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-gray-100">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={thumbUrl}
-                              alt={item.title || "thumbnail"}
-                              className="h-full w-full object-cover"
-                              loading="lazy"
-                            />
-                          </div>
-                        ) : (
-                          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-[10px] text-gray-400">
-                            no media
-                          </div>
-                        )}
+                        <RowThumb item={item} />
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-start justify-between gap-2">
+                          {/* Phones: Sửa / Xoá go under the text so the
+                              title and client stay readable. */}
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                             <div className="min-w-0">
                               <div className="truncate font-semibold">
-                                #{item.id} {item.title || "(No title)"}
+                                {item.title || "(Chưa có tiêu đề)"}
                               </div>
                               <div className="mt-0.5 truncate text-xs text-gray-600">
-                                {item.client || "—"} · slug: {item.slug || "-"}
+                                {item.client || "Chưa ghi khách hàng"} · #{item.id}
                               </div>
                               <div className="mt-1 flex flex-wrap items-center gap-1.5">
                                 {item.featured ? (
                                   <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
-                                    ★ featured
+                                    ★ Nổi bật
                                   </span>
                                 ) : null}
                                 <StarRatingDisplay value={item.adminRating} />
                                 <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-700">
-                                  order: {item.order ?? "-"}
+                                  Vị trí {item.order ?? "-"}
                                 </span>
                                 {cats.slice(0, 3).map((cat) => (
                                   <span
@@ -2347,24 +3274,80 @@ export default function ProjectsAdminPanel({ mode, onBusyChange } = {}) {
                             <div className="flex shrink-0 gap-2">
                               <button
                                 type="button"
-                                disabled={saving}
+                                disabled={rowLocked}
                                 onClick={() => startEdit(item)}
                                 className="rounded-md border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                               >
-                                Edit
+                                Sửa
                               </button>
                               <button
                                 type="button"
-                                disabled={saving}
-                                onClick={() => handleDelete(item.id)}
+                                ref={(node) => {
+                                  const key = Number(item.id);
+                                  if (node) deleteButtonRefs.current.set(key, node);
+                                  else deleteButtonRefs.current.delete(key);
+                                }}
+                                disabled={rowLocked || confirming}
+                                onClick={() => openDeleteConfirm(item.id)}
                                 className="rounded-md border border-red-300 px-3 py-1 text-xs text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
                               >
-                                Delete
+                                Xoá
                               </button>
                             </div>
                           </div>
                         </div>
                       </div>
+                      {confirming ? (
+                        <div
+                          className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800"
+                          role="alertdialog"
+                          aria-label="Xác nhận xoá"
+                          aria-describedby={`delete-confirm-text-${item.id}`}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Escape" || deleting) return;
+                            event.preventDefault();
+                            event.stopPropagation();
+                            closeDeleteConfirm(item.id);
+                          }}
+                        >
+                          <p id={`delete-confirm-text-${item.id}`} className="break-words">
+                            Xoá “{item.title || "(Chưa có tiêu đề)"}” (#{item.id})? Video/ảnh của mục
+                            này trên R2 cũng sẽ bị xoá.
+                          </p>
+                          {deleteError && Number(deleteError.id) === Number(item.id) && !deleting ? (
+                            <div
+                              role="alert"
+                              className="mt-2 rounded-md border border-red-300 bg-white px-2 py-1.5 text-red-700"
+                            >
+                              <p className="break-words font-medium">
+                                Chưa xoá được: {deleteError.message}
+                              </p>
+                              {deleteError.hint ? (
+                                <p className="mt-0.5 break-words text-red-800">{deleteError.hint}</p>
+                              ) : null}
+                            </div>
+                          ) : null}
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              ref={confirmCancelRef}
+                              disabled={deleting}
+                              onClick={() => closeDeleteConfirm(item.id)}
+                              className="rounded-md border border-gray-300 bg-white px-3 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Huỷ
+                            </button>
+                            <button
+                              type="button"
+                              disabled={deletingId !== null || saving}
+                              onClick={() => handleDelete(item.id)}
+                              className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {deleting ? "Đang xoá…" : "Xoá"}
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                     </motion.div>
                   );
                 })}
