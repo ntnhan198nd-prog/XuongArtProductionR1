@@ -12,6 +12,7 @@ import {
 } from "@/lib/uploadClient";
 import { fetchJson } from "@/lib/apiClient";
 import { useToast } from "@/components/admin/ToastProvider";
+import { notifyTrashChanged } from "@/components/admin/TrashPanel";
 
 // Above this size the upload can take many minutes on a typical connection.
 const LARGE_VIDEO_BYTES = 500 * 1024 * 1024;
@@ -277,7 +278,16 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
       }
       setShowreel(payload?.data || null);
       setLoadFailed(false);
-      notify("success", "Đã thay showreel", { href: "/", hrefLabel: "Xem trang chủ ↗" });
+      // The server moves the previous video to "Thùng rác" (30 days).
+      if (Number(payload?.trashedFiles) > 0) notifyTrashChanged();
+      notify("success", "Đã thay showreel", {
+        href: "/",
+        hrefLabel: "Xem trang chủ ↗",
+        hint:
+          Number(payload?.trashedFiles) > 0
+            ? "Video cũ được giữ trong Thùng rác 30 ngày."
+            : "",
+      });
     } catch (err) {
       if (err?.code === "aborted") {
         setNotice("Đã huỷ tải lên showreel. Video cũ vẫn được giữ nguyên.");
@@ -321,15 +331,18 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
     setErrorHint("");
     setNotice("");
     try {
-      await fetchJson(
+      const result = await fetchJson(
         "/api/admin/showreel",
         { method: "DELETE" },
         { fallbackError: "Xoá showreel thất bại" }
       );
       setShowreel(null);
+      if (Number(result?.trashedFiles) > 0) notifyTrashChanged();
       notify("success", "Đã xoá showreel — trang chủ dùng lại video mặc định", {
         href: "/",
         hrefLabel: "Xem trang chủ ↗",
+        hint:
+          Number(result?.trashedFiles) > 0 ? "Video cũ được giữ trong Thùng rác 30 ngày." : "",
       });
     } catch (err) {
       // "Thử lại" asks again (same confirm as the Xoá button) and is void
@@ -348,7 +361,13 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
 
   const handleClear = async () => {
     if (workingRef.current) return;
-    if (!window.confirm("Xoá showreel hiện tại? Trang chủ sẽ rơi về video mặc định.")) return;
+    if (
+      !window.confirm(
+        "Xoá showreel hiện tại? Trang chủ sẽ rơi về video mặc định.\n\nVideo cũ được chuyển vào Thùng rác và giữ 30 ngày."
+      )
+    ) {
+      return;
+    }
     await removeShowreel();
   };
 
@@ -360,6 +379,9 @@ export default function ShowreelPanel({ onBusyChange } = {}) {
           <p className="mt-1 text-xs text-gray-600">
             Video chạy lặp lại ở khung lớn đầu trang chủ. Nên dùng MP4 hoặc
             WebM, dài khoảng 30 giây, tối đa 1080p.
+          </p>
+          <p className="mt-1 text-xs text-gray-500">
+            Khi thay hoặc xoá, video cũ được chuyển vào Thùng rác và giữ 30 ngày.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

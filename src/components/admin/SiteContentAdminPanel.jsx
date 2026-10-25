@@ -1941,7 +1941,7 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
           key: SAVE_ERROR_TOAST_KEY,
           hint: e?.hint || "",
           ...retry,
-          ...(serverSide ? { href: "/api/admin/health", hrefLabel: "Kiểm tra kết nối R2 ↗" } : {}),
+          ...(serverSide ? { href: "/admin?tab=system", hrefLabel: "Kiểm tra kết nối R2 ↗" } : {}),
         });
       }
     } finally {
@@ -2052,7 +2052,7 @@ export default function SiteContentAdminPanel({ onDirtyChange, active = true }) 
                 </button>
               ) : (
                 <a
-                  href="/api/admin/health"
+                  href="/admin?tab=system"
                   target="_blank"
                   rel="noreferrer"
                   className="rounded-lg border border-red-300 px-3 py-1.5 text-xs text-red-700 hover:bg-red-100"

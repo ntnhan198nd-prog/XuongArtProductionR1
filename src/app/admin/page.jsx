@@ -4,9 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
 import HistoryPanel from "@/components/admin/HistoryPanel";
+import OverviewPanel from "@/components/admin/OverviewPanel";
 import ProjectsAdminPanel from "@/components/admin/ProjectsAdminPanel";
 import SiteContentAdminPanel from "@/components/admin/SiteContentAdminPanel";
+import SystemHealthPanel from "@/components/admin/SystemHealthPanel";
 import { ToastProvider } from "@/components/admin/ToastProvider";
+import TrashPanel from "@/components/admin/TrashPanel";
 import { fetchJson, readJsonSafe } from "@/lib/apiClient";
 
 // Public pages linked from the header ("Xem website:"), opened in a new tab.
@@ -17,20 +20,28 @@ const SITE_LINKS = [
   { key: "about", href: "/whoweare", label: "Về chúng tôi" },
 ];
 
-// Tab order is fixed by the user's spec: "Nội dung trang" first, then video
-// admin sections grouped by purpose. The "projects" key from the previous
-// 2-tab layout is kept as a soft alias so old bookmarks (?tab=projects)
-// land on the showreel+featured tab instead of 404-ing. `site` = the
-// SITE_LINKS entry highlighted while the tab is open.
+// Tab order: "Tổng quan" (what /admin opens on) first, then "Nội dung
+// trang", the video / image sections grouped by purpose, and the
+// maintenance tabs last. The "projects" key from the previous 2-tab layout
+// is kept as a soft alias so old bookmarks (?tab=projects) land on the
+// showreel+featured tab instead of 404-ing. `site` = the SITE_LINKS entry
+// highlighted while the tab is open.
 const MAIN_TABS = [
+  { key: "overview", label: "Tổng quan", site: null },
   { key: "content", label: "Nội dung trang", site: "home" },
   { key: "showreel-featured", label: "Trang chủ: Showreel & Nổi bật", site: "home" },
   { key: "other-videos", label: "Thư viện video", site: "videos" },
   { key: "images", label: "Dự án ảnh", site: "images" },
+  { key: "trash", label: "Thùng rác", site: null },
   { key: "history", label: "Lịch sử", site: null },
+  { key: "system", label: "Hệ thống", site: null },
 ];
 
-const DEFAULT_TAB = "content";
+const DEFAULT_TAB = "overview";
+
+// Per-visit URL params that belong to the tab they were opened with (e.g.
+// edit=<id> from "Tổng quan" → "Mở"); dropped when switching tabs.
+const TRANSIENT_PARAMS = ["edit"];
 
 // Panels that report unsaved edits through onDirtyChange.
 const DIRTY_PANEL_KEYS = ["content", "showreel-featured", "other-videos", "images"];
@@ -273,7 +284,7 @@ function AdminWorkspace({ onLoggedOut }) {
   const searchParams = useSearchParams();
 
   // Sync the active tab with the ?tab= query param so direct links and
-  // back/forward navigation both work. Default to "Nội dung trang" on mount.
+  // back/forward navigation both work. Default to "Tổng quan" on mount.
   const tabFromUrl = searchParams?.get("tab");
   const initialTab = resolveTabKey(tabFromUrl) || DEFAULT_TAB;
   const [tab, setTab] = useState(initialTab);
@@ -328,12 +339,58 @@ function AdminWorkspace({ onLoggedOut }) {
       // unsaved edits are preserved when you come back.
       setTab(nextTab);
       const params = new URLSearchParams(searchParams?.toString() || "");
+      TRANSIENT_PARAMS.forEach((name) => params.delete(name));
       if (nextTab === DEFAULT_TAB) params.delete("tab");
       else params.set("tab", nextTab);
       const qs = params.toString();
       router.replace(qs ? `/admin?${qs}` : "/admin");
     },
     [tab, router, searchParams]
+  );
+
+  // Tab buttons by key (tab row below; also used to restore focus).
+  const tabRefs = useRef({});
+  // The button that triggered openTab sits in the panel being hidden: when
+  // focus is lost that way (on <body> or on an element no longer rendered),
+  // move it to the new tab's button. Focus a panel already moved elsewhere
+  // (e.g. the projects form opened by ?edit=) is left alone.
+  const focusTabButton = useCallback((nextTab, { preventScroll = false } = {}) => {
+    const run = () => {
+      const current = typeof document !== "undefined" ? document.activeElement : null;
+      const lost =
+        !current ||
+        current === document.body ||
+        (typeof current.getClientRects === "function" && current.getClientRects().length === 0);
+      if (lost) tabRefs.current[nextTab]?.focus({ preventScroll });
+    };
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(run);
+    } else {
+      run();
+    }
+  }, []);
+  // Used by "Tổng quan": open a tab, optionally with a record to edit
+  // (/admin?tab=<tab>&edit=<id>; the projects panel opens that record and
+  // then removes the edit param itself).
+  const openTab = useCallback(
+    (nextTab, { edit } = {}) => {
+      if (!isValidTab(nextTab)) return;
+      const hasEdit = edit !== null && edit !== undefined && String(edit) !== "";
+      if (!hasEdit) {
+        switchTab(nextTab);
+        focusTabButton(nextTab);
+        return;
+      }
+      setTab(nextTab);
+      const params = new URLSearchParams(searchParams?.toString() || "");
+      TRANSIENT_PARAMS.forEach((name) => params.delete(name));
+      params.set("tab", nextTab);
+      params.set("edit", String(edit));
+      router.replace(`/admin?${params.toString()}`);
+      // The panel scrolls to the record itself: don't fight it.
+      focusTabButton(nextTab, { preventScroll: true });
+    },
+    [switchTab, focusTabButton, router, searchParams]
   );
 
   // Set right before the reload that follows a history restore: the admin
@@ -401,7 +458,6 @@ function AdminWorkspace({ onLoggedOut }) {
   // that more tabs are hidden; the active tab is kept in view.
   const tabScrollerRef = useRef(null);
   const tabListRef = useRef(null);
-  const tabRefs = useRef({});
   const [tabEdges, setTabEdges] = useState({ left: false, right: false });
   useEffect(() => {
     const scroller = tabScrollerRef.current;
@@ -599,6 +655,14 @@ function AdminWorkspace({ onLoggedOut }) {
 
         <div className="mt-2">
           {panel(
+            "overview",
+            <OverviewPanel
+              active={tab === "overview"}
+              onOpenTab={openTab}
+              pendingTabLabels={pendingTabs.map((item) => item.label)}
+            />
+          )}
+          {panel(
             "content",
             <SiteContentAdminPanel
               active={tab === "content"}
@@ -616,6 +680,7 @@ function AdminWorkspace({ onLoggedOut }) {
               />
             )
           )}
+          {panel("trash", <TrashPanel active={tab === "trash"} />)}
           {panel(
             "history",
             <HistoryPanel
@@ -626,6 +691,7 @@ function AdminWorkspace({ onLoggedOut }) {
               onRestored={reloadAfterRestore}
             />
           )}
+          {panel("system", <SystemHealthPanel active={tab === "system"} />)}
         </div>
       </Container>
     </main>

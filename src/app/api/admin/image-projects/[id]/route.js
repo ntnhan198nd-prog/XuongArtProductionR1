@@ -6,7 +6,13 @@ import {
   normalizeImageProjectPayload,
   replaceAtOrder,
 } from "@/lib/contentAdmin";
-import { collectAssetKeysFromImageProject, updateStore } from "@/lib/contentStore";
+import {
+  addRecordToTrash,
+  collectAssetRefsFromImageProject,
+  purgeExpiredTrash,
+  trashUnreferencedAssets,
+  updateStore,
+} from "@/lib/contentStore";
 import { deleteR2Keys } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
@@ -21,11 +27,6 @@ function unauthorized() {
 
 function invalidId() {
   return NextResponse.json({ error: "Invalid image project id." }, { status: 400 });
-}
-
-function keysToDelete(oldKeys, nextKeys) {
-  const stillUsed = new Set(nextKeys);
-  return oldKeys.filter((key) => !stillUsed.has(key));
 }
 
 export async function PUT(request, { params }) {
@@ -47,9 +48,9 @@ export async function PUT(request, { params }) {
     );
   }
 
-  let oldKeys = [];
   try {
     let updated = null;
+    let trashedFiles = 0;
 
     await updateStore((store) => {
       const index = store.imageProjects.findIndex((item) => Number(item.id) === id);
@@ -57,24 +58,27 @@ export async function PUT(request, { params }) {
         throw new Error("NOT_FOUND");
       }
 
-      oldKeys = collectAssetKeysFromImageProject(store.imageProjects[index]);
+      const previous = store.imageProjects[index];
 
       // Unique slug among the OTHER image projects; returned in the response.
       updated = {
         id,
-        ...normalizeImageProjectPayload(body, store, store.imageProjects[index], { id }),
+        ...normalizeImageProjectPayload(body, store, previous, { id }),
       };
       store.imageProjects = replaceAtOrder(store.imageProjects, updated, updated.order);
       updated = store.imageProjects.find((item) => Number(item.id) === id) || updated;
+
+      // Photos / thumbnail this edit stopped using go to the trash (kept 30
+      // days so "Lịch sử" can bring the old version back with its photos);
+      // files still used elsewhere in the store are left alone.
+      trashedFiles = trashUnreferencedAssets(
+        store,
+        collectAssetRefsFromImageProject(previous)
+      ).length;
       return store;
     }, { action: "image-project.update", detail: id });
 
-    const orphans = keysToDelete(oldKeys, collectAssetKeysFromImageProject(updated));
-    if (orphans.length > 0) {
-      await deleteR2Keys(orphans);
-    }
-
-    return NextResponse.json({ data: updated });
+    return NextResponse.json({ data: updated, trashedFiles });
   } catch (error) {
     if (error?.message === "NOT_FOUND") {
       return NextResponse.json({ error: "Image project not found." }, { status: 404 });
@@ -86,6 +90,9 @@ export async function PUT(request, { params }) {
   }
 }
 
+// Moves the image project into "Thùng rác" (restorable for 30 days) —
+// nothing is deleted from R2 here. Trash entries past their 30 days are
+// purged on the way; their files are deleted after the store write.
 export async function DELETE(request, { params }) {
   if (!isAdminAuthenticated(request)) return unauthorized();
 
@@ -93,28 +100,34 @@ export async function DELETE(request, { params }) {
   if (!Number.isInteger(id) || id <= 0) return invalidId();
 
   try {
-    let removed = false;
-    let removedKeys = [];
+    let entry = null;
+    let expiredKeys = [];
     await updateStore((store) => {
-      const before = store.imageProjects.length;
       const target = store.imageProjects.find((item) => Number(item.id) === id);
-      if (target) removedKeys = collectAssetKeysFromImageProject(target);
-      store.imageProjects = store.imageProjects.filter((item) => Number(item.id) !== id);
-      store.imageProjects = compactOrder(store.imageProjects);
-      removed = store.imageProjects.length !== before;
+      if (!target) throw new Error("NOT_FOUND");
+      const now = Date.now();
+      store.imageProjects = compactOrder(
+        store.imageProjects.filter((item) => Number(item.id) !== id)
+      );
+      // `target` still carries its old `order` (compactOrder made copies).
+      entry = addRecordToTrash(store, "imageProject", target, { now });
+      expiredKeys = purgeExpiredTrash(store, now);
       return store;
     }, { action: "image-project.delete", detail: id });
 
-    if (!removed) {
+    if (expiredKeys.length > 0) {
+      await deleteR2Keys(expiredKeys);
+    }
+
+    return NextResponse.json({
+      ok: true,
+      trashId: entry.id,
+      trash: { id: entry.id, label: entry.label, expiresAt: entry.expiresAt },
+    });
+  } catch (error) {
+    if (error?.message === "NOT_FOUND") {
       return NextResponse.json({ error: "Image project not found." }, { status: 404 });
     }
-
-    if (removedKeys.length > 0) {
-      await deleteR2Keys(removedKeys);
-    }
-
-    return NextResponse.json({ ok: true });
-  } catch (error) {
     return serverErrorResponse(error, {
       context: `DELETE /api/admin/image-projects/${id}`,
       prefix: "Không xoá được dự án ảnh trên R2 —",

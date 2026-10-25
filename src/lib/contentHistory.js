@@ -34,8 +34,12 @@ export const HISTORY_ACTION_LABELS = {
   "showreel.update": "thay showreel",
   "showreel.delete": "xoá showreel",
   "site.update": "sửa nội dung trang",
+  // No longer written (the reset route is gone); kept for old snapshots.
   "site.reset": "khôi phục mặc định nội dung trang",
   "history.restore": "khôi phục lịch sử",
+  "trash.restore": "khôi phục từ Thùng rác",
+  "trash.purge": "xoá vĩnh viễn khỏi Thùng rác",
+  "trash.purge-expired": "dọn mục quá hạn trong Thùng rác",
 };
 
 const FALLBACK_ACTION_LABEL = "lưu thay đổi";
@@ -212,6 +216,16 @@ export function parseCompactTimestamp(value) {
   return isValidDate(date) && date.toISOString() === iso ? iso : null;
 }
 
+// `detail` of the trash actions: "video-12" / "anh-5" (a record), "file"
+// (a replaced file) or, for trash.purge-expired, the number of entries.
+function describeTrashDetail(action, detail) {
+  const record = /^(video|anh)-(\d+)$/.exec(detail);
+  if (record) return record[1] === "video" ? ` (video #${record[2]})` : ` (dự án ảnh #${record[2]})`;
+  if (detail === "file") return " (file đã thay thế)";
+  if (action === "trash.purge-expired" && /^\d+$/.test(detail)) return ` (${detail} mục)`;
+  return ` (${detail})`;
+}
+
 // Human title for a list row: "Bản trước khi sửa video #12".
 export function describeHistoryEntry(entry, now = Date.now()) {
   const action = entry?.action || "";
@@ -223,6 +237,8 @@ export function describeHistoryEntry(entry, now = Date.now()) {
     } else if (action === "history.restore") {
       const iso = parseCompactTimestamp(detail);
       suffix = iso ? ` (về bản lúc ${formatVnShort(iso, now)})` : "";
+    } else if (/^trash\./.test(action)) {
+      suffix = describeTrashDetail(action, detail);
     } else {
       suffix = ` (${detail})`;
     }
@@ -308,6 +324,8 @@ export function summarizeStore(store) {
     : null;
   const revision = Number(source.revision);
   return {
+    // Entries in "Thùng rác" (deleted records + replaced files).
+    trash: Array.isArray(source.trash) ? source.trash.length : 0,
     projects: projects.length,
     featured,
     otherVideos: projects.length - featured,

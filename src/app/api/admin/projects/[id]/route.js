@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 import { isAdminAuthenticated } from "@/lib/adminAuth";
 import { NO_STORE_HEADERS, serverErrorResponse } from "@/lib/apiErrors";
 import { compactOrder, normalizeProjectPayload, replaceAtOrder } from "@/lib/contentAdmin";
-import { collectAssetKeysFromProject, updateStore } from "@/lib/contentStore";
+import {
+  addRecordToTrash,
+  collectAssetRefsFromProject,
+  purgeExpiredTrash,
+  trashUnreferencedAssets,
+  updateStore,
+} from "@/lib/contentStore";
 import { deleteR2Keys } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
@@ -17,13 +23,6 @@ function unauthorized() {
 
 function invalidId() {
   return NextResponse.json({ error: "Invalid project id." }, { status: 400 });
-}
-
-// Diff old vs new asset keys so we only delete the ones that have actually
-// been removed/replaced. Keys that are still in use must survive cleanup.
-function keysToDelete(oldKeys, nextKeys) {
-  const stillUsed = new Set(nextKeys);
-  return oldKeys.filter((key) => !stillUsed.has(key));
 }
 
 export async function PUT(request, { params }) {
@@ -42,9 +41,9 @@ export async function PUT(request, { params }) {
     return NextResponse.json({ error: "Invalid project payload." }, { status: 400 });
   }
 
-  let oldKeys = [];
   try {
     let updated = null;
+    let trashedFiles = 0;
 
     await updateStore((store) => {
       const index = store.projects.findIndex((item) => Number(item.id) === id);
@@ -52,28 +51,26 @@ export async function PUT(request, { params }) {
         throw new Error("NOT_FOUND");
       }
 
-      oldKeys = collectAssetKeysFromProject(store.projects[index]);
+      const previous = store.projects[index];
 
       // The slug is made unique among the OTHER videos (this one excluded);
       // the response carries the final slug.
       updated = {
         id,
-        ...normalizeProjectPayload(body, store, store.projects[index], { id }),
+        ...normalizeProjectPayload(body, store, previous, { id }),
       };
       store.projects = replaceAtOrder(store.projects, updated, updated.order);
       updated = store.projects.find((item) => Number(item.id) === id) || updated;
+
+      // Files this edit stopped using (replaced video / preview / thumbnail)
+      // go to the trash instead of being deleted: the version before this
+      // edit stays restorable from "Lịch sử" with its media for 30 days.
+      // Files still used elsewhere in the store are left alone.
+      trashedFiles = trashUnreferencedAssets(store, collectAssetRefsFromProject(previous)).length;
       return store;
     }, { action: "project.update", detail: id });
 
-    // Delete only assets the new payload no longer references. Cleanup is
-    // best-effort and runs after the store write succeeds so a failed
-    // delete cannot corrupt the saved state.
-    const orphans = keysToDelete(oldKeys, collectAssetKeysFromProject(updated));
-    if (orphans.length > 0) {
-      await deleteR2Keys(orphans);
-    }
-
-    return NextResponse.json({ data: updated });
+    return NextResponse.json({ data: updated, trashedFiles });
   } catch (error) {
     if (error?.message === "NOT_FOUND") {
       return NextResponse.json({ error: "Project not found." }, { status: 404 });
@@ -85,6 +82,9 @@ export async function PUT(request, { params }) {
   }
 }
 
+// Moves the video into "Thùng rác" (restorable for 30 days) — nothing is
+// deleted from R2 here. Trash entries past their 30 days are purged on the
+// way; their files are deleted only after the store write succeeded.
 export async function DELETE(request, { params }) {
   if (!isAdminAuthenticated(request)) return unauthorized();
 
@@ -92,28 +92,34 @@ export async function DELETE(request, { params }) {
   if (!Number.isInteger(id) || id <= 0) return invalidId();
 
   try {
-    let removed = false;
-    let removedKeys = [];
+    let entry = null;
+    let expiredKeys = [];
     await updateStore((store) => {
-      const before = store.projects.length;
       const target = store.projects.find((item) => Number(item.id) === id);
-      if (target) removedKeys = collectAssetKeysFromProject(target);
-      store.projects = store.projects.filter((item) => Number(item.id) !== id);
-      store.projects = compactOrder(store.projects);
-      removed = store.projects.length !== before;
+      if (!target) throw new Error("NOT_FOUND");
+      const now = Date.now();
+      store.projects = compactOrder(
+        store.projects.filter((item) => Number(item.id) !== id)
+      );
+      // `target` still carries its old `order` (compactOrder made copies).
+      entry = addRecordToTrash(store, "project", target, { now });
+      expiredKeys = purgeExpiredTrash(store, now);
       return store;
     }, { action: "project.delete", detail: id });
 
-    if (!removed) {
+    if (expiredKeys.length > 0) {
+      await deleteR2Keys(expiredKeys);
+    }
+
+    return NextResponse.json({
+      ok: true,
+      trashId: entry.id,
+      trash: { id: entry.id, label: entry.label, expiresAt: entry.expiresAt },
+    });
+  } catch (error) {
+    if (error?.message === "NOT_FOUND") {
       return NextResponse.json({ error: "Project not found." }, { status: 404 });
     }
-
-    if (removedKeys.length > 0) {
-      await deleteR2Keys(removedKeys);
-    }
-
-    return NextResponse.json({ ok: true });
-  } catch (error) {
     return serverErrorResponse(error, {
       context: `DELETE /api/admin/projects/${id}`,
       prefix: "Không xoá được dự án trên R2 —",

@@ -2,11 +2,11 @@ import { NextResponse } from "next/server";
 import { isAdminAuthenticated } from "@/lib/adminAuth";
 import { NO_STORE_HEADERS, serverErrorResponse } from "@/lib/apiErrors";
 import {
-  collectAssetKeysFromSite,
+  collectAssetRefsFromSite,
   readStore,
+  trashUnreferencedAssets,
   updateStore,
 } from "@/lib/contentStore";
-import { deleteR2Keys } from "@/lib/r2";
 import { DEFAULT_SITE_CONTENT, normalizeSiteContent } from "@/lib/siteContent";
 
 // Never prerender / cache: every response depends on the admin cookie and on
@@ -19,11 +19,6 @@ function unauthorized() {
     { error: "Unauthorized" },
     { status: 401, headers: NO_STORE_HEADERS }
   );
-}
-
-function keysToDelete(oldKeys, nextKeys) {
-  const stillUsed = new Set(nextKeys);
-  return oldKeys.filter((key) => !stillUsed.has(key));
 }
 
 export async function GET(request) {
@@ -61,52 +56,23 @@ export async function PUT(request) {
   const next = normalizeSiteContent(body);
 
   try {
-    // Diff brand logos / services image so swapped images don't accumulate
-    // dead files in R2 over time.
-    let oldKeys = [];
+    // Brand logos / services image / founder photo this save stopped using
+    // go to "Thùng rác" (kept 30 days so "Lịch sử" can bring the old
+    // content back with its images, then deleted) instead of piling up as
+    // dead files in R2. Files still used elsewhere are left alone.
+    let trashedFiles = 0;
     await updateStore((store) => {
-      oldKeys = collectAssetKeysFromSite(store.site);
+      const previous = store.site;
       store.site = next;
+      trashedFiles = trashUnreferencedAssets(store, collectAssetRefsFromSite(previous)).length;
       return store;
     }, { action: "site.update" });
 
-    const orphans = keysToDelete(oldKeys, collectAssetKeysFromSite(next));
-    if (orphans.length > 0) {
-      await deleteR2Keys(orphans);
-    }
-
-    return NextResponse.json({ data: next }, { headers: NO_STORE_HEADERS });
+    return NextResponse.json({ data: next, trashedFiles }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     return serverErrorResponse(error, {
       context: "PUT /api/admin/site-content",
       prefix: "Không lưu được nội dung lên R2 —",
-    });
-  }
-}
-
-export async function DELETE(request) {
-  if (!isAdminAuthenticated(request)) return unauthorized();
-
-  try {
-    let oldKeys = [];
-    await updateStore((store) => {
-      oldKeys = collectAssetKeysFromSite(store.site);
-      store.site = null;
-      return store;
-    }, { action: "site.reset" });
-
-    if (oldKeys.length > 0) {
-      await deleteR2Keys(oldKeys);
-    }
-
-    return NextResponse.json(
-      { data: DEFAULT_SITE_CONTENT },
-      { headers: NO_STORE_HEADERS }
-    );
-  } catch (error) {
-    return serverErrorResponse(error, {
-      context: "DELETE /api/admin/site-content",
-      prefix: "Không reset được nội dung trên R2 —",
     });
   }
 }

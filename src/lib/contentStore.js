@@ -47,6 +47,7 @@ function emptyStore() {
     nextAssetId: 1,
     updatedAt: null,
     revision: 0,
+    trash: [],
   };
 }
 
@@ -75,6 +76,102 @@ function normalizeShowreel(value) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Trash ("Thùng rác") — shape and normalization
+// ---------------------------------------------------------------------------
+//
+// Deleting a video / image project, or replacing / removing a file (video,
+// photo, thumbnail, showreel, logo, founder photo…) no longer deletes
+// anything from R2 straight away. The record or file goes into
+// `store.trash` and only leaves R2 TRASH_KEEP_DAYS later (or when the
+// admin deletes it for good from the "Thùng rác" tab):
+//   { id, type: "project" | "imageProject", label, source, deletedAt,
+//     expiresAt, record }          — a deleted record, restorable as-is
+//   { id, type: "asset", label, source, deletedAt, expiresAt,
+//     key, size, mime, url, name } — a replaced / removed file
+// Replaced files are kept so older content can be put back from the
+// "Lịch sử" tab with its media intact. `store.trash` is a separate array:
+// the public serializers / routes never read it.
+
+export const TRASH_KEEP_DAYS = 30;
+const TRASH_DAY_MS = 24 * 60 * 60 * 1000;
+const TRASH_TYPES = new Set(["project", "imageProject", "asset"]);
+const UNTITLED = "(Chưa có tiêu đề)";
+
+function trashString(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function trashNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function toIsoTime(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+// Max time a JS Date can hold; a hand-edited far-future date must never
+// make toISOString() throw while the store is being read.
+const MAX_DATE_MS = 8.64e15;
+
+function addTrashDays(iso, days = TRASH_KEEP_DAYS) {
+  const ms = new Date(iso).getTime() + days * TRASH_DAY_MS;
+  return Number.isFinite(ms) && Math.abs(ms) <= MAX_DATE_MS ? new Date(ms).toISOString() : iso;
+}
+
+function normalizeTrashEntry(entry, fallbackNow) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  const id = trashString(entry.id);
+  const type = TRASH_TYPES.has(entry.type) ? entry.type : null;
+  if (!id || !type) return null;
+  // An unreadable time keeps the entry (and its files) for a full period
+  // rather than dropping it: losing track of a file is worse than keeping
+  // it a little longer.
+  const deletedAt = toIsoTime(entry.deletedAt) || fallbackNow;
+  const expiresAt = toIsoTime(entry.expiresAt) || addTrashDays(deletedAt);
+  const base = {
+    id,
+    type,
+    label: trashString(entry.label) || (type === "asset" ? "File" : UNTITLED),
+    source: trashString(entry.source),
+    deletedAt,
+    expiresAt,
+  };
+  if (type === "asset") {
+    const key = trashString(entry.key);
+    if (!key) return null;
+    return {
+      ...base,
+      key,
+      size: trashNumber(entry.size),
+      mime: trashString(entry.mime),
+      url: trashString(entry.url),
+      name: trashString(entry.name),
+    };
+  }
+  const record = entry.record;
+  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+  return { ...base, record };
+}
+
+function normalizeTrash(value) {
+  if (!Array.isArray(value)) return [];
+  const fallbackNow = new Date().toISOString();
+  const seen = new Set();
+  const list = [];
+  for (const item of value) {
+    const entry = normalizeTrashEntry(item, fallbackNow);
+    if (!entry || seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    list.push(entry);
+  }
+  return list;
+}
+
 let writeQueue = Promise.resolve();
 
 function ensureArray(value) {
@@ -97,6 +194,9 @@ function normalizeStore(store = {}) {
     // set by writeStoreInternal and shown in the admin "Lịch sử" tab.
     updatedAt: normalizeStoreUpdatedAt(store.updatedAt),
     revision: normalizeStoreRevision(store.revision),
+    // Deleted records and replaced files waiting TRASH_KEEP_DAYS before
+    // they leave R2 (see the Trash section below).
+    trash: normalizeTrash(store.trash),
   };
 }
 
@@ -579,7 +679,10 @@ function maxAssetId(store) {
 // Put the whole content back to a history snapshot. Goes through the normal
 // write queue, so the current state is itself snapshotted first (a restore
 // can be undone). Id counters never move backwards, so ids handed out after
-// the snapshot are never reused. Does NOT touch any R2 media.
+// the snapshot are never reused. Does NOT touch any R2 media: trash entries
+// and files the current content uses are carried into the restored store
+// (see carryTrashAcrossRestore) so they still leave R2 after
+// TRASH_KEEP_DAYS instead of lingering unreferenced.
 export async function restoreHistorySnapshot(key) {
   const entry = parseHistoryKey(key);
   if (!entry) throw storeError("BAD_KEY", "Invalid history snapshot key.");
@@ -609,6 +712,7 @@ export async function restoreHistorySnapshot(key) {
       // Keep the write counter monotonic even when restoring over a
       // corrupt (unreadable) store.
       restored.revision = Math.max(current.revision, snapshot.revision);
+      carryTrashAcrossRestore(current, restored, Date.now());
       return restored;
     },
     {
@@ -715,9 +819,12 @@ export function collectAssetKeysFromSite(site) {
 }
 
 // Every R2 media key a whole store references (deduplicated): videos,
-// image projects, showreel and site images. Used by the history tab to
-// tell which media of an old snapshot no longer exist in the bucket.
-export function collectAssetKeysFromStore(store) {
+// image projects, showreel and site images, then — unless
+// `includeTrash: false` — every key held by a trash entry (deleted records
+// and replaced files). Cleanup code (r2/cleanup, trash purge, orphan scans)
+// relies on the default so it never deletes live OR trashed media. The
+// history tab uses it to tell which media of an old snapshot are gone.
+export function collectAssetKeysFromStore(store, { includeTrash = true } = {}) {
   if (!store || typeof store !== "object") return [];
   // Most visible first: the history tab only HEADs the first N keys, so
   // the showreel, site images and videos must not sit behind hundreds of
@@ -734,7 +841,464 @@ export function collectAssetKeysFromStore(store) {
   for (const project of ensureArray(store.imageProjects)) {
     keys.push(...collectAssetKeysFromImageProject(project));
   }
+  // Last, so the history tab's capped check still covers live media first.
+  if (includeTrash) {
+    for (const entry of ensureArray(store.trash)) {
+      keys.push(...collectAssetKeysFromTrashEntry(entry));
+    }
+  }
   return [...new Set(keys.filter((key) => typeof key === "string" && key.trim()))];
+}
+
+// ---------------------------------------------------------------------------
+// Trash ("Thùng rác") — operations
+// ---------------------------------------------------------------------------
+// All of these mutate the store draft handed to an updateStore() mutator.
+// They never touch R2 themselves: a route deletes the keys a purge returns
+// only AFTER the store write succeeded.
+
+export function collectAssetKeysFromTrashEntry(entry) {
+  if (!entry || typeof entry !== "object") return [];
+  if (entry.type === "asset") {
+    const key = trashString(entry.key);
+    return key ? [key] : [];
+  }
+  if (entry.type === "project") return collectAssetKeysFromProject(entry.record);
+  if (entry.type === "imageProject") return collectAssetKeysFromImageProject(entry.record);
+  return [];
+}
+
+function quotedTitle(title) {
+  return `“${trashString(title) || UNTITLED}”`;
+}
+
+function assetRef(asset, label, source) {
+  const key = trashString(asset?.key);
+  if (!key) return null;
+  return {
+    key,
+    url: trashString(asset?.url),
+    size: trashNumber(asset?.size),
+    mime: trashString(asset?.mime),
+    name: trashString(asset?.name),
+    label,
+    source,
+  };
+}
+
+// R2 files of a record / the showreel / the site content, each with a
+// Vietnamese label for the "Thùng rác" tab. Only files with a key.
+export function collectAssetRefsFromProject(project, source = "project-media") {
+  if (!project || typeof project !== "object") return [];
+  const title = quotedTitle(project.title);
+  return [
+    assetRef(project.media, `Video cũ của ${title}`, source),
+    assetRef(project.preview, `Video xem trước cũ của ${title}`, source),
+    assetRef(project.thumbnail, `Ảnh thumbnail cũ của ${title}`, source),
+  ].filter(Boolean);
+}
+
+export function collectAssetRefsFromImageProject(project, source = "image-project-media") {
+  if (!project || typeof project !== "object") return [];
+  const title = quotedTitle(project.title);
+  const refs = ensureArray(project.media).map((asset) =>
+    assetRef(asset, `Ảnh cũ của dự án ${title}`, source)
+  );
+  refs.push(assetRef(project.thumbnail, `Ảnh thumbnail cũ của dự án ${title}`, source));
+  return refs.filter(Boolean);
+}
+
+export function collectAssetRefsFromShowreel(showreel, source = "showreel") {
+  if (!showreel || typeof showreel !== "object") return [];
+  return [assetRef(showreel, "Showreel cũ", source)].filter(Boolean);
+}
+
+export function collectAssetRefsFromSite(site, source = "site-image") {
+  if (!site || typeof site !== "object") return [];
+  const refs = [];
+  for (const brand of ensureArray(site.clients?.strategicBrands)) {
+    if (!brand?.logoKey) continue;
+    const name = trashString(brand.alt);
+    refs.push(
+      assetRef(
+        { key: brand.logoKey, url: brand.logoUrl },
+        name ? `Logo khách hàng “${name}”` : "Logo khách hàng",
+        source
+      )
+    );
+  }
+  refs.push(assetRef(site.services?.image, "Ảnh mục Dịch vụ", source));
+  refs.push(assetRef(site.about?.founder?.photo, "Ảnh founder", source));
+  return refs.filter(Boolean);
+}
+
+function collectLiveAssetRefs(store, source) {
+  if (!store || typeof store !== "object") return [];
+  return [
+    ...collectAssetRefsFromShowreel(store.showreel, source),
+    ...collectAssetRefsFromSite(store.site, source),
+    ...ensureArray(store.projects).flatMap((item) => collectAssetRefsFromProject(item, source)),
+    ...ensureArray(store.imageProjects).flatMap((item) =>
+      collectAssetRefsFromImageProject(item, source)
+    ),
+  ];
+}
+
+function resolveNow(now) {
+  const date = now instanceof Date ? now : new Date(now ?? Date.now());
+  const ms = Number.isNaN(date.getTime()) ? Date.now() : date.getTime();
+  return { ms, iso: new Date(ms).toISOString() };
+}
+
+function shortKeyHash(value) {
+  return crypto.createHash("md5").update(String(value)).digest("hex").slice(0, 10);
+}
+
+// "<type>-<record id | key hash>-<ms>", made unique within the trash.
+function makeTrashId(trash, type, ref, ms) {
+  const base = `${type}-${ref}-${ms}`;
+  const taken = new Set(ensureArray(trash).map((entry) => entry?.id));
+  if (!taken.has(base)) return base;
+  let suffix = 2;
+  while (taken.has(`${base}-${suffix}`)) suffix += 1;
+  return `${base}-${suffix}`;
+}
+
+// Move a deleted project / image project into the trash exactly as it was
+// stored (its `order` included, so a restore puts it back in place).
+// The caller removes it from its collection. Returns the new entry.
+export function addRecordToTrash(store, type, record, { now = Date.now() } = {}) {
+  if (type !== "project" && type !== "imageProject") {
+    throw new TypeError(`addRecordToTrash: unknown type ${type}`);
+  }
+  if (!record || typeof record !== "object") {
+    throw new TypeError("addRecordToTrash: record is required");
+  }
+  if (!Array.isArray(store.trash)) store.trash = [];
+  const { ms, iso } = resolveNow(now);
+  const recordId = Number(record.id);
+  const entry = {
+    id: makeTrashId(
+      store.trash,
+      type,
+      Number.isInteger(recordId) && recordId > 0 ? recordId : shortKeyHash(JSON.stringify(record)),
+      ms
+    ),
+    type,
+    label: trashString(record.title) || UNTITLED,
+    source: type === "project" ? "projects" : "image-projects",
+    deletedAt: iso,
+    expiresAt: addTrashDays(iso),
+    record,
+  };
+  store.trash.push(entry);
+  return entry;
+}
+
+// Files (refs from collectAssetRefsFrom*) the content no longer uses after
+// an edit / replace / delete become "asset" trash entries. Call it AFTER the
+// draft holds the new content. A key the live content still uses anywhere
+// (the same file kept, another record sharing it) is skipped. A key already
+// held by an older "asset" entry replaces that entry, so its period starts
+// again. `source` overrides the refs' own source. Returns the new entries.
+export function trashUnreferencedAssets(store, refs, { now = Date.now(), source } = {}) {
+  if (!Array.isArray(store.trash)) store.trash = [];
+  const live = new Set(collectAssetKeysFromStore(store, { includeTrash: false }));
+  const { ms, iso } = resolveNow(now);
+  const added = [];
+  const seen = new Set();
+  for (const ref of ensureArray(refs)) {
+    const key = trashString(ref?.key);
+    if (!key || live.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    store.trash = store.trash.filter((entry) => !(entry?.type === "asset" && entry.key === key));
+    const entry = {
+      id: makeTrashId(store.trash, "asset", shortKeyHash(key), ms),
+      type: "asset",
+      label: trashString(ref.label) || trashString(ref.name) || "File",
+      source: trashString(source) || trashString(ref.source),
+      deletedAt: iso,
+      expiresAt: addTrashDays(iso),
+      key,
+      size: trashNumber(ref.size),
+      mime: trashString(ref.mime),
+      url: trashString(ref.url),
+      name: trashString(ref.name),
+    };
+    store.trash.push(entry);
+    added.push(entry);
+  }
+  return added;
+}
+
+// Keys among `candidates` that nothing left in the store uses (neither the
+// live content nor another trash entry).
+function keysSafeToDelete(store, candidates) {
+  const used = new Set(collectAssetKeysFromStore(store));
+  const unique = new Set(
+    ensureArray(candidates).filter((key) => typeof key === "string" && key.trim())
+  );
+  return [...unique].filter((key) => !used.has(key));
+}
+
+export function isTrashEntryExpired(entry, now = Date.now()) {
+  const expires = new Date(entry?.expiresAt).getTime();
+  return Number.isFinite(expires) && expires <= resolveNow(now).ms;
+}
+
+export function hasExpiredTrash(store, now = Date.now()) {
+  return ensureArray(store?.trash).some((entry) => isTrashEntryExpired(entry, now));
+}
+
+// Drops every entry past its expiresAt (gone for good) and returns the R2
+// keys that are now safe to delete: held by a dropped entry and used by
+// nothing left in the store. Delete them only after the store write.
+export function purgeExpiredTrash(store, now = Date.now()) {
+  const trash = ensureArray(store?.trash);
+  const expired = trash.filter((entry) => isTrashEntryExpired(entry, now));
+  if (expired.length === 0) return [];
+  store.trash = trash.filter((entry) => !isTrashEntryExpired(entry, now));
+  return keysSafeToDelete(store, expired.flatMap(collectAssetKeysFromTrashEntry));
+}
+
+// Deletes one entry now. Returns { entry, keys } (keys safe to delete after
+// the write), or null when there is no entry with that id.
+export function removeTrashEntry(store, id) {
+  const trash = ensureArray(store?.trash);
+  const entry = trash.find((item) => item?.id === id);
+  if (!entry) return null;
+  store.trash = trash.filter((item) => item !== entry);
+  return { entry, keys: keysSafeToDelete(store, collectAssetKeysFromTrashEntry(entry)) };
+}
+
+export function trashDaysLeft(entry, now = Date.now()) {
+  const expires = new Date(entry?.expiresAt).getTime();
+  if (!Number.isFinite(expires)) return TRASH_KEEP_DAYS;
+  return Math.max(0, Math.ceil((expires - resolveNow(now).ms) / TRASH_DAY_MS));
+}
+
+const IMAGE_FILE_PATTERN = /\.(png|jpe?g|webp|gif|avif)$/i;
+const VIDEO_FILE_PATTERN = /\.(mp4|webm|mov|mkv|m4v)$/i;
+
+function previewKindOf(asset) {
+  const mime = String(asset?.mime || "").toLowerCase();
+  const name = String(asset?.name || asset?.key || asset?.url || "").split(/[?#]/)[0];
+  if (mime.startsWith("image/") || IMAGE_FILE_PATTERN.test(name)) return "image";
+  if (mime.startsWith("video/") || VIDEO_FILE_PATTERN.test(name)) return "video";
+  return null;
+}
+
+function recordFiles(type, record) {
+  const files =
+    type === "project"
+      ? [record?.media, record?.preview, record?.thumbnail]
+      : [...ensureArray(record?.media), record?.thumbnail];
+  const seen = new Set();
+  return files.filter((asset) => {
+    const id = asset && (trashString(asset.key) || trashString(asset.url));
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+// One row of the "Thùng rác" tab (no full record: the list stays small).
+export function describeTrashEntry(entry, now = Date.now()) {
+  const base = {
+    id: entry.id,
+    type: entry.type,
+    label: entry.label,
+    source: entry.source || null,
+    deletedAt: entry.deletedAt,
+    expiresAt: entry.expiresAt,
+    daysLeft: trashDaysLeft(entry, now),
+    restorable: entry.type !== "asset",
+  };
+  if (entry.type === "asset") {
+    const kind = previewKindOf(entry) || (entry.source === "site-image" ? "image" : null);
+    return {
+      ...base,
+      key: entry.key,
+      name: entry.name || null,
+      mime: entry.mime || null,
+      size: entry.size ?? null,
+      fileCount: 1,
+      previewUrl: kind && entry.url ? entry.url : null,
+      previewKind: entry.url ? kind : null,
+      recordId: null,
+      title: null,
+      client: null,
+      featured: false,
+    };
+  }
+  const record = entry.record || {};
+  const files = recordFiles(entry.type, record);
+  const sizes = files.map((asset) => trashNumber(asset.size)).filter((size) => size !== null);
+  const firstMedia = Array.isArray(record.media) ? record.media[0] : record.media;
+  const thumbUrl = trashString(record.thumbnail?.url);
+  const mediaUrl = trashString(firstMedia?.url);
+  const recordId = Number(record.id);
+  return {
+    ...base,
+    key: null,
+    name: null,
+    mime: null,
+    size: sizes.length > 0 ? sizes.reduce((sum, size) => sum + size, 0) : null,
+    fileCount: files.length,
+    previewUrl: thumbUrl || mediaUrl || null,
+    previewKind: thumbUrl
+      ? "image"
+      : mediaUrl
+      ? previewKindOf(firstMedia) || (entry.type === "project" ? "video" : "image")
+      : null,
+    recordId: Number.isFinite(recordId) ? recordId : null,
+    title: trashString(record.title) || UNTITLED,
+    client: trashString(record.client),
+    featured: Boolean(record.featured),
+  };
+}
+
+// `detail` of a trash.* history entry: "video-12", "anh-5" or "file"
+// (see describeHistoryEntry in lib/contentHistory.js).
+export function trashHistoryDetail(entry) {
+  if (!entry) return "";
+  if (entry.type === "asset") return "file";
+  const id = Number(entry.record?.id);
+  if (!Number.isInteger(id) || id <= 0) return "";
+  return `${entry.type === "project" ? "video" : "anh"}-${id}`;
+}
+
+// Purges expired trash entries now (one store write, only when something
+// expired) and deletes their R2 files after the write succeeded. Pass the
+// store just read to skip a second read. Returns { store, purged,
+// deletedFiles } — `store` is the latest known content.
+export async function purgeExpiredTrashNow({ now = Date.now(), store = null } = {}) {
+  const current = store || (await readStore());
+  if (!hasExpiredTrash(current, now)) return { store: current, purged: 0, deletedFiles: 0 };
+  let keys = [];
+  let purged = 0;
+  const saved = await updateStore(
+    (draft) => {
+      const before = ensureArray(draft.trash).length;
+      keys = purgeExpiredTrash(draft, now);
+      purged = before - ensureArray(draft.trash).length;
+      return draft;
+    },
+    { action: "trash.purge-expired", detail: () => purged }
+  );
+  if (keys.length > 0) await deleteR2Keys(keys);
+  return { store: saved, purged, deletedFiles: keys.length };
+}
+
+// Rows for the "Thùng rác" tab, newest first.
+export function listTrashEntries(store, now = Date.now()) {
+  return [...ensureArray(store?.trash)]
+    .sort((a, b) => {
+      const diff = new Date(b.deletedAt).getTime() - new Date(a.deletedAt).getTime();
+      if (Number.isFinite(diff) && diff !== 0) return diff;
+      return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+    })
+    .map((entry) => describeTrashEntry(entry, now));
+}
+
+// A history restore replaces the whole content, trash included. The
+// resulting trash is built so that no file still in R2 is lost track of,
+// and no file the owner was using a moment ago is deleted early:
+//   - The CURRENT trash is the truth about what is waiting to be deleted:
+//     its entries are kept with their own dates, except those the restored
+//     content uses again (a record back live, a file back in use) — their
+//     files the restored content does not use stay trashed as files.
+//   - A SNAPSHOT trash entry the current trash no longer has was already
+//     purged (files gone), restored, or superseded by a newer entry, so it
+//     is dropped — unless what it holds is live in the current content
+//     (its file, or its record): that one comes back with a full new
+//     period, since it was live until this restore.
+//   - Every file the current content uses that the restored content does
+//     not ends up in the trash with a full new period (an entry already
+//     holding it is re-stamped; otherwise a new file entry is added).
+//   - Two file entries for the same key: the later expiry wins.
+function carryTrashAcrossRestore(current, restored, now = Date.now()) {
+  const { iso } = resolveNow(now);
+  const freshExpiry = addTrashDays(iso);
+  const restamp = (entry) =>
+    new Date(entry.expiresAt).getTime() >= new Date(freshExpiry).getTime()
+      ? entry
+      : { ...entry, deletedAt: iso, expiresAt: freshExpiry };
+
+  const currentTrash = ensureArray(current?.trash).filter(Boolean);
+  const currentIds = new Set(currentTrash.map((entry) => entry.id));
+  const currentLiveKeys = new Set(collectAssetKeysFromStore(current, { includeTrash: false }));
+  const currentLiveIds = {
+    project: new Set(ensureArray(current?.projects).map((item) => Number(item?.id))),
+    imageProject: new Set(ensureArray(current?.imageProjects).map((item) => Number(item?.id))),
+  };
+  const restoredLiveKeys = new Set(collectAssetKeysFromStore(restored, { includeTrash: false }));
+  const restoredLiveIds = {
+    project: new Set(ensureArray(restored.projects).map((item) => Number(item?.id))),
+    imageProject: new Set(ensureArray(restored.imageProjects).map((item) => Number(item?.id))),
+  };
+
+  const trash = [];
+  for (const entry of ensureArray(restored.trash)) {
+    if (!entry || currentIds.has(entry.id)) continue; // taken from current below
+    if (entry.type === "asset" && restoredLiveKeys.has(entry.key)) continue;
+    // A record entry comes back only for a record live now: one sharing a
+    // live file (e.g. a thumbnail) is still purged / superseded — that file
+    // is tracked by the "live until now" step below anyway.
+    const liveNow =
+      entry.type === "asset"
+        ? currentLiveKeys.has(entry.key)
+        : currentLiveIds[entry.type]?.has(Number(entry.record?.id));
+    if (liveNow) trash.push(restamp(entry));
+  }
+
+  const leftovers = [];
+  for (const entry of currentTrash) {
+    if (entry.type === "asset") {
+      if (!restoredLiveKeys.has(entry.key)) trash.push(entry);
+      continue;
+    }
+    if (restoredLiveIds[entry.type]?.has(Number(entry.record?.id))) {
+      // That record is back in the restored content: only its files the
+      // restored version does not use stay in the trash.
+      leftovers.push(
+        ...(entry.type === "project"
+          ? collectAssetRefsFromProject(entry.record, "history-restore")
+          : collectAssetRefsFromImageProject(entry.record, "history-restore"))
+      );
+      continue;
+    }
+    trash.push(entry);
+  }
+
+  // One file entry per key: the one kept longest.
+  const byKey = new Map();
+  for (const entry of trash) {
+    if (entry.type !== "asset") continue;
+    const kept = byKey.get(entry.key);
+    if (!kept || new Date(entry.expiresAt).getTime() > new Date(kept.expiresAt).getTime()) {
+      byKey.set(entry.key, entry);
+    }
+  }
+  restored.trash = trash.filter((entry) => entry.type !== "asset" || byKey.get(entry.key) === entry);
+
+  // Files live until now that the restored content drops: re-stamp every
+  // entry already holding one, trash the rest as new file entries.
+  const freshKeys = new Set(
+    [...currentLiveKeys].filter((key) => !restoredLiveKeys.has(key))
+  );
+  const held = new Set();
+  restored.trash = restored.trash.map((entry) => {
+    const keys = collectAssetKeysFromTrashEntry(entry);
+    keys.forEach((key) => held.add(key));
+    return keys.some((key) => freshKeys.has(key)) ? restamp(entry) : entry;
+  });
+  leftovers.push(...collectLiveAssetRefs(current, "history-restore"));
+  trashUnreferencedAssets(
+    restored,
+    leftovers.filter((ref) => !held.has(ref.key)),
+    { now }
+  );
 }
 
 export function createAssetId(store) {

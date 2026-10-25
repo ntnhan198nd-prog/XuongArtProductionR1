@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import FeaturedLayoutPanel from "@/components/admin/FeaturedLayoutPanel";
 import ShowreelPanel from "@/components/admin/ShowreelPanel";
 import AutocompleteInput from "@/components/admin/AutocompleteInput";
 import { useToast, useToastAvoid } from "@/components/admin/ToastProvider";
+import { notifyTrashChanged } from "@/components/admin/TrashPanel";
 import {
   ACCEPT,
   UploadError,
@@ -687,6 +689,28 @@ function RowThumb({ item }) {
       Chưa có ảnh
     </div>
   );
+}
+
+// "3 file · 120 MB" for the delete confirmation: the record's video /
+// preview / thumbnail (or photos + thumbnail), each file counted once; the
+// size adds up the sizes that are known.
+function recordFilesSummary(item, isVideo) {
+  const assets = isVideo
+    ? [item?.media, item?.preview, item?.thumbnail]
+    : [...(Array.isArray(item?.media) ? item.media : []), item?.thumbnail];
+  const seen = new Set();
+  let count = 0;
+  let total = 0;
+  for (const asset of assets) {
+    const id = asset && (asset.key || asset.url);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    count += 1;
+    const size = Number(asset.size);
+    if (Number.isFinite(size) && size > 0) total += size;
+  }
+  if (count === 0) return "Không có file";
+  return total > 0 ? `${count} file · ${formatBytes(total)}` : `${count} file`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1373,7 +1397,7 @@ function errorToastOptions(err, retry) {
     return opts;
   }
   if (status === null || status === undefined || status === 0 || status >= 500) {
-    opts.href = "/api/admin/health";
+    opts.href = "/admin?tab=system";
     opts.hrefLabel = "Kiểm tra kết nối R2 ↗";
   }
   return opts;
@@ -1410,8 +1434,13 @@ function prefersReducedMotion() {
 // `onDirtyChange(dirty)` (optional) is true while the form has unsaved edits
 // or picked / uploaded-but-unsaved files, the featured layout has an unsaved
 // arrangement, or a save is running.
+// Deep link: /admin?tab=<mode>&edit=<id> opens that record in the form (as
+// if "Sửa" was pressed, unsaved-changes confirm included) once this panel
+// is the active tab, then removes only the `edit` param from the URL.
 export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirtyChange } = {}) {
   const toast = useToast();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   // Keep phone toasts from covering the form's sticky save bar.
   const saveBarRef = useRef(null);
   useToastAvoid(saveBarRef, active !== false);
@@ -1460,6 +1489,9 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
 
   const [items, setItems] = useState([]);
   const [loadingItems, setLoadingItems] = useState(false);
+  // True once a list read finished (ok or failed): the ?edit=<id> deep link
+  // waits for it before deciding whether the record exists.
+  const [listSettled, setListSettled] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   // Optional actionable hint returned by the API (e.g. which R2 env var to
@@ -2128,6 +2160,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
         setErrorHint("");
         setErrorStatus(null);
         setStaleNotice(false);
+        setListSettled(true);
         editorSyncRef.current?.(list);
       }
       return list;
@@ -2136,6 +2169,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
         setError(loadError.message);
         setErrorHint(loadError.hint || "");
         setErrorStatus(loadError.status ?? null);
+        setListSettled(true);
         if (!background) setItems([]);
       }
       return null;
@@ -2220,6 +2254,68 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
     loadPublicCategories();
     revealForm();
   };
+  const startEditRef = useRef(null);
+  useEffect(() => {
+    startEditRef.current = startEdit;
+  });
+
+  // --- Deep link: /admin?tab=<mode>&edit=<id> --------------------------------
+  // Only the panel that owns the `tab` param acts (while the shell switches
+  // tabs, the previous panel can still be `active` for a render).
+  const editParam = searchParams?.get("edit") || "";
+  const tabParam = searchParams?.get("tab") || "";
+  const ownsTabParam = Boolean(
+    mode && (tabParam === mode || (mode === "showreel-featured" && tabParam === "projects"))
+  );
+  // Removes only `edit` (keeps `tab` and anything else) without scrolling.
+  const clearEditParam = useCallback(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (!params.has("edit")) return;
+      params.delete("edit");
+      const qs = params.toString();
+      router.replace(`${window.location.pathname}${qs ? `?${qs}` : ""}`, { scroll: false });
+    } catch {
+      // Leaving the param in the URL is harmless: it is handled once.
+    }
+  }, [router]);
+  const openFromDeepLink = async (raw) => {
+    const id = Number(raw);
+    const validId = Number.isInteger(id) && id > 0;
+    let item = validId ? itemsRef.current.find((it) => sameId(it?.id, id)) || null : null;
+    let unreadable = false;
+    if (!item && validId) {
+      // The list on screen may predate the record (made in another tab).
+      const fresh = await loadItems(tab, { background: true });
+      if (fresh) item = fresh.find((it) => sameId(it?.id, id)) || null;
+      else unreadable = true;
+    }
+    if (item) {
+      startEditRef.current?.(item);
+    } else if (unreadable) {
+      notify("info", `Chưa mở được mục #${raw} vì danh sách chưa tải được — bấm “Tải lại danh sách” rồi mở lại mục này.`);
+    } else {
+      notify("info", `Không tìm thấy mục #${raw} — có thể đã bị xoá.`);
+    }
+    clearEditParam();
+  };
+  const openFromDeepLinkRef = useRef(null);
+  useEffect(() => {
+    openFromDeepLinkRef.current = openFromDeepLink;
+  });
+  const deepLinkHandledRef = useRef("");
+  useEffect(() => {
+    if (!editParam) {
+      deepLinkHandledRef.current = "";
+      return;
+    }
+    if (!ownsTabParam || active !== true) return;
+    // Wait for the first list and for running work (a save / delete).
+    if (!listSettled || loadingItems || saving || deletingId !== null) return;
+    if (deepLinkHandledRef.current === editParam) return;
+    deepLinkHandledRef.current = editParam;
+    openFromDeepLinkRef.current?.(editParam);
+  }, [editParam, ownsTabParam, active, listSettled, loadingItems, saving, deletingId]);
 
   // Persist a new ordering of `items` to the server. Called by both the
   // ↑/↓ buttons and drag-and-drop. Optimistic: updates local state first,
@@ -2361,6 +2457,47 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
     if (button) setTimeout(() => button.focus?.(), 0);
   };
 
+  // "Hoàn tác" on the delete toast: puts the record back from "Thùng rác"
+  // (same place in the list, see /api/admin/trash/restore).
+  const undoDelete = async (trashId, title) => {
+    try {
+      const payload = await fetchJson(
+        "/api/admin/trash/restore",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: trashId }),
+        },
+        { fallbackError: "Hoàn tác thất bại" }
+      );
+      notify(
+        "success",
+        `Đã khôi phục “${title}”`,
+        payload?.slugChanged && payload?.data?.slug
+          ? { hint: `Đường dẫn cũ đã có mục khác dùng nên đổi thành “${payload.data.slug}”.` }
+          : undefined
+      );
+      notifyTrashChanged();
+      await loadItems(tab, { background: true });
+    } catch (undoError) {
+      // 404 = already restored / deleted for good elsewhere, 409 = its files
+      // are gone from R2: nothing to retry.
+      const retry =
+        undoError?.status === 404 || undoError?.status === 400 || undoError?.status === 409
+          ? null
+          : () => undoDeleteRef.current?.(trashId, title);
+      notify(
+        "error",
+        undoError?.message || "Hoàn tác thất bại.",
+        errorToastOptions(undoError, retry)
+      );
+    }
+  };
+  const undoDeleteRef = useRef(null);
+  useEffect(() => {
+    undoDeleteRef.current = undoDelete;
+  });
+
   const handleDelete = async (id) => {
     if (deletingId !== null) return;
     const deletedTitle =
@@ -2371,11 +2508,13 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
       // Bare async click handler: without try/catch an empty/non-JSON error
       // body used to reject silently — no message, list never refreshed,
       // the row appeared to "do nothing".
-      await fetchJson(
+      // The record goes to "Thùng rác"; the answer names its trash entry.
+      const result = await fetchJson(
         `/api/admin/${tab}/${id}`,
         { method: "DELETE" },
         { fallbackError: "Xoá thất bại" }
       );
+      const trashId = typeof result?.trashId === "string" ? result.trashId : "";
       setConfirmDeleteId(null);
       if (Number(editingId) === Number(id)) {
         resetEditor();
@@ -2384,7 +2523,19 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
       loadSeqRef.current += 1;
       itemsRef.current = itemsRef.current.filter((it) => !sameId(it?.id, id));
       setItems((prev) => prev.filter((it) => !sameId(it?.id, id)));
-      notify("success", `Đã xoá “${deletedTitle}”`);
+      notify(
+        "success",
+        `Đã chuyển “${deletedTitle}” vào Thùng rác`,
+        trashId
+          ? {
+              actionLabel: "Hoàn tác",
+              onAction: () => undoDeleteRef.current?.(trashId, deletedTitle),
+              // Long enough to notice and press "Hoàn tác".
+              duration: 8000,
+            }
+          : undefined
+      );
+      notifyTrashChanged();
       // loadItems never throws (it shows its own error).
       await loadItems(tab, { background: true });
     } catch (deleteError) {
@@ -2936,7 +3087,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
               </button>
             ) : (
               <a
-                href="/api/admin/health"
+                href="/admin?tab=system"
                 target="_blank"
                 rel="noreferrer"
                 className="text-xs text-red-700 underline hover:text-red-900"
@@ -3826,9 +3977,27 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
                             closeDeleteConfirm(item.id);
                           }}
                         >
-                          <p id={fieldId(`delete-confirm-text-${item.id}`)} className="break-words">
-                            Xoá “{item.title || "(Chưa có tiêu đề)"}” (#{item.id})? Video/ảnh của mục
-                            này trên R2 cũng sẽ bị xoá.
+                          <div className="flex gap-3">
+                            <RowThumb item={item} />
+                            <div className="min-w-0">
+                              <p className="break-words font-semibold text-red-900">
+                                {item.title || "(Chưa có tiêu đề)"}{" "}
+                                <span className="font-normal text-red-700">#{item.id}</span>
+                              </p>
+                              <p className="mt-0.5 break-words text-red-800">
+                                {item.client || "Chưa ghi khách hàng"}
+                              </p>
+                              <p className="mt-0.5 text-red-800">
+                                {recordFilesSummary(item, isVideoTab)}
+                              </p>
+                            </div>
+                          </div>
+                          <p
+                            id={fieldId(`delete-confirm-text-${item.id}`)}
+                            className="mt-2 break-words"
+                          >
+                            Xoá “{item.title || "(Chưa có tiêu đề)"}”? Mục sẽ vào Thùng rác — khôi
+                            phục được trong 30 ngày.
                           </p>
                           {deleteError && Number(deleteError.id) === Number(item.id) && !deleting ? (
                             <div
@@ -3851,7 +4020,7 @@ export default function ProjectsAdminPanel({ mode, onBusyChange, active, onDirty
                                 </button>
                               ) : deleteError.status === null || deleteError.status >= 500 ? (
                                 <a
-                                  href="/api/admin/health"
+                                  href="/admin?tab=system"
                                   target="_blank"
                                   rel="noreferrer"
                                   className="mt-1 inline-block text-red-700 underline hover:text-red-900"

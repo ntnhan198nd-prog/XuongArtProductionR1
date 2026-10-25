@@ -23,8 +23,10 @@ const MAX_KEYS = 500;
 // stale) copy of the records — e.g. a save that timed out on the client may
 // still have been stored. So the current content store is read first and
 // every key a saved record (projects, image projects, showreel, site
-// content) still references is skipped. If the store cannot be read,
-// nothing is deleted: an orphan is cheap, a deleted live file is not.
+// content) still references is skipped — and so is every key held by
+// "Thùng rác" (deleted records and replaced files wait 30 days there, see
+// collectAssetKeysFromStore). If the store cannot be read, nothing is
+// deleted: an orphan is cheap, a deleted live or trashed file is not.
 export async function POST(request) {
   if (!isAdminAuthenticated(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -56,6 +58,7 @@ export async function POST(request) {
 
   let referenced;
   try {
+    // Live content AND trash entries (the default of collectAssetKeysFromStore).
     referenced = new Set(collectAssetKeysFromStore(await readStore()));
   } catch (error) {
     console.error(

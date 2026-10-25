@@ -1,12 +1,13 @@
 import "server-only";
 import {
+  collectAssetKeysFromStore,
   createAssetId,
   normalizeCategories,
   parseOptionalDate,
   slugify,
   sortByOrderThenId,
 } from "@/lib/contentStore";
-import { toSlotIndex } from "@/lib/featuredLayout";
+import { resolveFeaturedSlots, toSlotIndex } from "@/lib/featuredLayout";
 
 function normalizeText(value, fallback = "") {
   if (value === null || value === undefined) return fallback;
@@ -262,4 +263,97 @@ export function replaceAtOrder(items = [], updatedItem, desiredOrder) {
 
   others.splice(position - 1, 0, updatedItem);
   return resequence(others);
+}
+
+// ---------------------------------------------------------------------------
+// Trash ("Thùng rác")
+// ---------------------------------------------------------------------------
+
+// error.code values thrown by restoreRecordFromTrash; the trash routes turn
+// them into 404 / 400 answers.
+export const TRASH_NOT_FOUND_CODE = "TRASH_NOT_FOUND";
+export const TRASH_ASSET_RESTORE_CODE = "TRASH_ASSET_RESTORE";
+
+function trashError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+// The pinned featured-grid cell a restored video may keep: only when it is
+// featured, the grid still uses pins (it has gaps — a dense grid stores no
+// pins, see lib/featuredLayout.js) and nothing sits in that cell now (e.g.
+// an immediate "Hoàn tác"). An empty cell means no unpinned video was
+// placed at or past it either, so keeping the pin moves nobody. Otherwise
+// null: it flows into the lowest free cell.
+function keptFeaturedSlot(record, items) {
+  const slot = toSlotIndex(record?.featuredSlot);
+  if (!record?.featured || slot === null) return null;
+  const others = items.filter(
+    (item) => item?.featured && Number(item.id) !== Number(record.id)
+  );
+  if (!others.some((item) => toSlotIndex(item.featuredSlot) !== null)) return null;
+  return resolveFeaturedSlots(others)[slot] ? null : slot;
+}
+
+// Puts a deleted video / image project (a store.trash entry) back into its
+// collection, on the store draft of an updateStore() mutator:
+//   - at its old place (insertAtOrder with the stored `order`),
+//   - with its slug made unique again (another record may have taken it
+//     meanwhile → "<slug>-2"),
+//   - still featured if it was, keeping its pinned featured-grid cell
+//     (`featuredSlot`) only while that cell is still free; otherwise it
+//     flows into a free cell instead of colliding with what sits there now,
+//   - under its own id, or a fresh one if that id is somehow in use.
+// The trash entry is removed, and so are "replaced file" entries whose file
+// the restored record uses again (it is live content now). File entries
+// ("asset") cannot be restored on their own (their content lives in
+// history snapshots).
+// Returns { entry, record, collection, slugChanged, previousSlug }.
+export function restoreRecordFromTrash(store, entryId, { now = new Date() } = {}) {
+  const trash = Array.isArray(store.trash) ? store.trash : [];
+  const index = trash.findIndex((entry) => entry && entry.id === entryId);
+  if (index === -1) {
+    throw trashError(TRASH_NOT_FOUND_CODE, `Trash entry ${entryId} not found.`);
+  }
+  const entry = trash[index];
+  if (entry.type !== "project" && entry.type !== "imageProject") {
+    throw trashError(TRASH_ASSET_RESTORE_CODE, "A replaced file cannot be restored on its own.");
+  }
+  const isVideo = entry.type === "project";
+  const collection = isVideo ? "projects" : "imageProjects";
+  const counterKey = isVideo ? "nextProjectId" : "nextImageProjectId";
+  const items = Array.isArray(store[collection]) ? store[collection] : [];
+  const record = structuredClone(entry.record);
+
+  let id = Number(record.id);
+  if (!Number.isInteger(id) || id <= 0 || items.some((item) => Number(item?.id) === id)) {
+    id = Number(store[counterKey]) > 0 ? Number(store[counterKey]) : 1;
+  }
+  // Id counters never fall behind an id in use.
+  store[counterKey] = Math.max(Number(store[counterKey]) || 1, id + 1);
+  record.id = id;
+
+  const previousSlug = effectiveSlug(record);
+  const baseSlug = previousSlug || `${isVideo ? "video" : "anh"}-${id}`;
+  record.slug = makeUniqueSlug(baseSlug, items, { excludeId: id });
+  if (isVideo) record.featuredSlot = keptFeaturedSlot(record, items);
+  const when = now instanceof Date ? now : new Date(now);
+  record.updatedAt = Number.isNaN(when.getTime())
+    ? new Date().toISOString()
+    : when.toISOString();
+
+  store[collection] = insertAtOrder(items, record, record.order);
+  const live = new Set(collectAssetKeysFromStore(store, { includeTrash: false }));
+  store.trash = trash.filter(
+    (item, position) =>
+      position !== index && !(item?.type === "asset" && live.has(item.key))
+  );
+  return {
+    entry,
+    record: store[collection].find((item) => Number(item.id) === id) || record,
+    collection,
+    slugChanged: record.slug !== previousSlug,
+    previousSlug,
+  };
 }

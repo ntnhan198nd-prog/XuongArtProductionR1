@@ -27,7 +27,9 @@ export async function GET(request) {
 
   try {
     const snapshot = await readHistorySnapshot(key);
-    const media = await findMissingR2Keys(collectAssetKeysFromStore(snapshot), {
+    // Only the snapshot's LIVE content: trash entries in an old snapshot may
+    // have been purged on purpose and must not read as "missing media".
+    const media = await findMissingR2Keys(collectAssetKeysFromStore(snapshot, { includeTrash: false }), {
       limit: MAX_MEDIA_CHECKS,
     });
     return NextResponse.json(

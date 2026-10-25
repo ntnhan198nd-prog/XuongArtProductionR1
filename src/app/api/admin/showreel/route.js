@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { isAdminAuthenticated } from "@/lib/adminAuth";
 import { NO_STORE_HEADERS, serverErrorResponse } from "@/lib/apiErrors";
-import { readStore, updateStore } from "@/lib/contentStore";
+import {
+  collectAssetRefsFromShowreel,
+  purgeExpiredTrash,
+  readStore,
+  trashUnreferencedAssets,
+  updateStore,
+} from "@/lib/contentStore";
 import { deleteR2Keys } from "@/lib/r2";
 
 export const dynamic = "force-dynamic";
@@ -48,11 +54,9 @@ export async function POST(request) {
 
   try {
     let saved = null;
-    let oldKey = null;
+    let trashedFiles = 0;
     await updateStore((store) => {
-      if (store.showreel?.key && store.showreel.key !== body.key) {
-        oldKey = store.showreel.key;
-      }
+      const previous = store.showreel;
       store.showreel = {
         url,
         key: body.key || null,
@@ -65,16 +69,14 @@ export async function POST(request) {
         updatedAt: new Date().toISOString(),
       };
       saved = store.showreel;
+      // Replace, not append: the previous video goes to "Thùng rác" (kept
+      // 30 days, so "Lịch sử" can bring it back) instead of being deleted.
+      // Skipped when the same file is kept or still used elsewhere.
+      trashedFiles = trashUnreferencedAssets(store, collectAssetRefsFromShowreel(previous)).length;
       return store;
     }, { action: "showreel.update" });
 
-    // Replace, not append: drop the previous showreel video from R2 once the
-    // store has switched over.
-    if (oldKey) {
-      await deleteR2Keys([oldKey]);
-    }
-
-    return NextResponse.json({ data: saved });
+    return NextResponse.json({ data: saved, trashedFiles });
   } catch (error) {
     return serverErrorResponse(error, {
       context: "POST /api/admin/showreel",
@@ -87,18 +89,26 @@ export async function DELETE(request) {
   if (!isAdminAuthenticated(request)) return unauthorized();
 
   try {
-    let oldKey = null;
+    let trashedFiles = 0;
+    let expiredKeys = [];
     await updateStore((store) => {
-      if (store.showreel?.key) oldKey = store.showreel.key;
+      const previous = store.showreel;
+      const now = Date.now();
       store.showreel = null;
+      // The video goes to "Thùng rác" for 30 days; expired trash entries
+      // are purged on the way (their files deleted after the write).
+      trashedFiles = trashUnreferencedAssets(store, collectAssetRefsFromShowreel(previous), {
+        now,
+      }).length;
+      expiredKeys = purgeExpiredTrash(store, now);
       return store;
     }, { action: "showreel.delete" });
 
-    if (oldKey) {
-      await deleteR2Keys([oldKey]);
+    if (expiredKeys.length > 0) {
+      await deleteR2Keys(expiredKeys);
     }
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, trashedFiles });
   } catch (error) {
     return serverErrorResponse(error, {
       context: "DELETE /api/admin/showreel",
